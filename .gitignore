@@ -1,0 +1,31 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Go build/test caches
+.gocache/
+.gomodcache/
+coverage.out
+*.test
+
+# Local runtime/secrets/state
+config.json
+rolling_state.json
+blocked_daily_history.json
+ven_daily_history.json
+alert_state.json
+
+# Local data dir (if used under project root)
+.illumio-monitoring-dashboard/
+
+# Built binaries/artifacts
+illumio-dash
+illumio-dashboard.exe
+illumio-dashboard-linux-amd64
+illumio-dashboard-mac-intel
+illumio-dashboard-mac-arm
+

@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Illumio Monitoring Report</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --illumio-orange: rgb(250, 102, 36);
+            --muted: #6c757d;
+            --bg: #f5f6f8;
+            --text: #111;
+            --panel-bg: #fff;
+            --border: #e8e8e8;
+        }
+        body[data-theme="dark"] {
+            --bg: #393b3f;
+            --text: #f7fafc;
+            --panel-bg: #4a4e54;
+            --muted: #e3eaf0;
+            --border: #6f7782;
+        }
+        body {
+            font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 15px;
+            line-height: 1.45;
+            letter-spacing: 0.01em;
+        }
+        .wrap { max-width: 1180px; margin: 0 auto; padding: 16px; }
+        .header {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-left: 5px solid var(--illumio-orange);
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 12px;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: clamp(1.35rem, 1.8vw, 1.7rem);
+            font-weight: 760;
+            letter-spacing: 0.01em;
+        }
+        .meta { margin-top: 8px; color: var(--muted); font-size: 0.88rem; }
+        .actions { margin-top: 10px; display: flex; gap: 9px; flex-wrap: wrap; }
+        .refresh-note { align-self: center; font-size: 0.84rem; color: var(--muted); }
+        .range-controls { display: inline-flex; gap: 6px; margin-left: 2px; }
+        .btn {
+            display: inline-block;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            padding: 7px 11px;
+            text-decoration: none;
+            color: var(--text);
+            background: var(--panel-bg);
+            cursor: pointer;
+        }
+        .btn.primary { background: var(--illumio-orange); color: #fff; border-color: var(--illumio-orange); }
+        body[data-theme="dark"] .btn { background: #646d78; border-color: #aeb8c4; color: #fff; }
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+        .panel h2 { margin: 0 0 10px; font-size: 1.08rem; letter-spacing: 0.01em; }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 10px;
+        }
+        .summary-item {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            background: var(--panel-bg);
+        }
+        .summary-item .label {
+            color: var(--muted);
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+        .summary-item .value { font-size: 1.4rem; font-weight: 700; margin-top: 3px; }
+        .chart-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 13px;
+        }
+        .blocked-group {
+            margin-top: 10px;
+            border-top: 1px dashed var(--border);
+            padding-top: 8px;
+        }
+        .blocked-summary, .enforcement-summary {
+            cursor: pointer;
+            font-size: 0.9rem;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+        .enforcement-block {
+            margin-top: 12px;
+            border-top: 1px dashed var(--border);
+            padding-top: 10px;
+        }
+        .chart-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px;
+            background: var(--panel-bg);
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+        .chart-card h3 { margin: 0 0 9px; font-size: 0.92rem; letter-spacing: 0.01em; }
+        .chart-wrap { height: 230px; }
+        .muted { color: var(--muted); font-size: 0.83rem; }
+        @media print {
+            body { background: #fff; }
+            .actions { display: none; }
+            .wrap { max-width: none; padding: 0; }
+            .panel, .header, .chart-card { box-shadow: none; }
+            details[open] summary { display: none; }
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="header">
+        <h1>Illumio Monitoring Dashboard Report</h1>
+        <div class="meta" id="meta">Loading...</div>
+        <div class="actions">
+            <button class="btn" id="btn-theme">Dark Mode</button>
+            <button class="btn primary" id="btn-print">Print / Save as PDF</button>
+            <button class="btn" id="btn-refresh-live">Refresh</button>
+            <span class="range-controls" id="range-controls">
+                <button class="btn" id="range-1">24h</button>
+                <button class="btn" id="range-7">7d</button>
+                <button class="btn" id="range-30">30d</button>
+                <button class="btn" id="range-90">90d</button>
+                <button class="btn" id="range-180">180d</button>
+                <button class="btn" id="range-365">365d</button>
+            </span>
+            <a class="btn" href="/api/export/report.csv">Download CSV (Excel)</a>
+            <a class="btn" href="/">Back to Dashboard</a>
+            <span class="refresh-note d-none" id="next-refresh">Next refresh in --</span>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Summary</h2>
+        <div class="summary-grid" id="summary"></div>
+    </div>
+
+    <div class="panel">
+        <h2>Trend Charts</h2>
+        <div class="muted">Primary charts are shown first. Blocked traffic charts are grouped per target below.</div>
+        <div class="chart-grid mt-2" id="charts-primary"></div>
+        <div id="blocked-groups" class="mt-2"></div>
+        <details class="enforcement-block mt-2" id="enforcement-details">
+            <summary class="enforcement-summary">Enforcement Mode Trends</summary>
+            <div class="chart-grid" id="charts-enforcement"></div>
+        </details>
+    </div>
+</div>
+
+<script src="/static/ui-common.js"></script>
+<script>
+    const charts = [];
+    const ORANGE = 'rgb(250, 102, 36)';
+    const THEME_KEY = 'illumio_theme';
+    let liveTimer = null;
+    let countdownTimer = null;
+    let nextRefreshAt = null;
+    let dayRange = 30;
+    let blockedGroupSeq = 0;
+    let blockedMAWindow = 12;
+    let blockedAnomalyPct = 50;
+
+    function esc(s) {
+        if (s === null || s === undefined) return '';
+        return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    }
+
+    function queryAutoprint() {
+        const p = new URLSearchParams(window.location.search);
+        return p.get('autoprint') === '1';
+    }
+
+    function queryLive() {
+        const p = new URLSearchParams(window.location.search);
+        return p.get('live') === '1';
+    }
+
+    function applyTheme(theme) {
+        UICommon.setTheme(theme, THEME_KEY, 'btn-theme');
+    }
+
+    function stepSizeFromValues(values) {
+        const max = Math.max(...values, 0);
+        if (max <= 10) return 1;
+        const magnitude = Math.pow(10, Math.floor(Math.log10(max)));
+        return Math.max(1, Math.ceil(max / magnitude) * magnitude / 10);
+    }
+
+    function addSummaryItem(container, label, value) {
+        container.insertAdjacentHTML('beforeend', `
+            <div class="summary-item">
+                <div class="label">${esc(label)}</div>
+                <div class="value">${esc(value)}</div>
+            </div>
+        `);
+    }
+
+    function addChartCard(title, containerId) {
+        const chartsEl = document.getElementById(containerId || 'charts-primary');
+        const id = `c-${charts.length}`;
+        chartsEl.insertAdjacentHTML('beforeend', `
+            <div class="chart-card">
+                <h3>${esc(title)}</h3>
+                <div class="chart-wrap"><canvas id="${id}"></canvas></div>
+            </div>
+        `);
+        return document.getElementById(id);
+    }
+
+    function createBlockedGroup(name) {
+        const root = document.getElementById('blocked-groups');
+        const id = `blocked-group-${blockedGroupSeq++}`;
+        root.insertAdjacentHTML('beforeend', `
+            <details class="blocked-group">
+                <summary class="blocked-summary">Blocked Traffic - ${esc(name)}</summary>
+                <div class="chart-grid" id="${id}"></div>
+            </details>
+        `);
+        return id;
+    }
+
+    function filterDaily(points) {
+        if (!points || !points.length) return [];
+        const cutoff = Date.now() - dayRange * 24 * 60 * 60 * 1000;
+        return points.filter((p) => new Date(p.timestamp).getTime() >= cutoff);
+    }
+
+    function renderLineChart(title, points, color = ORANGE, containerId, overlays = []) {
+        if (!points || !points.length) return;
+        const canvas = addChartCard(title, containerId);
+        const labels = points.map((p) => new Date(p.timestamp).toLocaleString());
+        const values = points.map((p) => Number(p.value || 0));
+        const datasets = [{
+            label: title,
+            data: values,
+            borderColor: color,
+            backgroundColor: color,
+            borderWidth: 2,
+            pointRadius: 1.5,
+            tension: 0.25
+        }];
+        (overlays || []).forEach((ov) => {
+            if (!ov || !ov.points || !ov.points.length) return;
+            const byTS = new Map(ov.points.map((p) => [new Date(p.timestamp).toISOString(), Number(p.value || 0)]));
+            datasets.push({
+                label: ov.label || 'Overlay',
+                data: points.map((p) => byTS.get(new Date(p.timestamp).toISOString()) ?? null),
+                borderColor: ov.color || '#17a2b8',
+                backgroundColor: ov.color || '#17a2b8',
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.2,
+                fill: false
+            });
+        });
+        const step = stepSizeFromValues(values);
+        const maxValue = Math.max(...values, 0);
+        const dark = document.body.getAttribute('data-theme') === 'dark';
+        const tickColor = dark ? '#e7edf3' : '#333';
+        const gridColor = dark ? 'rgba(220,228,235,0.22)' : 'rgba(0,0,0,0.10)';
+        const c = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels,
+                datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: { legend: { display: true, labels: { color: tickColor } } },
+                scales: {
+                    x: { ticks: { color: tickColor }, grid: { color: gridColor } },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { stepSize: step, color: tickColor },
+                        grid: { color: gridColor },
+                        suggestedMax: Math.max(step * 10, maxValue + step)
+                    }
+                }
+            }
+        });
+        charts.push(c);
+    }
+
+    async function fetchJSON(url) {
+        const r = await fetch(`${url}${url.includes('?') ? '&' : '?'}ts=${Date.now()}`, { cache: 'no-store' });
+        if (!r.ok) throw new Error(`${url} failed (${r.status})`);
+        return r.json();
+    }
+
+    function clearRendered() {
+        while (charts.length) {
+            const c = charts.pop();
+            if (c) c.destroy();
+        }
+        document.getElementById('summary').innerHTML = '';
+        document.getElementById('charts-primary').innerHTML = '';
+        document.getElementById('blocked-groups').innerHTML = '';
+        document.getElementById('charts-enforcement').innerHTML = '';
+        blockedGroupSeq = 0;
+    }
+
+    function updateNextRefreshBadge() {
+        const el = document.getElementById('next-refresh');
+        if (!el) return;
+        if (!nextRefreshAt) {
+            el.classList.add('d-none');
+            return;
+        }
+        const now = Date.now();
+        const remainingMs = Math.max(0, nextRefreshAt - now);
+        const totalSec = Math.floor(remainingMs / 1000);
+        const mins = Math.floor(totalSec / 60);
+        const secs = totalSec % 60;
+        const nextTime = new Date(nextRefreshAt).toLocaleTimeString();
+        el.textContent = `Next refresh in ${mins}m ${String(secs).padStart(2, '0')}s (${nextTime})`;
+        el.classList.remove('d-none');
+    }
+
+    async function load() {
+        clearRendered();
+        const [stats, cfg] = await Promise.all([
+            fetchJSON('/api/stats'),
+            fetchJSON('/api/config/targets').catch(() => ({}))
+        ]);
+        blockedMAWindow = Number(cfg.blocked_ma_window || blockedMAWindow || 12);
+        blockedAnomalyPct = Number(cfg.blocked_anomaly_pct || blockedAnomalyPct || 50);
+        const summary = document.getElementById('summary');
+        const tamperedCount = (stats.tampering?.workloads || []).length || Number(stats.tampering?.count || 0);
+        const anomalousTargets = (stats.blocked.targets || []).filter((t) => t.anomalous);
+        nextRefreshAt = Date.now() + 300000;
+        updateNextRefreshBadge();
+        document.getElementById('meta').textContent =
+            `Generated ${new Date().toLocaleString()} | Snapshot ${new Date(stats.timestamp).toLocaleString()} | Window ${new Date(stats.collection.window_start).toLocaleString()} - ${new Date(stats.collection.window_end).toLocaleString()}` +
+            ` | ${UICommon.formatStaleness(UICommon.parseTS(stats.timestamp))}` +
+            (queryLive() ? ' | Live view auto-refreshes every 5 minutes' : '');
+
+        addSummaryItem(summary, 'Total Workloads', stats.workloads.total || 0);
+        addSummaryItem(summary, 'Unmanaged Workloads', stats.workloads.unmanaged || 0);
+        addSummaryItem(summary, 'Idle', stats.workloads.enforcement_modes?.idle || 0);
+        addSummaryItem(summary, 'Visibility Only', stats.workloads.enforcement_modes?.visibility_only || 0);
+        addSummaryItem(summary, 'Selective', stats.workloads.enforcement_modes?.selective || 0);
+        addSummaryItem(summary, 'Full', stats.workloads.enforcement_modes?.full || 0);
+        addSummaryItem(summary, 'VEN Warnings', (stats.ven_status.warning || []).length);
+        addSummaryItem(summary, 'VEN Errors', (stats.ven_status.error || []).length);
+        addSummaryItem(summary, 'Tampered VENs (Deduped)', tamperedCount);
+        addSummaryItem(summary, `Anomalous Blocked Targets (${blockedAnomalyPct}% over MA)`, anomalousTargets.length);
+        (stats.blocked.targets || []).forEach((t) => addSummaryItem(summary, `Blocked ${t.name} (24h)`, t.count || 0));
+
+        const [warnDD, errDD, tampDD] = await Promise.all([
+            fetchJSON('/api/drilldown?metric=ven_warning'),
+            fetchJSON('/api/drilldown?metric=ven_error'),
+            fetchJSON('/api/drilldown?metric=tampering').catch(() => null)
+        ]);
+        renderLineChart(
+            'VEN Warnings (24h, 5m)',
+            warnDD.trend_24h || warnDD.trend || [],
+            '#f59f00',
+            'charts-primary',
+            [{ label: `MA (${Number(warnDD.anomaly_window || blockedMAWindow || 12)})`, points: warnDD.trend_ma_24h || [], color: '#17a2b8' }]
+        );
+        renderLineChart(
+            'VEN Errors (24h, 5m)',
+            errDD.trend_24h || errDD.trend || [],
+            '#dc3545',
+            'charts-primary',
+            [{ label: `MA (${Number(errDD.anomaly_window || blockedMAWindow || 12)})`, points: errDD.trend_ma_24h || [], color: '#17a2b8' }]
+        );
+        renderLineChart(
+            'VEN Warnings (Daily)',
+            filterDaily(warnDD.trend_daily || []),
+            '#ffbf66',
+            'charts-primary',
+            [{ label: `MA (${Number(warnDD.anomaly_window || blockedMAWindow || 12)})`, points: filterDaily(warnDD.trend_ma_daily || []), color: '#17a2b8' }]
+        );
+        renderLineChart(
+            'VEN Errors (Daily)',
+            filterDaily(errDD.trend_daily || []),
+            '#ff6b6b',
+            'charts-primary',
+            [{ label: `MA (${Number(errDD.anomaly_window || blockedMAWindow || 12)})`, points: filterDaily(errDD.trend_ma_daily || []), color: '#17a2b8' }]
+        );
+        if (tampDD) {
+            renderLineChart(
+                'Tampered VENs (24h, 5m)',
+                tampDD.trend_24h || tampDD.trend || [],
+                '#8e7cc3',
+                'charts-primary',
+                [{ label: `MA (${Number(tampDD.anomaly_window || blockedMAWindow || 12)})`, points: tampDD.trend_ma_24h || [], color: '#17a2b8' }]
+            );
+        }
+
+        const targets = stats.blocked.targets || [];
+        const targetDetails = await Promise.all(targets.map((t) =>
+            fetchJSON(`/api/drilldown?metric=blocked_target&target=${encodeURIComponent(t.name)}`).catch(() => null)
+        ));
+        targetDetails.forEach((d, idx) => {
+            if (!d) return;
+            const name = targets[idx]?.name || d.target || `Target ${idx + 1}`;
+            const trend24h = d.trend_24h || d.trend || [];
+            const trendDaily = d.trend_daily || [];
+            const targetMAWindow = Number(d.blocked_ma_window || blockedMAWindow || 12);
+            const baselinePoint = d.baseline_24h > 0
+                ? [{ timestamp: d.baseline_captured_utc || new Date().toISOString(), value: Number(d.baseline_24h || 0) }]
+                : [];
+            const groupId = createBlockedGroup(name);
+            renderLineChart(
+                `Blocked ${name} (24h, 5m)`,
+                trend24h.length ? trend24h : baselinePoint,
+                ORANGE,
+                groupId,
+                [{ label: `MA (${targetMAWindow})`, points: d.trend_ma_24h || [], color: '#17a2b8' }]
+            );
+            renderLineChart(
+                `Blocked ${name} (Daily)`,
+                filterDaily(trendDaily),
+                '#ffb089',
+                groupId,
+                [{ label: `MA (${targetMAWindow})`, points: filterDaily(d.trend_ma_daily || []), color: '#17a2b8' }]
+            );
+        });
+
+        const [idleDD, visDD, selDD, fullDD, unmanagedDD] = await Promise.all([
+            fetchJSON('/api/drilldown?metric=mode_idle').catch(() => null),
+            fetchJSON('/api/drilldown?metric=mode_visibility_only').catch(() => null),
+            fetchJSON('/api/drilldown?metric=mode_selective').catch(() => null),
+            fetchJSON('/api/drilldown?metric=mode_full').catch(() => null),
+            fetchJSON('/api/drilldown?metric=mode_unmanaged').catch(() => null)
+        ]);
+        if (idleDD) {
+            renderLineChart('Enforcement Idle (24h, 5m)', idleDD.trend_24h || idleDD.trend || [], '#6c757d', 'charts-enforcement');
+            renderLineChart('Enforcement Idle (Daily)', filterDaily(idleDD.trend_daily || []), '#9ba1a7', 'charts-enforcement');
+        }
+        if (visDD) {
+            renderLineChart('Enforcement Visibility (24h, 5m)', visDD.trend_24h || visDD.trend || [], '#0dcaf0', 'charts-enforcement');
+            renderLineChart('Enforcement Visibility (Daily)', filterDaily(visDD.trend_daily || []), '#7edff7', 'charts-enforcement');
+        }
+        if (selDD) {
+            renderLineChart('Enforcement Selective (24h, 5m)', selDD.trend_24h || selDD.trend || [], '#ffc107', 'charts-enforcement');
+            renderLineChart('Enforcement Selective (Daily)', filterDaily(selDD.trend_daily || []), '#ffd966', 'charts-enforcement');
+        }
+        if (fullDD) {
+            renderLineChart('Enforcement Full (24h, 5m)', fullDD.trend_24h || fullDD.trend || [], '#dc3545', 'charts-enforcement');
+            renderLineChart('Enforcement Full (Daily)', filterDaily(fullDD.trend_daily || []), '#f28b95', 'charts-enforcement');
+        }
+        if (unmanagedDD) {
+            renderLineChart('Enforcement Unmanaged (24h, 5m)', unmanagedDD.trend_24h || unmanagedDD.trend || [], '#adb5bd', 'charts-enforcement');
+            renderLineChart('Enforcement Unmanaged (Daily)', filterDaily(unmanagedDD.trend_daily || []), '#c8ced4', 'charts-enforcement');
+        }
+    }
+
+    UICommon.applyTheme(THEME_KEY, 'btn-theme');
+    document.getElementById('btn-theme').addEventListener('click', () => {
+        applyTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+        load().catch(() => {});
+    });
+    [1, 7, 30, 90, 180, 365].forEach((d) => {
+        const btn = document.getElementById(`range-${d}`);
+        btn.addEventListener('click', () => {
+            dayRange = d;
+            [1, 7, 30, 90, 180, 365].forEach((n) => {
+                const b = document.getElementById(`range-${n}`);
+                b.style.outline = n === d ? '2px solid var(--illumio-orange)' : 'none';
+            });
+            load().catch(() => {});
+        });
+    });
+    document.getElementById('range-30').style.outline = '2px solid var(--illumio-orange)';
+    document.getElementById('btn-print').addEventListener('click', () => window.print());
+    document.getElementById('btn-refresh-live').addEventListener('click', () => {
+        load().catch((err) => {
+            document.getElementById('meta').textContent = `Failed to load report data: ${err.message}`;
+        });
+    });
+
+    load()
+        .then(() => {
+            if (queryAutoprint()) {
+                setTimeout(() => window.print(), 300);
+            }
+            if (countdownTimer) clearInterval(countdownTimer);
+            countdownTimer = setInterval(updateNextRefreshBadge, 1000);
+            if (queryLive()) {
+                if (liveTimer) clearInterval(liveTimer);
+                liveTimer = setInterval(() => {
+                    nextRefreshAt = Date.now() + 300000;
+                    load().catch(() => {});
+                }, 300000);
+            }
+        })
+        .catch((err) => {
+            document.getElementById('meta').textContent = `Failed to load report data: ${err.message}`;
+        });
+</script>
+</body>
+</html>

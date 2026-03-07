@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Illumio Dashboard (Go)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --illumio-orange: rgb(250, 102, 36);
+            --panel-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            --bg: linear-gradient(180deg, #fff7f2 0%, #f8f9fa 22%, #f8f9fa 100%);
+            --surface-1: #fff;
+            --surface-2: #f7f8fa;
+            --text-1: #111;
+            --text-2: #5f6670;
+            --border: #dde2e8;
+            --tile-hover: #fff7f2;
+        }
+        body[data-theme="dark"] {
+            --bg: linear-gradient(180deg, #393b3f 0%, #414449 24%, #414449 100%);
+            --surface-1: #4a4e54;
+            --surface-2: #575c63;
+            --text-1: #f7fafc;
+            --text-2: #d5dee8;
+            --border: #6f7782;
+            --tile-hover: #565c64;
+        }
+        body {
+            background: var(--bg);
+            color: var(--text-1);
+            font-size: 15px;
+            line-height: 1.45;
+            letter-spacing: 0.01em;
+        }
+        .header {
+            background: var(--illumio-orange);
+            color: white;
+            padding: 22px 20px 18px;
+            border-radius: 0 0 15px 15px;
+            box-shadow: var(--panel-shadow);
+        }
+        .header h1 {
+            font-size: clamp(1.45rem, 2.1vw, 1.9rem);
+            font-weight: 750;
+            letter-spacing: 0.01em;
+            margin-bottom: 8px;
+        }
+        #status-bar { font-size: 0.86rem; }
+        .card {
+            border-radius: 12px;
+            box-shadow: var(--panel-shadow);
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
+            background: var(--surface-1);
+        }
+        .card.p-3 { padding: 1rem 1rem 0.95rem !important; }
+        .section-title {
+            font-size: 0.76rem;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+            color: var(--text-2);
+            margin-bottom: 12px;
+            font-weight: 700;
+        }
+        .card h5, .card h6 { color: var(--text-1); letter-spacing: 0.01em; }
+        .card h5 { font-size: 1.02rem; margin-bottom: 8px; }
+        .card h6 { font-size: 0.9rem; margin-bottom: 6px; }
+        .subtle {
+            color: var(--text-2);
+            font-size: 0.85rem;
+        }
+        .status-dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        .dot-green { background-color: #28a745; }
+        .dot-red { background-color: #dc3545; }
+        .dot-yellow { background-color: #ffc107; }
+        .status-warn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #ffc107;
+            color: #212529;
+            font-size: 11px;
+            font-weight: 700;
+            margin-left: 6px;
+        }
+        .refresh-indicator { font-size: 0.8rem; font-style: italic; visibility: hidden; }
+        .refreshing .refresh-indicator { visibility: visible; }
+        .collection-badge {
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+            vertical-align: middle;
+        }
+        .status-meta {
+            font-size: 0.78rem;
+            opacity: 0.95;
+            margin-left: 8px;
+        }
+        .status-actions .btn {
+            --bs-btn-padding-y: 0.1rem;
+            --bs-btn-padding-x: 0.45rem;
+            --bs-btn-font-size: 0.72rem;
+        }
+        .mode-badge { font-size: 0.77rem; padding: 5px 10px; border-radius: 12px; letter-spacing: 0.01em; }
+        .metric-link { cursor: pointer; }
+        .metric-link:hover { background: var(--tile-hover); }
+        .blocked-summary {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 11px;
+        }
+        .blocked-tile {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 11px 12px;
+            background: var(--surface-1);
+            overflow: hidden;
+        }
+        .blocked-tile.anomalous {
+            border-color: rgba(220, 53, 69, 0.75);
+            background: linear-gradient(180deg, rgba(220, 53, 69, 0.10) 0%, rgba(220, 53, 69, 0.04) 100%);
+            box-shadow: inset 0 0 0 1px rgba(220, 53, 69, 0.22);
+        }
+        body[data-theme="dark"] .blocked-tile.anomalous {
+            border-color: rgba(255, 123, 123, 0.85);
+            background: linear-gradient(180deg, rgba(255, 123, 123, 0.17) 0%, rgba(255, 123, 123, 0.08) 100%);
+            box-shadow: inset 0 0 0 1px rgba(255, 123, 123, 0.30);
+        }
+        .blocked-tile.blocked-clickable { cursor: pointer; }
+        .blocked-tile.blocked-clickable:hover { background: var(--tile-hover); }
+        .blocked-tile.blocked-clickable.anomalous:hover {
+            background: linear-gradient(180deg, rgba(220, 53, 69, 0.15) 0%, rgba(220, 53, 69, 0.06) 100%);
+        }
+        body[data-theme="dark"] .blocked-tile.blocked-clickable.anomalous:hover {
+            background: linear-gradient(180deg, rgba(255, 123, 123, 0.22) 0%, rgba(255, 123, 123, 0.11) 100%);
+        }
+        .blocked-tile .label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            color: var(--text-2);
+        }
+        .blocked-tile .value {
+            font-size: 1.46rem;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .anomaly-badge {
+            display: inline-block;
+            margin-top: 6px;
+            padding: 2px 7px;
+            border-radius: 12px;
+            background: rgba(220, 53, 69, 0.14);
+            color: #dc3545;
+            border: 1px solid rgba(220, 53, 69, 0.34);
+            font-size: 0.73rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        .blocked-metrics {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            margin-top: 8px;
+            width: 100%;
+        }
+        .blocked-metric {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-2);
+            padding: 6px 8px;
+            min-width: 0;
+        }
+        .blocked-metric .metric-label {
+            font-size: 0.68rem;
+            color: var(--text-2);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .blocked-metric .metric-value {
+            font-size: 1rem;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .text-brand { color: var(--illumio-orange) !important; }
+        .text-muted { color: var(--text-2) !important; }
+        body[data-theme="dark"] .card,
+        body[data-theme="dark"] .card h1,
+        body[data-theme="dark"] .card h2,
+        body[data-theme="dark"] .card h3,
+        body[data-theme="dark"] .card h4,
+        body[data-theme="dark"] .card h5,
+        body[data-theme="dark"] .card h6,
+        body[data-theme="dark"] .card div,
+        body[data-theme="dark"] .card p,
+        body[data-theme="dark"] .card span,
+        body[data-theme="dark"] .card label,
+        body[data-theme="dark"] .card li {
+            color: var(--text-1);
+        }
+        body[data-theme="dark"] .text-dark { color: var(--text-1) !important; }
+        body[data-theme="dark"] .form-control,
+        body[data-theme="dark"] .form-select,
+        body[data-theme="dark"] .list-group-item {
+            background-color: #848d98;
+            border-color: var(--border);
+            color: var(--text-1);
+        }
+        body[data-theme="dark"] .btn-outline-secondary,
+        body[data-theme="dark"] .btn-outline-primary,
+        body[data-theme="dark"] .btn-outline-success,
+        body[data-theme="dark"] .btn-outline-danger {
+            color: #f6f9fc;
+            border-color: #c3ccd7;
+        }
+        body[data-theme="dark"] .btn-light {
+            background: #7a848f;
+            border-color: #c3ccd7;
+            color: #fff;
+        }
+        body[data-theme="dark"] .badge.bg-dark {
+            background-color: #596370 !important;
+        }
+        @media (max-width: 768px) {
+            .blocked-summary { grid-template-columns: 1fr; }
+            .blocked-metrics { grid-template-columns: 1fr; }
+        }
+        @media (min-width: 769px) and (max-width: 1200px) {
+            .blocked-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+    </style>
+</head>
+<body id="body">
+    <div class="header text-center">
+        <h1>Illumio Monitoring Dashboard</h1>
+        <div id="status-bar" class="mt-2">
+            <span id="ts">Loading...</span>
+            <span id="collection-badge" class="badge bg-light text-dark ms-2 collection-badge">INITIALIZING</span>
+            <span id="refresh-meta" class="status-meta"></span>
+            <span class="status-actions ms-2">
+                <button class="btn btn-light btn-sm" id="btn-theme" type="button">Dark Mode</button>
+                <a class="btn btn-light btn-sm" href="/settings">Settings</a>
+                <a class="btn btn-light btn-sm" href="/trends">Trend View</a>
+                <a class="btn btn-light btn-sm" href="/api/export/report.csv">Export CSV (Excel)</a>
+                <a class="btn btn-light btn-sm" href="/report" target="_blank" rel="noopener">Export PDF</a>
+            </span>
+            <span class="refresh-indicator ms-3">Refreshing data...</span>
+        </div>
+    </div>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-12">
+                <div class="card p-3">
+                    <div class="section-title border-bottom pb-2">Data Pipeline Status</div>
+                    <div class="d-flex flex-wrap">
+                        <div class="me-4" id="stat-workloads"><span class="status-dot dot-yellow"></span> Workloads & Modes</div>
+                        <div class="me-4" id="stat-ven"><span class="status-dot dot-yellow"></span> VEN Status</div>
+                        <div class="me-4" id="stat-tampering"><span class="status-dot dot-yellow"></span> Tampered VENs</div>
+                        <div class="me-4" id="stat-blocked"><span class="status-dot dot-yellow"></span> Blocked Traffic <span class="status-warn d-none">!</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-3">
+                <div class="card p-3 text-center">
+                    <div class="section-title">Workload Inventory</div>
+                    <h6>Total Workloads</h6>
+                    <h2 class="text-brand" id="w-total">0</h2>
+                </div>
+            </div>
+            <div class="col-md-9">
+                <div class="card p-3">
+                    <div class="section-title">Security Posture</div>
+                    <h6>Enforcement Mode Breakdown</h6>
+                    <div class="d-flex flex-wrap justify-content-around mt-2 gap-2">
+                        <div class="text-center metric-link p-2 rounded" data-metric="mode_idle">
+                            <span class="badge bg-secondary mode-badge">Idle</span>
+                            <div class="h4 mt-1" id="m-idle">0</div>
+                        </div>
+                        <div class="text-center metric-link p-2 rounded" data-metric="mode_visibility_only">
+                            <span class="badge bg-info mode-badge">Visibility</span>
+                            <div class="h4 mt-1" id="m-visibility">0</div>
+                        </div>
+                        <div class="text-center metric-link p-2 rounded" data-metric="mode_selective">
+                            <span class="badge bg-warning mode-badge text-dark">Selective</span>
+                            <div class="h4 mt-1" id="m-selective">0</div>
+                        </div>
+                        <div class="text-center metric-link p-2 rounded" data-metric="mode_full">
+                            <span class="badge bg-danger mode-badge">Full</span>
+                            <div class="h4 mt-1" id="m-full">0</div>
+                        </div>
+                        <div class="text-center metric-link p-2 rounded" data-metric="mode_unmanaged">
+                            <span class="badge bg-dark mode-badge">Unmanaged</span>
+                            <div class="h4 mt-1" id="m-unmanaged">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card p-3 text-center metric-link" data-metric="ven_warning">
+                    <h6>VEN Warnings</h6>
+                    <h2 class="text-warning" id="v-warn">0</h2>
+                    <div id="v-warn-list" class="small text-muted">Click to view workload names</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card p-3 text-center metric-link" data-metric="ven_error">
+                    <h6>VEN Errors</h6>
+                    <h2 class="text-danger" id="v-err">0</h2>
+                    <div id="v-err-list" class="small text-muted">Click to view workload names</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card p-3 text-center metric-link" data-metric="tampering">
+                    <h6>Tampered VENs</h6>
+                    <h2 class="text-dark" id="tamp">0</h2>
+                    <div class="small text-muted">Click to view deduped impacted VEN/workload names</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <div class="card p-3">
+                    <div class="section-title">Traffic Analytics</div>
+                    <h5>Blocked Connections (Last 24h)</h5>
+                    <p class="subtle">Configured traffic targets from <code>config.json</code> (labels and/or label groups). Manage settings in <a href="/settings">Settings</a>.</p>
+                    <div class="blocked-summary" id="blocked-targets"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/ui-common.js"></script>
+    <script>
+        let loadInFlight = false;
+        let refreshTimer = null;
+        const THEME_KEY = 'illumio_theme';
+        let nextRefreshAt = null;
+        let statusTimer = null;
+        let lastSnapshotTS = null;
+
+        function applyTheme(theme) {
+            UICommon.setTheme(theme, THEME_KEY, 'btn-theme');
+            if (!loadInFlight) {
+                load();
+            }
+        }
+
+        function initTheme() {
+            UICommon.applyTheme(THEME_KEY, 'btn-theme');
+            const btn = document.getElementById('btn-theme');
+            if (btn) {
+                btn.addEventListener('click', () => {
+                    applyTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+                });
+            }
+        }
+
+        function updateRefreshMeta(tsValue) {
+            const el = document.getElementById('refresh-meta');
+            if (!el) return;
+            const ts = UICommon.parseTS(tsValue);
+            el.textContent = `${UICommon.nextRefreshText(nextRefreshAt)} | ${UICommon.formatStaleness(ts)}`;
+        }
+
+        function gotoDrilldown(metric) {
+            window.location.href = `/details?metric=${encodeURIComponent(metric)}`;
+        }
+
+        function bindDrilldowns() {
+            document.querySelectorAll('[data-metric]').forEach((el) => {
+                el.addEventListener('click', () => gotoDrilldown(el.dataset.metric));
+            });
+        }
+
+        function updateStatusIndicator(id, statusObj, warningText = '') {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const dot = el.querySelector('.status-dot');
+            const warn = el.querySelector('.status-warn');
+            if (statusObj && statusObj.success) {
+                dot.className = 'status-dot dot-green';
+                el.classList.remove('text-danger');
+                if (warningText) {
+                    if (warn) {
+                        warn.classList.remove('d-none');
+                        warn.title = warningText;
+                    }
+                    el.classList.add('text-warning');
+                    el.title = warningText;
+                } else {
+                    if (warn) {
+                        warn.classList.add('d-none');
+                        warn.title = '';
+                    }
+                    el.classList.remove('text-warning');
+                    el.title = 'Last fetch successful';
+                }
+            } else {
+                dot.className = 'status-dot dot-red';
+                el.classList.add('text-danger');
+                el.classList.remove('text-warning');
+                el.title = 'Error: ' + (statusObj?.error || 'Unknown error');
+                if (warn) {
+                    warn.classList.add('d-none');
+                    warn.title = '';
+                }
+            }
+        }
+
+        function statusText(statusObj) {
+            if (!statusObj) return 'Unknown';
+            return statusObj.success ? 'OK' : `Warning: ${statusObj.error || 'Failed'}`;
+        }
+
+        function renderBlockedTargets(targets) {
+            const container = document.getElementById('blocked-targets');
+            container.innerHTML = '';
+            (targets || []).forEach((target) => {
+                const div = document.createElement('div');
+                div.className = 'blocked-tile blocked-clickable';
+                const kind = (target.kind || 'auto').replace('_', ' ');
+                const isWarmup = !!target.warmup;
+                const warmupHtml = isWarmup ? `
+                    <div class="blocked-metrics">
+                        <div class="blocked-metric">
+                            <div class="metric-label">Past 24h Baseline</div>
+                            <div class="metric-value">${target.baseline_24h || 0}</div>
+                        </div>
+                        <div class="blocked-metric">
+                            <div class="metric-label">Past ${target.incremental_minutes || 0}m (5m agg)</div>
+                            <div class="metric-value">${target.incremental_count || 0}</div>
+                        </div>
+                    </div>
+                ` : '';
+                const mainLabel = isWarmup ? 'Current View (Warmup)' : 'Rolling 24h';
+                const warnHtml = target.warning ? `<div class="small text-warning">${target.warning}</div>` : '';
+                const anomalyBasisLabel = (target.anomaly_source || '5m') === 'daily' ? 'Baseline' : 'MA';
+                const anomalyHtml = target.anomalous
+                    ? `<div class="anomaly-badge" title="${target.anomaly_reason || ''}">⚠ Anomalous (${target.latest_5m || 0} vs ${anomalyBasisLabel} ${Number(target.moving_avg_5m || 0).toFixed(2)})</div>`
+                    : '';
+                if (target.anomalous) {
+                    div.classList.add('anomalous');
+                }
+                div.innerHTML = `
+                    <div class="label">${target.name} <span class="text-muted">(${kind})</span></div>
+                    <div class="small text-muted">${mainLabel}</div>
+                    <div class="value">${target.count || 0}</div>
+                    ${warmupHtml}
+                    ${anomalyHtml}
+                    ${warnHtml}
+                    <div class="small text-muted">${statusText(target.status)}</div>
+                `;
+                if (target.warning) {
+                    div.title = `Confidence note: ${target.warning}`;
+                }
+                div.addEventListener('click', () => {
+                    const t = encodeURIComponent(target.name || '');
+                    window.location.href = `/details?metric=blocked_target&target=${t}`;
+                });
+                container.appendChild(div);
+            });
+        }
+
+        function updateCollectionBadge(collection) {
+            const badge = document.getElementById('collection-badge');
+            if (!badge) return;
+            const mode = collection?.mode || 'unknown';
+            if (mode === 'baseline_24h') {
+                badge.className = 'badge bg-warning text-dark ms-2 collection-badge';
+                badge.innerText = 'BASELINE 24H';
+            } else if (mode === 'warmup_5m') {
+                badge.className = 'badge bg-info text-dark ms-2 collection-badge';
+                badge.innerText = 'WARMUP 5M';
+            } else if (mode === 'rolling_24h') {
+                badge.className = 'badge bg-success text-light ms-2 collection-badge';
+                badge.innerText = 'ROLLING 24H';
+            } else {
+                badge.className = 'badge bg-light text-dark ms-2 collection-badge';
+                badge.innerText = String(mode).toUpperCase();
+            }
+            if (collection?.window_start && collection?.window_end) {
+                badge.title = `Collection window: ${new Date(collection.window_start).toLocaleString()} - ${new Date(collection.window_end).toLocaleString()}`;
+            } else {
+                badge.title = 'Collection mode';
+            }
+        }
+
+        async function load() {
+            if (loadInFlight) return;
+            loadInFlight = true;
+            document.body.classList.add('refreshing');
+            try {
+                const r = await fetch(`/api/stats?ts=${Date.now()}`, { cache: 'no-store' });
+                const d = await r.json();
+
+                updateStatusIndicator('stat-workloads', d.workloads.status, d.workloads.status?.success ? (d.workloads.status?.error || '') : '');
+                updateStatusIndicator('stat-ven', d.ven_status.status);
+                updateStatusIndicator('stat-tampering', d.tampering.status, d.tampering.status?.success ? (d.tampering.status?.error || '') : '');
+                updateStatusIndicator('stat-blocked', d.blocked.status, d.blocked.partial ? (d.blocked.warning || d.blocked.status.error || 'Blocked traffic partially successful') : '');
+
+                document.getElementById('w-total').innerText = d.workloads.total || 0;
+                document.getElementById('m-idle').innerText = d.workloads.enforcement_modes?.idle || 0;
+                document.getElementById('m-visibility').innerText = d.workloads.enforcement_modes?.visibility_only || 0;
+                document.getElementById('m-selective').innerText = d.workloads.enforcement_modes?.selective || 0;
+                document.getElementById('m-full').innerText = d.workloads.enforcement_modes?.full || 0;
+                document.getElementById('m-unmanaged').innerText = d.workloads.unmanaged || 0;
+
+                document.getElementById('v-warn').innerText = d.ven_status.warning?.length || 0;
+                document.getElementById('v-warn-list').innerText = 'Click to view workload names';
+                document.getElementById('v-err').innerText = d.ven_status.error?.length || 0;
+                document.getElementById('v-err-list').innerText = 'Click to view workload names';
+                document.getElementById('tamp').innerText = d.tampering.workloads?.length || d.tampering.count || 0;
+
+                renderBlockedTargets(d.blocked.targets || []);
+                document.getElementById('ts').innerText = 'Last Updated: ' + new Date(d.timestamp).toLocaleString();
+                nextRefreshAt = Date.now() + 300000;
+                lastSnapshotTS = d.timestamp;
+                updateRefreshMeta(lastSnapshotTS);
+                updateCollectionBadge(d.collection);
+            } catch (err) {
+                console.error('Fetch Error:', err);
+                document.getElementById('ts').innerText = 'Fetch failed: ' + err.message;
+            } finally {
+                loadInFlight = false;
+                document.body.classList.remove('refreshing');
+                scheduleNextLoad();
+            }
+        }
+
+        function scheduleNextLoad() {
+            if (refreshTimer) clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(load, 300000);
+        }
+
+        initTheme();
+        UICommon.applyMetricTooltips();
+        if (!statusTimer) {
+            statusTimer = setInterval(() => {
+                updateRefreshMeta(lastSnapshotTS);
+            }, 1000);
+        }
+        bindDrilldowns();
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') load();
+        });
+        window.addEventListener('focus', load);
+        load();
+    </script>
+</body>
+</html>

@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Illumio Settings</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --illumio-orange: rgb(250, 102, 36);
+            --bg: #f8f9fa;
+            --text: #111;
+            --card-bg: #fff;
+            --muted: #6c757d;
+            --border: #dfe4ea;
+            --surface-2: #f6f7f9;
+        }
+        body[data-theme="dark"] {
+            --bg: #393b3f;
+            --text: #f7fafc;
+            --card-bg: #4a4e54;
+            --muted: #d9e1ea;
+            --border: #6f7782;
+            --surface-2: #5c636d;
+        }
+        body { background: var(--bg); color: var(--text); }
+        .topbar { background: var(--illumio-orange); color: #fff; padding: 14px 0; margin-bottom: 16px; }
+        .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; }
+        .text-muted { color: var(--muted) !important; }
+        .section-toggle summary {
+            cursor: pointer;
+            list-style: none;
+            font-weight: 600;
+            font-size: 1.02rem;
+            padding: 4px 0;
+        }
+        .section-toggle summary::-webkit-details-marker { display: none; }
+        .section-toggle summary::before {
+            content: "▸";
+            display: inline-block;
+            margin-right: 8px;
+            color: var(--muted);
+        }
+        .section-toggle[open] summary::before { content: "▾"; }
+        .help-tip {
+            display: inline-block;
+            margin-left: 6px;
+            width: 16px;
+            height: 16px;
+            line-height: 16px;
+            border-radius: 50%;
+            text-align: center;
+            font-size: 11px;
+            font-weight: 700;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            cursor: help;
+            user-select: none;
+        }
+        .target-row {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 9px;
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-2);
+            padding: 8px;
+        }
+        .target-row-controls {
+            display: grid;
+            grid-template-columns: minmax(110px, 1fr) minmax(100px, 1fr) minmax(110px, 1fr) minmax(90px, 100px);
+            gap: 8px;
+            width: 100%;
+        }
+        body[data-theme="dark"] .form-control,
+        body[data-theme="dark"] .form-select {
+            background: #6d7681;
+            border-color: var(--border);
+            color: #fff;
+        }
+        @media (max-width: 768px) {
+            .target-row-controls { grid-template-columns: 1fr 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="container d-flex justify-content-between align-items-center">
+            <div class="h5 mb-0">Dashboard Settings</div>
+            <div class="d-flex gap-2">
+                <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
+                <a href="/" class="btn btn-light btn-sm">Back to Dashboard</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="container pb-4">
+        <div class="card p-3 mb-3">
+            <details class="section-toggle" open>
+                <summary>Traffic And Data Settings</summary>
+                <p class="text-muted small mb-3 mt-1">Manage traffic targets, exclusions, retention, and anomaly defaults.</p>
+
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="history-days">Blocked Daily History Retention (days)</label>
+                    <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="history-days" value="365">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="blocked-ma-window">
+                        Blocked 5m Moving Average Window (points)
+                        <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                    </label>
+                    <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="blocked-ma-window" value="12">
+                    <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-pct">Blocked Anomaly Threshold (%)</label>
+                    <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="blocked-anomaly-pct" value="50">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-baseline">Blocked Anomaly Baseline Source</label>
+                    <select class="form-select form-select-sm" id="blocked-anomaly-baseline">
+                        <option value="5m">5m Moving Average</option>
+                        <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-days">Blocked Baseline Window (days)</label>
+                    <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="blocked-anomaly-days" value="7">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-min-pct">Blocked Baseline Min Coverage (%)</label>
+                    <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="blocked-anomaly-min-pct" value="70">
+                    <div class="small text-muted mt-1">If baseline is not fully built yet, alerts are suppressed until this coverage threshold is met (for example 70% means 5 of 7 days).</div>
+                </div>
+                <hr>
+                <div class="small text-muted mb-2">VEN Warning/Error Anomaly Settings</div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="ven-ma-window">
+                        VEN 5m Moving Average Window (points)
+                        <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                    </label>
+                    <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="ven-ma-window" value="12">
+                    <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-pct">VEN Anomaly Threshold (%)</label>
+                    <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="ven-anomaly-pct" value="50">
+                </div>
+                <hr>
+                <div class="small text-muted mb-2">Tampering Anomaly Settings</div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="tampering-ma-window">
+                        Tampering 5m Moving Average Window (points)
+                        <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                    </label>
+                    <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="tampering-ma-window" value="12">
+                    <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-pct">Tampering Anomaly Threshold (%)</label>
+                    <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-anomaly-pct" value="50">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="source-exclusions">Traffic Source Exclusions (comma-separated names)</label>
+                    <input type="text" class="form-control form-control-sm" id="source-exclusions" placeholder="LG-SCANNERS">
+                </div>
+                <div id="target-editor"></div>
+                <div class="d-flex flex-wrap gap-2 mt-2">
+                    <button class="btn btn-outline-secondary btn-sm" id="btn-add-target" type="button">Add Target</button>
+                    <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic" type="button">Save Traffic/Data</button>
+                    <button class="btn btn-outline-success btn-sm" id="btn-refresh-now" type="button">Refresh Now</button>
+                </div>
+                <div class="small mt-2" id="msg-traffic"></div>
+            </details>
+        </div>
+
+        <div class="card p-3">
+            <details class="section-toggle" open>
+                <summary>Hosting Settings</summary>
+                <p class="text-muted small mb-3 mt-1">Configure how the dashboard listens on the server and what base URL is used in generated links.</p>
+
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="bind-address">Server Bind Address</label>
+                    <input type="text" class="form-control form-control-sm" id="bind-address" placeholder=":18443 or 0.0.0.0:18443">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="public-base-url">Public Base URL</label>
+                    <input type="text" class="form-control form-control-sm" id="public-base-url" placeholder="https://dashboard.example.com">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="timezone">Timezone (IANA, optional)</label>
+                    <input type="text" class="form-control form-control-sm" id="timezone" placeholder="System local (e.g., America/Chicago)">
+                    <div class="small text-muted mt-1">Daily buckets and daily charts use this timezone. Leave blank for server local time.</div>
+                </div>
+
+                <div class="small mt-2 text-muted">These are saved with Traffic/Data settings and take effect on next start.</div>
+            </details>
+        </div>
+
+        <div class="card p-3 mt-3">
+            <details class="section-toggle" open>
+                <summary>Alerting Settings</summary>
+                <p class="text-muted small mb-3 mt-1">Configure webhook notifications for anomaly triggered/resolved events.</p>
+
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="webhook-enabled">Enabled</label>
+                    <select class="form-select form-select-sm" id="webhook-enabled">
+                        <option value="false">Disabled</option>
+                        <option value="true">Enabled</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="webhook-provider">Provider</label>
+                    <select class="form-select form-select-sm" id="webhook-provider">
+                        <option value="generic">Generic JSON</option>
+                        <option value="slack">Slack Incoming Webhook</option>
+                        <option value="teams">Microsoft Teams Incoming Webhook</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="webhook-url">Webhook URL</label>
+                    <input type="text" class="form-control form-control-sm" id="webhook-url" placeholder="https://hooks.example.com/...">
+                </div>
+
+                <div id="slack-fields" class="d-none">
+                    <hr>
+                    <div class="small text-muted mb-2">Slack Optional Overrides (may be ignored by some webhook setups)</div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="slack-channel">Channel</label>
+                        <input type="text" class="form-control form-control-sm" id="slack-channel" placeholder="#security-alerts">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="slack-username">Username</label>
+                        <input type="text" class="form-control form-control-sm" id="slack-username" placeholder="Illumio Monitor">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="slack-icon">Icon Emoji</label>
+                        <input type="text" class="form-control form-control-sm" id="slack-icon" placeholder=":rotating_light:">
+                    </div>
+                </div>
+
+                <div id="teams-fields" class="d-none">
+                    <hr>
+                    <div class="small text-muted mb-2">Teams Optional Overrides</div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="teams-title-prefix">Title Prefix</label>
+                        <input type="text" class="form-control form-control-sm" id="teams-title-prefix" placeholder="PROD">
+                    </div>
+                </div>
+
+                <div class="d-flex flex-wrap gap-2 mt-2">
+                    <button class="btn btn-outline-primary btn-sm" id="btn-save-alerts" type="button">Save Alerting</button>
+                    <button class="btn btn-outline-warning btn-sm" id="btn-test-webhook" type="button">Send Test Webhook</button>
+                </div>
+                <div class="small mt-2" id="msg-alerts"></div>
+            </details>
+        </div>
+    </div>
+
+    <script src="/static/ui-common.js"></script>
+    <script>
+        const THEME_KEY = 'illumio_theme';
+        let editableTargets = [];
+        let historyDays = 365;
+        let blockedMAWindow = 12;
+        let blockedAnomalyPct = 50;
+        let blockedAnomalyBaseline = '5m';
+        let blockedAnomalyDays = 7;
+        let blockedAnomalyMinPct = 70;
+        let venMAWindow = 12;
+        let venAnomalyPct = 50;
+        let tamperingMAWindow = 12;
+        let tamperingAnomalyPct = 50;
+        let bindAddress = ':18443';
+        let publicBaseURL = 'http://localhost:18443';
+        let timezone = '';
+
+        function showMsg(id, text, type = 'muted') {
+            const el = document.getElementById(id);
+            el.className = `small mt-2 text-${type}`;
+            el.innerText = text;
+        }
+
+        function renderTargetEditor() {
+            const root = document.getElementById('target-editor');
+            root.innerHTML = '';
+            editableTargets.forEach((target, idx) => {
+                const row = document.createElement('div');
+                row.className = 'target-row';
+                row.innerHTML = `
+                    <input type="text" class="form-control form-control-sm" placeholder="Target name" value="${target.name || ''}" data-type="name" data-idx="${idx}">
+                    <div class="target-row-controls">
+                        <select class="form-select form-select-sm" data-type="kind" data-idx="${idx}">
+                            <option value="auto" ${target.kind === 'auto' ? 'selected' : ''}>auto</option>
+                            <option value="label_group" ${target.kind === 'label_group' ? 'selected' : ''}>label_group</option>
+                            <option value="label" ${target.kind === 'label' ? 'selected' : ''}>label</option>
+                        </select>
+                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" placeholder="MA win" title="5m points: 12=1h, 72=6h, 144=12h, 288=24h max. Daily chart MA uses days as points: 7=7d." value="${target.blocked_ma_window || ''}" data-type="ma_window" data-idx="${idx}">
+                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" placeholder="Anomaly %" value="${target.blocked_anomaly_pct || ''}" data-type="anomaly_pct" data-idx="${idx}">
+                        <button type="button" class="btn btn-outline-danger btn-sm w-100" data-type="remove" data-idx="${idx}">Remove</button>
+                    </div>
+                `;
+                root.appendChild(row);
+            });
+
+            root.querySelectorAll('[data-type="name"]').forEach((el) => el.addEventListener('input', (e) => {
+                editableTargets[Number(e.target.dataset.idx)].name = e.target.value;
+            }));
+            root.querySelectorAll('[data-type="kind"]').forEach((el) => el.addEventListener('change', (e) => {
+                editableTargets[Number(e.target.dataset.idx)].kind = e.target.value;
+            }));
+            root.querySelectorAll('[data-type="ma_window"]').forEach((el) => el.addEventListener('input', (e) => {
+                const raw = String(e.target.value || '').trim();
+                editableTargets[Number(e.target.dataset.idx)].blocked_ma_window = raw === '' ? 0 : Number(raw);
+            }));
+            root.querySelectorAll('[data-type="anomaly_pct"]').forEach((el) => el.addEventListener('input', (e) => {
+                const raw = String(e.target.value || '').trim();
+                editableTargets[Number(e.target.dataset.idx)].blocked_anomaly_pct = raw === '' ? 0 : Number(raw);
+            }));
+            root.querySelectorAll('[data-type="remove"]').forEach((el) => el.addEventListener('click', (e) => {
+                editableTargets.splice(Number(e.target.dataset.idx), 1);
+                renderTargetEditor();
+            }));
+        }
+
+        async function loadTrafficSettings() {
+            const r = await fetch('/api/config/targets');
+            if (!r.ok) throw new Error(`Load traffic settings failed (${r.status})`);
+            const d = await r.json();
+            historyDays = Number(d.history_days || 365);
+            blockedMAWindow = Number(d.blocked_ma_window || 12);
+            blockedAnomalyPct = Number(d.blocked_anomaly_pct || 50);
+            blockedAnomalyBaseline = String(d.blocked_anomaly_baseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
+            blockedAnomalyDays = Number(d.blocked_anomaly_days || 7);
+            blockedAnomalyMinPct = Number(d.blocked_anomaly_min_pct || 70);
+            venMAWindow = Number(d.ven_ma_window || blockedMAWindow || 12);
+            venAnomalyPct = Number(d.ven_anomaly_pct || blockedAnomalyPct || 50);
+            tamperingMAWindow = Number(d.tampering_ma_window || blockedMAWindow || 12);
+            tamperingAnomalyPct = Number(d.tampering_anomaly_pct || blockedAnomalyPct || 50);
+            bindAddress = String(d.bind_address || ':18443').trim();
+            publicBaseURL = String(d.public_base_url || 'http://localhost:18443').trim();
+            timezone = String(d.timezone || '').trim();
+            document.getElementById('history-days').value = historyDays;
+            document.getElementById('blocked-ma-window').value = blockedMAWindow;
+            document.getElementById('blocked-anomaly-pct').value = blockedAnomalyPct;
+            document.getElementById('blocked-anomaly-baseline').value = blockedAnomalyBaseline;
+            document.getElementById('blocked-anomaly-days').value = blockedAnomalyDays;
+            document.getElementById('blocked-anomaly-min-pct').value = blockedAnomalyMinPct;
+            document.getElementById('ven-ma-window').value = venMAWindow;
+            document.getElementById('ven-anomaly-pct').value = venAnomalyPct;
+            document.getElementById('tampering-ma-window').value = tamperingMAWindow;
+            document.getElementById('tampering-anomaly-pct').value = tamperingAnomalyPct;
+            document.getElementById('bind-address').value = bindAddress;
+            document.getElementById('public-base-url').value = publicBaseURL;
+            document.getElementById('timezone').value = timezone;
+            document.getElementById('source-exclusions').value = (d.traffic_source_exclusions || []).map((t) => t.name || '').filter((n) => n).join(', ');
+            editableTargets = (d.traffic_targets || []).map((t) => ({
+                name: t.name || '',
+                kind: t.kind || 'auto',
+                blocked_ma_window: Number(t.blocked_ma_window || 0),
+                blocked_anomaly_pct: Number(t.blocked_anomaly_pct || 0)
+            }));
+            renderTargetEditor();
+        }
+
+        async function saveTrafficSettings() {
+            const cleaned = editableTargets
+                .map((t) => ({
+                    name: (t.name || '').trim(),
+                    kind: (t.kind || 'auto').trim(),
+                    blocked_ma_window: Number(t.blocked_ma_window || 0),
+                    blocked_anomaly_pct: Number(t.blocked_anomaly_pct || 0)
+                }))
+                .map((t) => {
+                    if (!Number.isFinite(t.blocked_ma_window) || t.blocked_ma_window < 2) t.blocked_ma_window = 0;
+                    if (t.blocked_ma_window > 288) t.blocked_ma_window = 288;
+                    if (!Number.isFinite(t.blocked_anomaly_pct) || t.blocked_anomaly_pct < 1) t.blocked_anomaly_pct = 0;
+                    if (t.blocked_anomaly_pct > 10000) t.blocked_anomaly_pct = 10000;
+                    return t;
+                })
+                .filter((t) => t.name !== '');
+            if (cleaned.length === 0) {
+                showMsg('msg-traffic', 'Add at least one target before saving.', 'danger');
+                return;
+            }
+            let parsedDays = Number(document.getElementById('history-days').value || historyDays || 365);
+            if (!Number.isFinite(parsedDays) || parsedDays < 1) parsedDays = 365;
+            if (parsedDays > 3650) parsedDays = 3650;
+            let parsedMAWindow = Number(document.getElementById('blocked-ma-window').value || blockedMAWindow || 12);
+            if (!Number.isFinite(parsedMAWindow) || parsedMAWindow < 2) parsedMAWindow = 12;
+            if (parsedMAWindow > 288) parsedMAWindow = 288;
+            let parsedAnomalyPct = Number(document.getElementById('blocked-anomaly-pct').value || blockedAnomalyPct || 50);
+            if (!Number.isFinite(parsedAnomalyPct) || parsedAnomalyPct < 1) parsedAnomalyPct = 50;
+            if (parsedAnomalyPct > 10000) parsedAnomalyPct = 10000;
+            const parsedBaseline = String(document.getElementById('blocked-anomaly-baseline').value || blockedAnomalyBaseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
+            let parsedBaselineDays = Number(document.getElementById('blocked-anomaly-days').value || blockedAnomalyDays || 7);
+            if (!Number.isFinite(parsedBaselineDays) || parsedBaselineDays < 1) parsedBaselineDays = 7;
+            if (parsedBaselineDays > 3650) parsedBaselineDays = 3650;
+            let parsedBaselineMinPct = Number(document.getElementById('blocked-anomaly-min-pct').value || blockedAnomalyMinPct || 70);
+            if (!Number.isFinite(parsedBaselineMinPct) || parsedBaselineMinPct < 1) parsedBaselineMinPct = 70;
+            if (parsedBaselineMinPct > 100) parsedBaselineMinPct = 100;
+            let parsedVenMAWindow = Number(document.getElementById('ven-ma-window').value || venMAWindow || parsedMAWindow || 12);
+            if (!Number.isFinite(parsedVenMAWindow) || parsedVenMAWindow < 2) parsedVenMAWindow = parsedMAWindow || 12;
+            if (parsedVenMAWindow > 288) parsedVenMAWindow = 288;
+            let parsedVenAnomalyPct = Number(document.getElementById('ven-anomaly-pct').value || venAnomalyPct || parsedAnomalyPct || 50);
+            if (!Number.isFinite(parsedVenAnomalyPct) || parsedVenAnomalyPct < 1) parsedVenAnomalyPct = parsedAnomalyPct || 50;
+            if (parsedVenAnomalyPct > 10000) parsedVenAnomalyPct = 10000;
+            let parsedTamperingMAWindow = Number(document.getElementById('tampering-ma-window').value || tamperingMAWindow || parsedMAWindow || 12);
+            if (!Number.isFinite(parsedTamperingMAWindow) || parsedTamperingMAWindow < 2) parsedTamperingMAWindow = parsedMAWindow || 12;
+            if (parsedTamperingMAWindow > 288) parsedTamperingMAWindow = 288;
+            let parsedTamperingAnomalyPct = Number(document.getElementById('tampering-anomaly-pct').value || tamperingAnomalyPct || parsedAnomalyPct || 50);
+            if (!Number.isFinite(parsedTamperingAnomalyPct) || parsedTamperingAnomalyPct < 1) parsedTamperingAnomalyPct = parsedAnomalyPct || 50;
+            if (parsedTamperingAnomalyPct > 10000) parsedTamperingAnomalyPct = 10000;
+            const parsedBindAddress = String(document.getElementById('bind-address').value || bindAddress || ':18443').trim();
+            const parsedPublicBaseURL = String(document.getElementById('public-base-url').value || publicBaseURL || 'http://localhost:18443').trim();
+            const parsedTimezone = String(document.getElementById('timezone').value || timezone || '').trim();
+            const exclusions = String(document.getElementById('source-exclusions').value || '')
+                .split(',')
+                .map((n) => n.trim())
+                .filter((n) => n.length > 0)
+                .map((name) => ({ name, kind: 'auto' }));
+
+            const r = await fetch('/api/config/targets', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    traffic_targets: cleaned,
+                    traffic_source_exclusions: exclusions,
+                    history_days: Math.floor(parsedDays),
+                    blocked_ma_window: Math.floor(parsedMAWindow),
+                    blocked_anomaly_pct: Math.floor(parsedAnomalyPct),
+                    blocked_anomaly_baseline: parsedBaseline,
+                    blocked_anomaly_days: Math.floor(parsedBaselineDays),
+                    blocked_anomaly_min_pct: parsedBaselineMinPct,
+                    ven_ma_window: Math.floor(parsedVenMAWindow),
+                    ven_anomaly_pct: Math.floor(parsedVenAnomalyPct),
+                    tampering_ma_window: Math.floor(parsedTamperingMAWindow),
+                    tampering_anomaly_pct: Math.floor(parsedTamperingAnomalyPct),
+                    timezone: parsedTimezone,
+                    bind_address: parsedBindAddress,
+                    public_base_url: parsedPublicBaseURL
+                })
+            });
+            if (!r.ok) {
+                showMsg('msg-traffic', `Save failed (${r.status})`, 'danger');
+                return;
+            }
+            showMsg('msg-traffic', 'Traffic/data settings saved.', 'success');
+            await loadTrafficSettings();
+        }
+
+        async function refreshNow() {
+            const r = await fetch('/api/refresh', { method: 'POST' });
+            if (!r.ok) {
+                showMsg('msg-traffic', `Refresh failed (${r.status})`, 'danger');
+                return;
+            }
+            showMsg('msg-traffic', 'Refresh started.', 'success');
+        }
+
+        function updateProviderSections() {
+            const provider = String(document.getElementById('webhook-provider').value || 'generic');
+            document.getElementById('slack-fields').classList.toggle('d-none', provider !== 'slack');
+            document.getElementById('teams-fields').classList.toggle('d-none', provider !== 'teams');
+        }
+
+        async function loadAlertSettings() {
+            const r = await fetch('/api/config/alerts');
+            if (!r.ok) throw new Error(`Load alert settings failed (${r.status})`);
+            const d = await r.json();
+            document.getElementById('webhook-enabled').value = d.webhook_enabled ? 'true' : 'false';
+            document.getElementById('webhook-provider').value = d.webhook_provider || 'generic';
+            document.getElementById('webhook-url').value = d.webhook_url || '';
+            document.getElementById('slack-channel').value = d.webhook_slack_channel || '';
+            document.getElementById('slack-username').value = d.webhook_slack_username || '';
+            document.getElementById('slack-icon').value = d.webhook_slack_icon_emoji || '';
+            document.getElementById('teams-title-prefix').value = d.webhook_teams_title_prefix || '';
+            updateProviderSections();
+        }
+
+        async function saveAlertSettings() {
+            const body = {
+                webhook_enabled: document.getElementById('webhook-enabled').value === 'true',
+                webhook_provider: String(document.getElementById('webhook-provider').value || 'generic').trim(),
+                webhook_url: String(document.getElementById('webhook-url').value || '').trim(),
+                webhook_slack_channel: String(document.getElementById('slack-channel').value || '').trim(),
+                webhook_slack_username: String(document.getElementById('slack-username').value || '').trim(),
+                webhook_slack_icon_emoji: String(document.getElementById('slack-icon').value || '').trim(),
+                webhook_teams_title_prefix: String(document.getElementById('teams-title-prefix').value || '').trim()
+            };
+            const r = await fetch('/api/config/alerts', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!r.ok) {
+                showMsg('msg-alerts', `Save failed (${r.status})`, 'danger');
+                return;
+            }
+            showMsg('msg-alerts', 'Alerting settings saved.', 'success');
+        }
+
+        async function testWebhook() {
+            const r = await fetch('/api/webhook/test', { method: 'POST' });
+            if (!r.ok) {
+                const txt = await r.text();
+                showMsg('msg-alerts', `Webhook test failed: ${txt || r.status}`, 'danger');
+                return;
+            }
+            showMsg('msg-alerts', 'Webhook test sent.', 'success');
+        }
+
+        UICommon.applyTheme(THEME_KEY, 'btn-theme');
+        document.getElementById('btn-theme').addEventListener('click', () => {
+            UICommon.setTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark', THEME_KEY, 'btn-theme');
+        });
+        document.getElementById('webhook-provider').addEventListener('change', updateProviderSections);
+        document.getElementById('btn-add-target').addEventListener('click', () => {
+            editableTargets.push({ name: '', kind: 'auto', blocked_ma_window: 0, blocked_anomaly_pct: 0 });
+            renderTargetEditor();
+        });
+        document.getElementById('btn-save-traffic').addEventListener('click', saveTrafficSettings);
+        document.getElementById('btn-refresh-now').addEventListener('click', refreshNow);
+        document.getElementById('btn-save-alerts').addEventListener('click', saveAlertSettings);
+        document.getElementById('btn-test-webhook').addEventListener('click', testWebhook);
+
+        Promise.all([loadTrafficSettings(), loadAlertSettings()]).catch((e) => {
+            showMsg('msg-traffic', e.message, 'danger');
+            showMsg('msg-alerts', e.message, 'danger');
+        });
+    </script>
+</body>
+</html>

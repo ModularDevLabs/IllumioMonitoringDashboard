@@ -1,0 +1,29 @@
+{
+  "pce_url": "https://your-pce.example.com:8443",
+  "api_key": "your_api_key",
+  "api_secret": "your_api_secret",
+  "org_id": "1",
+  "timezone": "America/Chicago",
+  "bind_address": ":18443",
+  "public_base_url": "http://localhost:18443",
+  "history_days": 365,
+  "blocked_ma_window": 12,
+  "blocked_anomaly_pct": 50,
+  "blocked_anomaly_baseline": "5m",
+  "blocked_anomaly_days": 7,
+  "blocked_anomaly_min_coverage_pct": 70,
+  "ven_ma_window": 12,
+  "ven_anomaly_pct": 50,
+  "tampering_ma_window": 12,
+  "tampering_anomaly_pct": 50,
+  "traffic_targets": [
+    { "name": "LG-E-PROD-ENVS", "kind": "auto" },
+    { "name": "LG-E-NONPROD-ENVS", "kind": "auto" }
+  ],
+  "traffic_source_exclusions": [
+    { "name": "LG-SCANNERS", "kind": "auto" }
+  ],
+  "webhook_enabled": false,
+  "webhook_provider": "generic",
+  "webhook_url": ""
+}

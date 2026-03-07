@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Illumio Drilldown</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --illumio-orange: rgb(250, 102, 36);
+            --bg: #f8f9fa;
+            --text: #111;
+            --card-bg: #fff;
+            --muted: #6c757d;
+        }
+        body[data-theme="dark"] {
+            --bg: #393b3f;
+            --text: #f7fafc;
+            --card-bg: #4a4e54;
+            --muted: #e3eaf0;
+        }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-size: 15px;
+            line-height: 1.45;
+            letter-spacing: 0.01em;
+        }
+        .topbar {
+            background: var(--illumio-orange);
+            color: white;
+            padding: 16px 0;
+            margin-bottom: 20px;
+        }
+        .card {
+            border: 1px solid rgba(0,0,0,0.06);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            border-radius: 12px;
+            background: var(--card-bg);
+        }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+        .chart-wrap { height: 330px; }
+        .trend-controls { gap: 8px; }
+        .range-controls { gap: 6px; }
+        .status-meta {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+        .text-muted { color: var(--muted) !important; }
+        body[data-theme="dark"] .card,
+        body[data-theme="dark"] .card h1,
+        body[data-theme="dark"] .card h2,
+        body[data-theme="dark"] .card h3,
+        body[data-theme="dark"] .card h4,
+        body[data-theme="dark"] .card h5,
+        body[data-theme="dark"] .card h6,
+        body[data-theme="dark"] .card div,
+        body[data-theme="dark"] .card p,
+        body[data-theme="dark"] .card span,
+        body[data-theme="dark"] .card li {
+            color: var(--text);
+        }
+        body[data-theme="dark"] .list-group-item {
+            background: #575e67;
+            color: var(--text);
+            border-color: #6f7782;
+        }
+        body[data-theme="dark"] .btn-outline-primary,
+        body[data-theme="dark"] .btn-outline-secondary {
+            color: #f6f9fc;
+            border-color: #d4dbe3;
+        }
+        body[data-theme="dark"] .btn-light {
+            background: #646d78;
+            border-color: #aeb8c4;
+            color: #fff;
+        }
+        @media print {
+            #actions { display: none !important; }
+            body { background: #fff !important; color: #000 !important; }
+            .card { box-shadow: none; border: 1px solid #ddd; }
+        }
+        @media (max-width: 768px) {
+            .chart-wrap { height: 270px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="container d-flex justify-content-between align-items-center">
+            <div class="h5 mb-0">Metric Drilldown</div>
+            <div id="actions" class="d-flex gap-2">
+                <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
+                <a id="btn-csv" href="#" class="btn btn-light btn-sm">Export CSV</a>
+                <button id="btn-pdf" type="button" class="btn btn-light btn-sm">Export PDF</button>
+                <a href="/" class="btn btn-light btn-sm">Back to Dashboard</a>
+            </div>
+        </div>
+    </div>
+
+        <div class="container">
+        <div class="card p-3">
+            <h5 id="title">Loading...</h5>
+            <div class="text-muted mb-3" id="count"></div>
+            <div class="status-meta" id="refresh-meta"></div>
+            <div id="trend-controls" class="d-none d-flex trend-controls mb-2">
+                <button id="trend-raw" type="button" class="btn btn-sm btn-outline-primary">24h (5m)</button>
+                <button id="trend-sum" type="button" class="btn btn-sm btn-outline-secondary">Daily</button>
+            </div>
+            <div id="range-controls" class="d-none d-flex range-controls mb-2">
+                <button id="range-1" type="button" class="btn btn-sm btn-outline-secondary">24h</button>
+                <button id="range-7" type="button" class="btn btn-sm btn-outline-secondary">7d</button>
+                <button id="range-30" type="button" class="btn btn-sm btn-outline-secondary">30d</button>
+                <button id="range-90" type="button" class="btn btn-sm btn-outline-secondary">90d</button>
+                <button id="range-180" type="button" class="btn btn-sm btn-outline-secondary">180d</button>
+                <button id="range-365" type="button" class="btn btn-sm btn-outline-secondary">365d</button>
+            </div>
+            <div id="trend-wrap" class="chart-wrap mb-3 d-none">
+                <canvas id="trend-chart"></canvas>
+            </div>
+            <ul class="list-group" id="items"></ul>
+        </div>
+    </div>
+
+    <script src="/static/ui-common.js"></script>
+    <script>
+        let trendChart = null;
+        let trendPoints = [];
+        let trendMode = 'raw';
+        let trendBaseline = 0;
+        let trendBaselineCaptured = null;
+        let currentMetric = '';
+        let trend24h = [];
+        let trendDaily = [];
+        let trendMA24h = [];
+        let trendMADaily = [];
+        let blockedMAWindow = 12;
+        let blockedAnomalyPct = 50;
+        let blockedAnomalySource = '5m';
+        const THEME_KEY = 'illumio_theme';
+        let dayRange = 30;
+        let nextRefreshAt = null;
+        let statusTimer = null;
+        let lastSnapshotTS = null;
+
+        function queryMetric() {
+            const p = new URLSearchParams(window.location.search);
+            return p.get('metric') || '';
+        }
+
+        function queryTarget() {
+            const p = new URLSearchParams(window.location.search);
+            return p.get('target') || '';
+        }
+
+        function updateTrendButtons() {
+            const raw = document.getElementById('trend-raw');
+            const sum = document.getElementById('trend-sum');
+            raw.className = `btn btn-sm ${trendMode === 'raw' ? 'btn-primary' : 'btn-outline-primary'}`;
+            sum.className = `btn btn-sm ${trendMode === 'sum' ? 'btn-primary' : 'btn-outline-secondary'}`;
+        }
+
+        function updateRangeButtons() {
+            [1, 7, 30, 90, 180, 365].forEach((d) => {
+                const btn = document.getElementById(`range-${d}`);
+                if (!btn) return;
+                btn.className = `btn btn-sm ${dayRange === d ? 'btn-primary' : 'btn-outline-secondary'}`;
+            });
+        }
+
+        function isDarkTheme() {
+            return document.body.getAttribute('data-theme') === 'dark';
+        }
+
+        function applyTheme(theme) {
+            UICommon.setTheme(theme, THEME_KEY, 'btn-theme');
+            if (trendPoints && trendPoints.length > 0) {
+                renderTrend(trendPoints, document.getElementById('title').innerText, { hideList: currentMetric === 'blocked_target', showControls: true });
+            }
+        }
+
+        function initTheme() {
+            UICommon.applyTheme(THEME_KEY, 'btn-theme');
+            document.getElementById('btn-theme').addEventListener('click', () => {
+                applyTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+            });
+        }
+
+        function updateRefreshMeta() {
+            const el = document.getElementById('refresh-meta');
+            if (!el) return;
+            el.textContent = `${UICommon.nextRefreshText(nextRefreshAt)} | ${UICommon.formatStaleness(UICommon.parseTS(lastSnapshotTS))}`;
+        }
+
+        function filteredDaily(points) {
+            if (!points || points.length === 0) return [];
+            const cutoff = Date.now() - dayRange * 24 * 60 * 60 * 1000;
+            return points.filter((p) => new Date(p.timestamp).getTime() >= cutoff);
+        }
+
+        function setExportLinks() {
+            const metric = queryMetric();
+            const target = queryTarget();
+            const p = new URLSearchParams();
+            if (metric) p.set('metric', metric);
+            if (target) p.set('target', target);
+            document.getElementById('btn-csv').href = `/api/export/drilldown.csv?${p.toString()}`;
+            document.getElementById('btn-pdf').addEventListener('click', () => window.print());
+        }
+
+        function valuesForMode(points) {
+            const raw = points.map((p) => p.value || 0);
+            if (currentMetric === 'ven_warning' || currentMetric === 'ven_error') {
+                return raw;
+            }
+            return raw;
+        }
+
+        function renderTrend(points, title, opts = {}) {
+            const hideList = !!opts.hideList;
+            const showControls = !!opts.showControls;
+            const wrap = document.getElementById('trend-wrap');
+            const list = document.getElementById('items');
+            const controls = document.getElementById('trend-controls');
+            const range = document.getElementById('range-controls');
+            const forceZeroChart = currentMetric === 'ven_warning' ||
+                currentMetric === 'ven_error' ||
+                currentMetric === 'tampering' ||
+                String(currentMetric || '').startsWith('mode_') ||
+                currentMetric === 'blocked_target';
+            if ((!points || points.length === 0) && currentMetric === 'blocked_target' && trendBaseline > 0) {
+                points = [{ timestamp: trendBaselineCaptured || new Date().toISOString(), value: trendBaseline }];
+            }
+            if ((!points || points.length === 0) && forceZeroChart) {
+                points = [{ timestamp: new Date().toISOString(), value: 0 }];
+            }
+            if (!points || points.length === 0) {
+                wrap.classList.add('d-none');
+                controls.classList.add('d-none');
+                range.classList.add('d-none');
+                list.classList.remove('d-none');
+                return;
+            }
+            wrap.classList.remove('d-none');
+            if (showControls) {
+                controls.classList.remove('d-none');
+                updateTrendButtons();
+                if (trendMode === 'sum') {
+                    range.classList.remove('d-none');
+                    updateRangeButtons();
+                    points = filteredDaily(points);
+                } else {
+                    range.classList.add('d-none');
+                }
+            } else {
+                controls.classList.add('d-none');
+                range.classList.add('d-none');
+                trendMode = 'raw';
+            }
+            if (hideList) {
+                list.classList.add('d-none');
+            } else {
+                list.classList.remove('d-none');
+            }
+
+            const isDaily = trendMode === 'sum';
+            const labels = points.map((p) => isDaily
+                ? new Date(p.timestamp).toLocaleDateString()
+                : new Date(p.timestamp).toLocaleTimeString());
+            let values = valuesForMode(points);
+            let maPoints = trendMode === 'sum' ? trendMADaily : trendMA24h;
+            if (trendMode === 'sum') maPoints = filteredDaily(maPoints);
+            const ctx = document.getElementById('trend-chart').getContext('2d');
+            const tickColor = isDarkTheme() ? '#e7edf3' : '#333';
+            const gridColor = isDarkTheme() ? 'rgba(220,228,235,0.22)' : 'rgba(0,0,0,0.10)';
+            const datasets = [{
+                label: trendMode === 'sum'
+                    ? (title || 'Trend') + ' (daily)'
+                    : (title || 'Trend') + ' (24h, 5m)',
+                data: values,
+                borderColor: 'rgb(250, 102, 36)',
+                backgroundColor: 'rgba(250, 102, 36, 0.15)',
+                tension: 0.25,
+                fill: true,
+                pointRadius: 2
+            }];
+            if (maPoints && maPoints.length > 0) {
+                const maByTS = new Map(maPoints.map((p) => [new Date(p.timestamp).toISOString(), Number(p.value || 0)]));
+                const maLabel = blockedAnomalySource === 'daily'
+                    ? `Daily Baseline (${blockedMAWindow} day${blockedMAWindow === 1 ? '' : 's'}, ${blockedAnomalyPct}% threshold)`
+                    : `Moving Avg (${blockedMAWindow} points, ${blockedAnomalyPct}% threshold)`;
+                datasets.push({
+                    label: maLabel,
+                    data: points.map((p) => maByTS.get(new Date(p.timestamp).toISOString()) ?? null),
+                    borderColor: '#17a2b8',
+                    backgroundColor: 'rgba(23, 162, 184, 0.10)',
+                    tension: 0.2,
+                    fill: false,
+                    pointRadius: 0,
+                    borderWidth: 2
+                });
+            }
+            if (trendChart) trendChart.destroy();
+            trendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            ticks: { color: tickColor },
+                            grid: { color: gridColor }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: { color: tickColor },
+                            grid: { color: gridColor }
+                        }
+                    },
+                    plugins: { legend: { labels: { color: tickColor } } },
+                    animation: false
+                }
+            });
+        }
+
+        function bindTrendControls() {
+            document.getElementById('trend-raw').addEventListener('click', () => {
+                trendMode = 'raw';
+                trendPoints = trend24h;
+                renderTrend(trendPoints, document.getElementById('title').innerText, { hideList: currentMetric === 'blocked_target', showControls: true });
+            });
+            document.getElementById('trend-sum').addEventListener('click', () => {
+                trendMode = 'sum';
+                trendPoints = trendDaily;
+                renderTrend(trendPoints, document.getElementById('title').innerText, { hideList: currentMetric === 'blocked_target', showControls: true });
+            });
+            [1, 7, 30, 90, 180, 365].forEach((d) => {
+                const btn = document.getElementById(`range-${d}`);
+                if (!btn) return;
+                btn.addEventListener('click', () => {
+                    dayRange = d;
+                    if (trendMode === 'sum') {
+                        trendPoints = trendDaily;
+                        renderTrend(trendPoints, document.getElementById('title').innerText, { hideList: currentMetric === 'blocked_target', showControls: true });
+                    }
+                });
+            });
+        }
+
+        async function load() {
+            const metric = queryMetric();
+            const target = queryTarget();
+            if (!metric) {
+                document.getElementById('title').innerText = 'Missing metric parameter';
+                return;
+            }
+            let endpoint = `/api/drilldown?metric=${encodeURIComponent(metric)}`;
+            if (target) endpoint += `&target=${encodeURIComponent(target)}`;
+            const r = await fetch(endpoint);
+            if (!r.ok) {
+                document.getElementById('title').innerText = `Failed to load metric (${r.status})`;
+                return;
+            }
+            const d = await r.json();
+            try {
+                const s = await fetch('/api/stats?ts=' + Date.now(), { cache: 'no-store' });
+                if (s.ok) {
+                    const sj = await s.json();
+                    lastSnapshotTS = sj.timestamp;
+                }
+            } catch (e) {}
+            nextRefreshAt = Date.now() + 300000;
+            updateRefreshMeta();
+            currentMetric = d.metric || metric;
+            document.getElementById('title').innerText = d.title;
+            if (d.metric === 'blocked_target') {
+                document.getElementById('trend-raw').innerText = '24h (5m)';
+                document.getElementById('trend-sum').innerText = 'Daily';
+                trendBaseline = Number(d.baseline_24h || 0);
+                trendBaselineCaptured = d.baseline_captured_utc || null;
+                trend24h = d.trend_24h || d.trend || [];
+                trendDaily = d.trend_daily || [];
+                trendMA24h = d.trend_ma_24h || [];
+                trendMADaily = d.trend_ma_daily || [];
+                blockedMAWindow = Number(d.blocked_ma_window || blockedMAWindow || 12);
+                blockedAnomalyPct = Number(d.blocked_anomaly_pct || blockedAnomalyPct || 50);
+                blockedAnomalySource = String(d.anomaly_source || '5m').toLowerCase() === 'daily' ? 'daily' : '5m';
+                const maWarmup = trendMA24h.length === 0
+                    ? (blockedAnomalySource === 'daily'
+                        ? ` | Baseline warming up (target ${blockedMAWindow} day window)`
+                        : ` | MA warming up (needs > ${blockedMAWindow} points)`)
+                    : ` | MA points: ${trendMA24h.length}`;
+                document.getElementById('count').innerText = `${trend24h.length} point(s) in 24h(5m), ${trendDaily.length} point(s) daily${maWarmup}`;
+                trendMode = 'raw';
+                trendPoints = trend24h;
+                renderTrend(trendPoints, d.target ? `${d.target} blocked traffic` : 'Blocked traffic', { hideList: true, showControls: true });
+                return;
+            }
+            if (d.metric === 'ven_warning' || d.metric === 'ven_error') {
+                document.getElementById('trend-raw').innerText = '24h (5m)';
+                document.getElementById('trend-sum').innerText = 'Daily';
+            }
+            document.getElementById('count').innerText = `${d.count} workload(s)`;
+            const list = document.getElementById('items');
+            list.classList.remove('d-none');
+            list.innerHTML = '';
+            if (!d.items || d.items.length === 0) {
+                const li = document.createElement('li');
+                li.className = 'list-group-item text-muted';
+                li.innerText = 'No results for this metric in the latest collection cycle.';
+                list.appendChild(li);
+            } else {
+                d.items.forEach((name) => {
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item mono';
+                    li.innerText = name;
+                    list.appendChild(li);
+                });
+            }
+            if (d.metric === 'ven_warning' || d.metric === 'ven_error' || String(d.metric || '').startsWith('mode_')) {
+                trend24h = d.trend_24h || d.trend || [];
+                trendDaily = d.trend_daily || [];
+                trendMA24h = d.trend_ma_24h || [];
+                trendMADaily = d.trend_ma_daily || [];
+                blockedMAWindow = Number(d.anomaly_window || d.blocked_ma_window || blockedMAWindow || 12);
+                blockedAnomalyPct = Number(d.anomaly_pct || d.blocked_anomaly_pct || blockedAnomalyPct || 50);
+                blockedAnomalySource = String(d.anomaly_source || '5m').toLowerCase() === 'daily' ? 'daily' : '5m';
+                trendMode = 'raw';
+                trendPoints = trend24h;
+                document.getElementById('trend-raw').innerText = '24h (5m)';
+                document.getElementById('trend-sum').innerText = 'Daily';
+                const anomalyText = d.anomaly_reason
+                    ? ` | Anomaly: ${d.anomaly_reason}`
+                    : (d.anomalous ? ' | Anomaly: triggered' : '');
+                document.getElementById('count').innerText = `${d.count} workload(s)${anomalyText}`;
+                renderTrend(trendPoints, d.title, { hideList: false, showControls: true });
+            } else if (d.metric === 'tampering') {
+                trend24h = d.trend_24h || d.trend || [];
+                trendDaily = d.trend_daily || [];
+                trendMA24h = d.trend_ma_24h || [];
+                trendMADaily = d.trend_ma_daily || [];
+                blockedMAWindow = Number(d.anomaly_window || d.blocked_ma_window || blockedMAWindow || 12);
+                blockedAnomalyPct = Number(d.anomaly_pct || d.blocked_anomaly_pct || blockedAnomalyPct || 50);
+                blockedAnomalySource = String(d.anomaly_source || '5m').toLowerCase() === 'daily' ? 'daily' : '5m';
+                trendMode = 'raw';
+                trendPoints = trend24h;
+                const anomalyText = d.anomaly_reason
+                    ? ` | Anomaly: ${d.anomaly_reason}`
+                    : (d.anomalous ? ' | Anomaly: triggered' : '');
+                document.getElementById('count').innerText = `${d.count} workload(s)${anomalyText}`;
+                renderTrend(trendPoints, d.title, { hideList: false, showControls: false });
+            } else {
+                document.getElementById('trend-controls').classList.add('d-none');
+                trendPoints = d.trend || [];
+                renderTrend(trendPoints, d.title, { hideList: false, showControls: false });
+            }
+        }
+
+        initTheme();
+        UICommon.applyMetricTooltips();
+        if (!statusTimer) {
+            statusTimer = setInterval(updateRefreshMeta, 1000);
+        }
+        setExportLinks();
+        bindTrendControls();
+        load();
+        setInterval(load, 300000);
+    </script>
+</body>
+</html>
