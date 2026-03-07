@@ -1,7 +1,7 @@
-# Handoff Notes (IllumioDashboard-rolling-venreasons-v1)
+# Handoff Notes (IllumioMonitoringDashboard)
 
 ## Active Fork
-- `/home/ted/Codex/IllumioDashboard-rolling-venreasons-v1`
+- `/home/ted/Codex/IllumioMonitoringDashboard`
 
 ## Scope in This Fork
 - All prior rolling/UI-hardening/persistent-state capabilities retained.
@@ -101,7 +101,7 @@
 - `./scripts/rebuild-binaries.sh`
 
 ## Resume Checklist (Post-Compact)
-1. Use fork: `/home/ted/Codex/IllumioDashboard-rolling-venreasons-v1`
+1. Use fork: `/home/ted/Codex/IllumioMonitoringDashboard`
 2. Run current binary from that folder.
 3. If needed, verify settings page has:
   - blocked MA/anomaly
