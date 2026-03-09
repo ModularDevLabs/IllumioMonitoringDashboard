@@ -196,7 +196,7 @@ Runtime state is stored in a shared data directory:
 | `blocked_ma_window` | Global 5m moving-average window points | `12` | Range `2..288` |
 | `blocked_anomaly_pct` | Global blocked anomaly threshold percent | `50` | Range `1..10000` |
 | `blocked_anomaly_baseline` | Baseline source for blocked anomaly detection | `5m` | `5m` compares latest 5m to 5m MA; `daily` compares latest 5m to N-day baseline |
-| `blocked_anomaly_days` | Daily baseline window days (when baseline=`daily`) | `7` | Range `1..3650` |
+| `blocked_anomaly_days` | Daily baseline lookback days (when baseline=`daily`) | `7` | Range `1..3650`; averages last N daily totals, then compares latest 5m value vs that daily baseline |
 | `blocked_anomaly_min_coverage_pct` | Minimum daily baseline coverage before anomaly alerts are allowed | `70` | Range `1..100`; lower coverage stays in warmup/suppressed state |
 | `ven_ma_window` | VEN warning/error MA window points | blocked MA fallback | Range `2..288` |
 | `ven_anomaly_pct` | VEN warning/error anomaly threshold percent | blocked threshold fallback | Range `1..10000` |
