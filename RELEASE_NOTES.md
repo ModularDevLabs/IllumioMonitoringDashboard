@@ -1,5 +1,26 @@
 # Release Notes
 
+## v1.0.1 - 2026-03-09
+
+Patch release focused on chart UX and daily-history correctness.
+
+### Fixes
+- Fixed chart zoom modal behavior:
+  - resolved canvas reuse errors (`Canvas is already in use`)
+  - resolved Chart.js scriptable resolver recursion errors in zoom view
+  - drilldown/report charts now expand reliably when clicked
+- Added `Trend View` shortcut button to drilldown top navigation.
+- Fixed blocked daily trend continuity:
+  - daily trend now includes a live "today-so-far" point from rolling 5m data
+  - prevents daily chart from appearing stuck at prior day while current day is in progress
+- Fixed DST-related daily snapshot gap:
+  - changed daily snapshot windowing to calendar-day math (`AddDate(0,0,-1)`)
+  - prevents missing/misaligned daily points around DST transitions (for example March 8, 2026 in US timezones)
+
+### Operational Notes
+- No config migration required.
+- Existing persisted history files remain compatible.
+
 ## v1.0.0 - 2026-03-09
 
 First production-ready public release of **Illumio Monitoring Dashboard**.
