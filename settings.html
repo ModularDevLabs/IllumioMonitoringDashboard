@@ -129,6 +129,14 @@
                     <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="blocked-anomaly-days" value="7">
                 </div>
                 <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="daily-ma-window">
+                        Daily Moving Average Window (points)
+                        <span class="help-tip" title="Daily points: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d. Used for Daily trend MA overlays and blocked daily-baseline overlays.">?</span>
+                    </label>
+                    <input type="number" min="2" max="3650" step="1" class="form-control form-control-sm" id="daily-ma-window" value="7">
+                    <div class="small text-muted mt-1">Reference: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d.</div>
+                </div>
+                <div class="mb-2">
                     <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-min-pct">Blocked Baseline Min Coverage (%)</label>
                     <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="blocked-anomaly-min-pct" value="70">
                     <div class="small text-muted mt-1">If baseline is not fully built yet, alerts are suppressed until this coverage threshold is met (for example 70% means 5 of 7 days).</div>
@@ -160,6 +168,11 @@
                 <div class="mb-2">
                     <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-pct">Tampering Anomaly Threshold (%)</label>
                     <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-anomaly-pct" value="50">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="tampering-daily-anomaly-pct">Daily Tampering Anomaly Threshold (%)</label>
+                    <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-daily-anomaly-pct" value="50">
+                    <div class="small text-muted mt-1">Used when evaluating tampering anomalies against Daily trend baseline.</div>
                 </div>
                 <div class="mb-2">
                     <label class="form-label form-label-sm small text-muted mb-1" for="source-exclusions">Traffic Source Exclusions (comma-separated names)</label>
@@ -194,7 +207,11 @@
                     <div class="small text-muted mt-1">Daily buckets and daily charts use this timezone. Leave blank for server local time.</div>
                 </div>
 
-                <div class="small mt-2 text-muted">These are saved with Traffic/Data settings and take effect on next start.</div>
+                <div class="d-flex flex-wrap gap-2 mt-2">
+                    <button class="btn btn-outline-primary btn-sm" id="btn-save-hosting" type="button">Save Hosting</button>
+                </div>
+                <div class="small mt-2" id="msg-hosting"></div>
+                <div class="small mt-2 text-muted">Hosting changes take effect on next start.</div>
             </details>
         </div>
 
@@ -268,10 +285,12 @@
         let blockedAnomalyBaseline = '5m';
         let blockedAnomalyDays = 7;
         let blockedAnomalyMinPct = 70;
+        let dailyMAWindow = 7;
         let venMAWindow = 12;
         let venAnomalyPct = 50;
         let tamperingMAWindow = 12;
         let tamperingAnomalyPct = 50;
+        let tamperingDailyAnomalyPct = 50;
         let bindAddress = ':18443';
         let publicBaseURL = 'http://localhost:18443';
         let timezone = '';
@@ -334,10 +353,12 @@
             blockedAnomalyBaseline = String(d.blocked_anomaly_baseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
             blockedAnomalyDays = Number(d.blocked_anomaly_days || 7);
             blockedAnomalyMinPct = Number(d.blocked_anomaly_min_pct || 70);
+            dailyMAWindow = Number(d.daily_ma_window || blockedAnomalyDays || 7);
             venMAWindow = Number(d.ven_ma_window || blockedMAWindow || 12);
             venAnomalyPct = Number(d.ven_anomaly_pct || blockedAnomalyPct || 50);
             tamperingMAWindow = Number(d.tampering_ma_window || blockedMAWindow || 12);
             tamperingAnomalyPct = Number(d.tampering_anomaly_pct || blockedAnomalyPct || 50);
+            tamperingDailyAnomalyPct = Number(d.tampering_daily_anomaly_pct || tamperingAnomalyPct || 50);
             bindAddress = String(d.bind_address || ':18443').trim();
             publicBaseURL = String(d.public_base_url || 'http://localhost:18443').trim();
             timezone = String(d.timezone || '').trim();
@@ -347,10 +368,12 @@
             document.getElementById('blocked-anomaly-baseline').value = blockedAnomalyBaseline;
             document.getElementById('blocked-anomaly-days').value = blockedAnomalyDays;
             document.getElementById('blocked-anomaly-min-pct').value = blockedAnomalyMinPct;
+            document.getElementById('daily-ma-window').value = dailyMAWindow;
             document.getElementById('ven-ma-window').value = venMAWindow;
             document.getElementById('ven-anomaly-pct').value = venAnomalyPct;
             document.getElementById('tampering-ma-window').value = tamperingMAWindow;
             document.getElementById('tampering-anomaly-pct').value = tamperingAnomalyPct;
+            document.getElementById('tampering-daily-anomaly-pct').value = tamperingDailyAnomalyPct;
             document.getElementById('bind-address').value = bindAddress;
             document.getElementById('public-base-url').value = publicBaseURL;
             document.getElementById('timezone').value = timezone;
@@ -365,6 +388,22 @@
         }
 
         async function saveTrafficSettings() {
+            const payload = buildTrafficDataPayload('msg-traffic');
+            if (!payload) return;
+            const r = await fetch('/api/config/targets', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!r.ok) {
+                showMsg('msg-traffic', `Save failed (${r.status})`, 'danger');
+                return;
+            }
+            showMsg('msg-traffic', 'Traffic/data settings saved.', 'success');
+            await loadTrafficSettings();
+        }
+
+        function buildTrafficDataPayload(messageId) {
             const cleaned = editableTargets
                 .map((t) => ({
                     name: (t.name || '').trim(),
@@ -381,8 +420,8 @@
                 })
                 .filter((t) => t.name !== '');
             if (cleaned.length === 0) {
-                showMsg('msg-traffic', 'Add at least one target before saving.', 'danger');
-                return;
+                showMsg(messageId, 'Add at least one target before saving.', 'danger');
+                return null;
             }
             let parsedDays = Number(document.getElementById('history-days').value || historyDays || 365);
             if (!Number.isFinite(parsedDays) || parsedDays < 1) parsedDays = 365;
@@ -400,6 +439,9 @@
             let parsedBaselineMinPct = Number(document.getElementById('blocked-anomaly-min-pct').value || blockedAnomalyMinPct || 70);
             if (!Number.isFinite(parsedBaselineMinPct) || parsedBaselineMinPct < 1) parsedBaselineMinPct = 70;
             if (parsedBaselineMinPct > 100) parsedBaselineMinPct = 100;
+            let parsedDailyMAWindow = Number(document.getElementById('daily-ma-window').value || dailyMAWindow || parsedBaselineDays || 7);
+            if (!Number.isFinite(parsedDailyMAWindow) || parsedDailyMAWindow < 2) parsedDailyMAWindow = parsedBaselineDays || 7;
+            if (parsedDailyMAWindow > 3650) parsedDailyMAWindow = 3650;
             let parsedVenMAWindow = Number(document.getElementById('ven-ma-window').value || venMAWindow || parsedMAWindow || 12);
             if (!Number.isFinite(parsedVenMAWindow) || parsedVenMAWindow < 2) parsedVenMAWindow = parsedMAWindow || 12;
             if (parsedVenMAWindow > 288) parsedVenMAWindow = 288;
@@ -412,6 +454,9 @@
             let parsedTamperingAnomalyPct = Number(document.getElementById('tampering-anomaly-pct').value || tamperingAnomalyPct || parsedAnomalyPct || 50);
             if (!Number.isFinite(parsedTamperingAnomalyPct) || parsedTamperingAnomalyPct < 1) parsedTamperingAnomalyPct = parsedAnomalyPct || 50;
             if (parsedTamperingAnomalyPct > 10000) parsedTamperingAnomalyPct = 10000;
+            let parsedTamperingDailyAnomalyPct = Number(document.getElementById('tampering-daily-anomaly-pct').value || tamperingDailyAnomalyPct || parsedTamperingAnomalyPct || 50);
+            if (!Number.isFinite(parsedTamperingDailyAnomalyPct) || parsedTamperingDailyAnomalyPct < 1) parsedTamperingDailyAnomalyPct = parsedTamperingAnomalyPct || 50;
+            if (parsedTamperingDailyAnomalyPct > 10000) parsedTamperingDailyAnomalyPct = 10000;
             const parsedBindAddress = String(document.getElementById('bind-address').value || bindAddress || ':18443').trim();
             const parsedPublicBaseURL = String(document.getElementById('public-base-url').value || publicBaseURL || 'http://localhost:18443').trim();
             const parsedTimezone = String(document.getElementById('timezone').value || timezone || '').trim();
@@ -420,33 +465,40 @@
                 .map((n) => n.trim())
                 .filter((n) => n.length > 0)
                 .map((name) => ({ name, kind: 'auto' }));
+            return {
+                traffic_targets: cleaned,
+                traffic_source_exclusions: exclusions,
+                history_days: Math.floor(parsedDays),
+                blocked_ma_window: Math.floor(parsedMAWindow),
+                blocked_anomaly_pct: Math.floor(parsedAnomalyPct),
+                blocked_anomaly_baseline: parsedBaseline,
+                blocked_anomaly_days: Math.floor(parsedBaselineDays),
+                blocked_anomaly_min_pct: parsedBaselineMinPct,
+                daily_ma_window: Math.floor(parsedDailyMAWindow),
+                ven_ma_window: Math.floor(parsedVenMAWindow),
+                ven_anomaly_pct: Math.floor(parsedVenAnomalyPct),
+                tampering_ma_window: Math.floor(parsedTamperingMAWindow),
+                tampering_anomaly_pct: Math.floor(parsedTamperingAnomalyPct),
+                tampering_daily_anomaly_pct: Math.floor(parsedTamperingDailyAnomalyPct),
+                timezone: parsedTimezone,
+                bind_address: parsedBindAddress,
+                public_base_url: parsedPublicBaseURL
+            };
+        }
 
+        async function saveHostingSettings() {
+            const payload = buildTrafficDataPayload('msg-hosting');
+            if (!payload) return;
             const r = await fetch('/api/config/targets', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    traffic_targets: cleaned,
-                    traffic_source_exclusions: exclusions,
-                    history_days: Math.floor(parsedDays),
-                    blocked_ma_window: Math.floor(parsedMAWindow),
-                    blocked_anomaly_pct: Math.floor(parsedAnomalyPct),
-                    blocked_anomaly_baseline: parsedBaseline,
-                    blocked_anomaly_days: Math.floor(parsedBaselineDays),
-                    blocked_anomaly_min_pct: parsedBaselineMinPct,
-                    ven_ma_window: Math.floor(parsedVenMAWindow),
-                    ven_anomaly_pct: Math.floor(parsedVenAnomalyPct),
-                    tampering_ma_window: Math.floor(parsedTamperingMAWindow),
-                    tampering_anomaly_pct: Math.floor(parsedTamperingAnomalyPct),
-                    timezone: parsedTimezone,
-                    bind_address: parsedBindAddress,
-                    public_base_url: parsedPublicBaseURL
-                })
+                body: JSON.stringify(payload)
             });
             if (!r.ok) {
-                showMsg('msg-traffic', `Save failed (${r.status})`, 'danger');
+                showMsg('msg-hosting', `Save failed (${r.status})`, 'danger');
                 return;
             }
-            showMsg('msg-traffic', 'Traffic/data settings saved.', 'success');
+            showMsg('msg-hosting', 'Hosting settings saved. Restart app to apply bind changes.', 'success');
             await loadTrafficSettings();
         }
 
@@ -521,6 +573,7 @@
             renderTargetEditor();
         });
         document.getElementById('btn-save-traffic').addEventListener('click', saveTrafficSettings);
+        document.getElementById('btn-save-hosting').addEventListener('click', saveHostingSettings);
         document.getElementById('btn-refresh-now').addEventListener('click', refreshNow);
         document.getElementById('btn-save-alerts').addEventListener('click', saveAlertSettings);
         document.getElementById('btn-test-webhook').addEventListener('click', testWebhook);

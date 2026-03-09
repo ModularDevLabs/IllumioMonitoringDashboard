@@ -48,6 +48,9 @@
         .actions { margin-top: 10px; display: flex; gap: 9px; flex-wrap: wrap; }
         .refresh-note { align-self: center; font-size: 0.84rem; color: var(--muted); }
         .range-controls { display: inline-flex; gap: 6px; margin-left: 2px; }
+        .mode-controls { display: inline-flex; gap: 6px; margin-left: 2px; }
+        .control-group { display: inline-flex; align-items: center; gap: 7px; }
+        .control-label { font-size: 0.8rem; color: var(--muted); font-weight: 600; letter-spacing: 0.01em; }
         .btn {
             display: inline-block;
             border: 1px solid var(--border);
@@ -136,13 +139,24 @@
             <button class="btn" id="btn-theme">Dark Mode</button>
             <button class="btn primary" id="btn-print">Print / Save as PDF</button>
             <button class="btn" id="btn-refresh-live">Refresh</button>
-            <span class="range-controls" id="range-controls">
-                <button class="btn" id="range-1">24h</button>
-                <button class="btn" id="range-7">7d</button>
-                <button class="btn" id="range-30">30d</button>
-                <button class="btn" id="range-90">90d</button>
-                <button class="btn" id="range-180">180d</button>
-                <button class="btn" id="range-365">365d</button>
+            <span class="control-group">
+                <span class="control-label">View</span>
+                <span class="mode-controls" id="mode-controls">
+                    <button class="btn" id="mode-both">Show: All</button>
+                    <button class="btn" id="mode-24h">24h (5m) Only</button>
+                    <button class="btn" id="mode-daily">Daily Only</button>
+                </span>
+            </span>
+            <span class="control-group">
+                <span class="control-label">Chart Length</span>
+                <span class="range-controls" id="range-controls">
+                    <button class="btn" id="range-1">24h</button>
+                    <button class="btn" id="range-7">7d</button>
+                    <button class="btn" id="range-30">30d</button>
+                    <button class="btn" id="range-90">90d</button>
+                    <button class="btn" id="range-180">180d</button>
+                    <button class="btn" id="range-365">365d</button>
+                </span>
             </span>
             <a class="btn" href="/api/export/report.csv">Download CSV (Excel)</a>
             <a class="btn" href="/">Back to Dashboard</a>
@@ -158,10 +172,15 @@
     <div class="panel">
         <h2>Trend Charts</h2>
         <div class="muted">Primary charts are shown first. Blocked traffic charts are grouped per target below.</div>
+        <div class="muted" id="view-mode-hint"></div>
         <div class="chart-grid mt-2" id="charts-primary"></div>
+        <details class="enforcement-block mt-2" id="ven-details">
+            <summary class="enforcement-summary" id="ven-summary">VEN Status Trends</summary>
+            <div class="chart-grid" id="charts-ven"></div>
+        </details>
         <div id="blocked-groups" class="mt-2"></div>
         <details class="enforcement-block mt-2" id="enforcement-details">
-            <summary class="enforcement-summary">Enforcement Mode Trends</summary>
+            <summary class="enforcement-summary" id="enforcement-summary">Enforcement Mode Trends</summary>
             <div class="chart-grid" id="charts-enforcement"></div>
         </details>
     </div>
@@ -179,6 +198,9 @@
     let blockedGroupSeq = 0;
     let blockedMAWindow = 12;
     let blockedAnomalyPct = 50;
+    let chartMode = 'both';
+    let chartCountByContainer = {};
+    let blockedGroupsMeta = [];
 
     function esc(s) {
         if (s === null || s === undefined) return '';
@@ -193,6 +215,13 @@
     function queryLive() {
         const p = new URLSearchParams(window.location.search);
         return p.get('live') === '1';
+    }
+
+    function queryChartMode() {
+        const p = new URLSearchParams(window.location.search);
+        const raw = String(p.get('chart_mode') || 'both').toLowerCase();
+        if (raw === '24h' || raw === 'daily' || raw === 'both') return raw;
+        return 'both';
     }
 
     function applyTheme(theme) {
@@ -230,13 +259,25 @@
     function createBlockedGroup(name) {
         const root = document.getElementById('blocked-groups');
         const id = `blocked-group-${blockedGroupSeq++}`;
+        const detailsId = `${id}-details`;
+        const summaryId = `${id}-summary`;
+        const gridId = `${id}-grid`;
         root.insertAdjacentHTML('beforeend', `
-            <details class="blocked-group">
-                <summary class="blocked-summary">Blocked Traffic - ${esc(name)}</summary>
-                <div class="chart-grid" id="${id}"></div>
+            <details class="blocked-group" id="${detailsId}">
+                <summary class="blocked-summary" id="${summaryId}">Blocked Traffic - ${esc(name)}</summary>
+                <div class="chart-grid" id="${gridId}"></div>
             </details>
         `);
-        return id;
+        return { name, detailsId, summaryId, gridId };
+    }
+
+    function chartAllowedByMode(title) {
+        const t = String(title || '');
+        const isDaily = t.includes('(Daily)');
+        const is24h = t.includes('(24h, 5m)');
+        if (chartMode === 'daily') return isDaily;
+        if (chartMode === '24h') return is24h || (!isDaily && !is24h);
+        return true;
     }
 
     function filterDaily(points) {
@@ -246,7 +287,10 @@
     }
 
     function renderLineChart(title, points, color = ORANGE, containerId, overlays = []) {
+        if (!chartAllowedByMode(title)) return;
         if (!points || !points.length) return;
+        const key = containerId || 'charts-primary';
+        chartCountByContainer[key] = (chartCountByContainer[key] || 0) + 1;
         const canvas = addChartCard(title, containerId);
         const labels = points.map((p) => new Date(p.timestamp).toLocaleString());
         const values = points.map((p) => Number(p.value || 0));
@@ -303,6 +347,62 @@
         charts.push(c);
     }
 
+    function updateModeButtons() {
+        const ids = ['both', '24h', 'daily'];
+        ids.forEach((m) => {
+            const el = document.getElementById(`mode-${m}`);
+            if (!el) return;
+            el.style.outline = m === chartMode ? '2px solid var(--illumio-orange)' : 'none';
+        });
+    }
+
+    function updateViewModeHint() {
+        const el = document.getElementById('view-mode-hint');
+        if (!el) return;
+        if (chartMode === '24h') {
+            el.textContent = 'Showing 24h (5m) charts only.';
+            return;
+        }
+        if (chartMode === 'daily') {
+            el.textContent = 'Showing Daily charts only.';
+            return;
+        }
+        el.textContent = 'Showing all chart types.';
+    }
+
+    function finalizeSectionSummariesAndExpansion() {
+        const venCount = chartCountByContainer['charts-ven'] || 0;
+        const enforcementCount = chartCountByContainer['charts-enforcement'] || 0;
+        const venSummary = document.getElementById('ven-summary');
+        const enforcementSummary = document.getElementById('enforcement-summary');
+        if (venSummary) venSummary.textContent = `VEN Status Trends (${venCount})`;
+        if (enforcementSummary) enforcementSummary.textContent = `Enforcement Mode Trends (${enforcementCount})`;
+
+        blockedGroupsMeta.forEach((g) => {
+            const cnt = chartCountByContainer[g.gridId] || 0;
+            const summary = document.getElementById(g.summaryId);
+            if (summary) summary.textContent = `Blocked Traffic - ${g.name} (${cnt})`;
+        });
+
+        const venDetails = document.getElementById('ven-details');
+        const enforcementDetails = document.getElementById('enforcement-details');
+        if (chartMode === 'both') {
+            if (venDetails) venDetails.open = false;
+            if (enforcementDetails) enforcementDetails.open = false;
+            blockedGroupsMeta.forEach((g) => {
+                const d = document.getElementById(g.detailsId);
+                if (d) d.open = false;
+            });
+            return;
+        }
+        if (venDetails) venDetails.open = venCount > 0;
+        if (enforcementDetails) enforcementDetails.open = enforcementCount > 0;
+        blockedGroupsMeta.forEach((g) => {
+            const d = document.getElementById(g.detailsId);
+            if (d) d.open = (chartCountByContainer[g.gridId] || 0) > 0;
+        });
+    }
+
     async function fetchJSON(url) {
         const r = await fetch(`${url}${url.includes('?') ? '&' : '?'}ts=${Date.now()}`, { cache: 'no-store' });
         if (!r.ok) throw new Error(`${url} failed (${r.status})`);
@@ -316,9 +416,12 @@
         }
         document.getElementById('summary').innerHTML = '';
         document.getElementById('charts-primary').innerHTML = '';
+        document.getElementById('charts-ven').innerHTML = '';
         document.getElementById('blocked-groups').innerHTML = '';
         document.getElementById('charts-enforcement').innerHTML = '';
         blockedGroupSeq = 0;
+        chartCountByContainer = {};
+        blockedGroupsMeta = [];
     }
 
     function updateNextRefreshBadge() {
@@ -340,6 +443,7 @@
 
     async function load() {
         clearRendered();
+        updateViewModeHint();
         const [stats, cfg] = await Promise.all([
             fetchJSON('/api/stats'),
             fetchJSON('/api/config/targets').catch(() => ({}))
@@ -377,28 +481,28 @@
             'VEN Warnings (24h, 5m)',
             warnDD.trend_24h || warnDD.trend || [],
             '#f59f00',
-            'charts-primary',
+            'charts-ven',
             [{ label: `MA (${Number(warnDD.anomaly_window || blockedMAWindow || 12)})`, points: warnDD.trend_ma_24h || [], color: '#17a2b8' }]
         );
         renderLineChart(
             'VEN Errors (24h, 5m)',
             errDD.trend_24h || errDD.trend || [],
             '#dc3545',
-            'charts-primary',
+            'charts-ven',
             [{ label: `MA (${Number(errDD.anomaly_window || blockedMAWindow || 12)})`, points: errDD.trend_ma_24h || [], color: '#17a2b8' }]
         );
         renderLineChart(
             'VEN Warnings (Daily)',
             filterDaily(warnDD.trend_daily || []),
             '#ffbf66',
-            'charts-primary',
+            'charts-ven',
             [{ label: `MA (${Number(warnDD.anomaly_window || blockedMAWindow || 12)})`, points: filterDaily(warnDD.trend_ma_daily || []), color: '#17a2b8' }]
         );
         renderLineChart(
             'VEN Errors (Daily)',
             filterDaily(errDD.trend_daily || []),
             '#ff6b6b',
-            'charts-primary',
+            'charts-ven',
             [{ label: `MA (${Number(errDD.anomaly_window || blockedMAWindow || 12)})`, points: filterDaily(errDD.trend_ma_daily || []), color: '#17a2b8' }]
         );
         if (tampDD) {
@@ -406,8 +510,15 @@
                 'Tampered VENs (24h, 5m)',
                 tampDD.trend_24h || tampDD.trend || [],
                 '#8e7cc3',
-                'charts-primary',
+                'charts-ven',
                 [{ label: `MA (${Number(tampDD.anomaly_window || blockedMAWindow || 12)})`, points: tampDD.trend_ma_24h || [], color: '#17a2b8' }]
+            );
+            renderLineChart(
+                'Tampered VENs (Daily)',
+                filterDaily(tampDD.trend_daily || []),
+                '#aa8cd8',
+                'charts-ven',
+                [{ label: `MA (${Number(cfg.daily_ma_window || 7)})`, points: filterDaily(tampDD.trend_ma_daily || []), color: '#17a2b8' }]
             );
         }
 
@@ -424,19 +535,20 @@
             const baselinePoint = d.baseline_24h > 0
                 ? [{ timestamp: d.baseline_captured_utc || new Date().toISOString(), value: Number(d.baseline_24h || 0) }]
                 : [];
-            const groupId = createBlockedGroup(name);
+            const groupMeta = createBlockedGroup(name);
+            blockedGroupsMeta.push(groupMeta);
             renderLineChart(
                 `Blocked ${name} (24h, 5m)`,
                 trend24h.length ? trend24h : baselinePoint,
                 ORANGE,
-                groupId,
+                groupMeta.gridId,
                 [{ label: `MA (${targetMAWindow})`, points: d.trend_ma_24h || [], color: '#17a2b8' }]
             );
             renderLineChart(
                 `Blocked ${name} (Daily)`,
                 filterDaily(trendDaily),
                 '#ffb089',
-                groupId,
+                groupMeta.gridId,
                 [{ label: `MA (${targetMAWindow})`, points: filterDaily(d.trend_ma_daily || []), color: '#17a2b8' }]
             );
         });
@@ -468,6 +580,7 @@
             renderLineChart('Enforcement Unmanaged (24h, 5m)', unmanagedDD.trend_24h || unmanagedDD.trend || [], '#adb5bd', 'charts-enforcement');
             renderLineChart('Enforcement Unmanaged (Daily)', filterDaily(unmanagedDD.trend_daily || []), '#c8ced4', 'charts-enforcement');
         }
+        finalizeSectionSummariesAndExpansion();
     }
 
     UICommon.applyTheme(THEME_KEY, 'btn-theme');
@@ -486,7 +599,17 @@
             load().catch(() => {});
         });
     });
+    ['both', '24h', 'daily'].forEach((m) => {
+        const btn = document.getElementById(`mode-${m}`);
+        btn.addEventListener('click', () => {
+            chartMode = m;
+            updateModeButtons();
+            load().catch(() => {});
+        });
+    });
     document.getElementById('range-30').style.outline = '2px solid var(--illumio-orange)';
+    chartMode = queryChartMode();
+    updateModeButtons();
     document.getElementById('btn-print').addEventListener('click', () => window.print());
     document.getElementById('btn-refresh-live').addEventListener('click', () => {
         load().catch((err) => {

@@ -46,33 +46,35 @@ const pceTimeFormat = "2006-01-02T15:04:05.000Z"
 const maxHistoryDays = 3650
 
 type Config struct {
-	PCEURL                  string          `json:"pce_url"`
-	APIKey                  string          `json:"api_key"`
-	APISecret               string          `json:"api_secret"`
-	OrgID                   string          `json:"org_id"`
-	Timezone                string          `json:"timezone,omitempty"`
-	BindAddress             string          `json:"bind_address,omitempty"`
-	PublicBaseURL           string          `json:"public_base_url,omitempty"`
-	DataDir                 string          `json:"data_dir,omitempty"`
-	TrafficTargets          []TrafficTarget `json:"traffic_targets,omitempty"`
-	SourceExclusions        []TrafficTarget `json:"traffic_source_exclusions,omitempty"`
-	HistoryDays             int             `json:"history_days,omitempty"`
-	BlockedMAWindow         int             `json:"blocked_ma_window,omitempty"`
-	BlockedAnomalyPct       float64         `json:"blocked_anomaly_pct,omitempty"`
-	BlockedAnomalyBaseline  string          `json:"blocked_anomaly_baseline,omitempty"`
-	BlockedAnomalyDays      int             `json:"blocked_anomaly_days,omitempty"`
-	BlockedAnomalyMinPct    float64         `json:"blocked_anomaly_min_coverage_pct,omitempty"`
-	VENMAWindow             int             `json:"ven_ma_window,omitempty"`
-	VENAnomalyPct           float64         `json:"ven_anomaly_pct,omitempty"`
-	TamperingMAWindow       int             `json:"tampering_ma_window,omitempty"`
-	TamperingAnomalyPct     float64         `json:"tampering_anomaly_pct,omitempty"`
-	WebhookURL              string          `json:"webhook_url,omitempty"`
-	WebhookEnabled          bool            `json:"webhook_enabled,omitempty"`
-	WebhookProvider         string          `json:"webhook_provider,omitempty"`
-	WebhookSlackChannel     string          `json:"webhook_slack_channel,omitempty"`
-	WebhookSlackUsername    string          `json:"webhook_slack_username,omitempty"`
-	WebhookSlackIconEmoji   string          `json:"webhook_slack_icon_emoji,omitempty"`
-	WebhookTeamsTitlePrefix string          `json:"webhook_teams_title_prefix,omitempty"`
+	PCEURL                   string          `json:"pce_url"`
+	APIKey                   string          `json:"api_key"`
+	APISecret                string          `json:"api_secret"`
+	OrgID                    string          `json:"org_id"`
+	Timezone                 string          `json:"timezone,omitempty"`
+	BindAddress              string          `json:"bind_address,omitempty"`
+	PublicBaseURL            string          `json:"public_base_url,omitempty"`
+	DataDir                  string          `json:"data_dir,omitempty"`
+	TrafficTargets           []TrafficTarget `json:"traffic_targets,omitempty"`
+	SourceExclusions         []TrafficTarget `json:"traffic_source_exclusions,omitempty"`
+	HistoryDays              int             `json:"history_days,omitempty"`
+	BlockedMAWindow          int             `json:"blocked_ma_window,omitempty"`
+	BlockedAnomalyPct        float64         `json:"blocked_anomaly_pct,omitempty"`
+	BlockedAnomalyBaseline   string          `json:"blocked_anomaly_baseline,omitempty"`
+	BlockedAnomalyDays       int             `json:"blocked_anomaly_days,omitempty"`
+	BlockedAnomalyMinPct     float64         `json:"blocked_anomaly_min_coverage_pct,omitempty"`
+	DailyMAWindow            int             `json:"daily_ma_window,omitempty"`
+	VENMAWindow              int             `json:"ven_ma_window,omitempty"`
+	VENAnomalyPct            float64         `json:"ven_anomaly_pct,omitempty"`
+	TamperingMAWindow        int             `json:"tampering_ma_window,omitempty"`
+	TamperingAnomalyPct      float64         `json:"tampering_anomaly_pct,omitempty"`
+	TamperingDailyAnomalyPct float64         `json:"tampering_daily_anomaly_pct,omitempty"`
+	WebhookURL               string          `json:"webhook_url,omitempty"`
+	WebhookEnabled           bool            `json:"webhook_enabled,omitempty"`
+	WebhookProvider          string          `json:"webhook_provider,omitempty"`
+	WebhookSlackChannel      string          `json:"webhook_slack_channel,omitempty"`
+	WebhookSlackUsername     string          `json:"webhook_slack_username,omitempty"`
+	WebhookSlackIconEmoji    string          `json:"webhook_slack_icon_emoji,omitempty"`
+	WebhookTeamsTitlePrefix  string          `json:"webhook_teams_title_prefix,omitempty"`
 }
 
 type TrafficTarget struct {
@@ -255,6 +257,7 @@ type dailyBlockedRecord struct {
 type venDailySnapshot struct {
 	WarningMax       int `json:"warning_max"`
 	ErrorMax         int `json:"error_max"`
+	TamperingMax     int `json:"tampering_max,omitempty"`
 	ModeIdleMax      int `json:"mode_idle_max,omitempty"`
 	ModeVisMax       int `json:"mode_vis_max,omitempty"`
 	ModeSelectiveMax int `json:"mode_selective_max,omitempty"`
@@ -266,6 +269,7 @@ type venDailyRecord struct {
 	Day              string `json:"day"`
 	WarningMax       int    `json:"warning_max"`
 	ErrorMax         int    `json:"error_max"`
+	TamperingMax     int    `json:"tampering_max,omitempty"`
 	ModeIdleMax      int    `json:"mode_idle_max,omitempty"`
 	ModeVisMax       int    `json:"mode_vis_max,omitempty"`
 	ModeSelectiveMax int    `json:"mode_selective_max,omitempty"`
@@ -430,11 +434,12 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 	resp := DrilldownResponse{Metric: metric, Target: target, Title: title, Count: len(items), Items: items, Trend: trend}
 	if metric == "ven_warning" {
 		window := configuredVENMAWindow()
+		dailyWindow := configuredDailyMAWindow()
 		pct := configuredVENAnomalyPct()
 		resp.Trend24h = venTrendSeries("warning")
 		resp.TrendDaily = venDailyTrendSeries("warning", configuredHistoryDays())
 		resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
-		resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, window)
+		resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
 		latest, avg, anomalous, reason := anomalyFromSeries(resp.Trend24h, window, pct)
 		resp.Anomalous = anomalous
 		resp.AnomalyReason = reason
@@ -448,11 +453,12 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 	}
 	if metric == "ven_error" {
 		window := configuredVENMAWindow()
+		dailyWindow := configuredDailyMAWindow()
 		pct := configuredVENAnomalyPct()
 		resp.Trend24h = venTrendSeries("error")
 		resp.TrendDaily = venDailyTrendSeries("error", configuredHistoryDays())
 		resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
-		resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, window)
+		resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
 		latest, avg, anomalous, reason := anomalyFromSeries(resp.Trend24h, window, pct)
 		resp.Anomalous = anomalous
 		resp.AnomalyReason = reason
@@ -466,18 +472,34 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 	}
 	if metric == "tampering" {
 		window := configuredTamperingMAWindow()
-		pct := configuredTamperingAnomalyPct()
+		dailyWindow := configuredDailyMAWindow()
+		pctDaily := configuredTamperingDailyAnomalyPct()
+		pct5m := configuredTamperingAnomalyPct()
 		resp.Trend24h = tamperingTrendSeries()
+		resp.TrendDaily = tamperingDailyTrendSeries(configuredHistoryDays())
 		resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
-		latest, avg, anomalous, reason := anomalyFromSeries(resp.Trend24h, window, pct)
+		resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
+		latest, avg, anomalous, reason := anomalyFromSeries(resp.TrendDaily, dailyWindow, pctDaily)
+		activePct := pctDaily
+		if len(resp.TrendDaily) <= dailyWindow {
+			latest, avg, anomalous, reason = anomalyFromSeries(resp.Trend24h, window, pct5m)
+			resp.AnomalySource = "5m"
+			activePct = pct5m
+		} else {
+			resp.AnomalySource = "daily"
+		}
 		resp.Anomalous = anomalous
 		resp.AnomalyReason = reason
-		resp.AnomalyWindow = window
-		resp.AnomalyPct = pct
+		if resp.AnomalySource == "daily" {
+			resp.AnomalyWindow = dailyWindow
+		} else {
+			resp.AnomalyWindow = window
+		}
+		resp.AnomalyPct = activePct
 		resp.LatestValue = latest
 		resp.MovingAvgValue = avg
-		resp.BlockedMAWindow = window
-		resp.BlockedAnomalyPct = pct
+		resp.BlockedMAWindow = dailyWindow
+		resp.BlockedAnomalyPct = activePct
 		resp.Trend = resp.Trend24h
 	}
 	if isEnforcementMetric(metric) {
@@ -510,10 +532,10 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.MovingAvgValue = eval.Baseline
 		if baselineSource == "daily" {
 			resp.TrendMA24h = flatTrendLine(resp.Trend24h, eval.Baseline)
-			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, baselineDays)
+			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, configuredDailyMAWindow())
 		} else {
 			resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
-			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, window)
+			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, configuredDailyMAWindow())
 		}
 		resp.Trend = resp.Trend24h
 		if baseline, capturedUTC, ok := blockedTargetBaseline(target); ok {
@@ -561,6 +583,9 @@ func handleExportDrilldownCSV(w http.ResponseWriter, r *http.Request) {
 	} else if metric == "blocked_target" {
 		trend24h = blockedTrendSeries(target)
 		trendDaily = blockedDailyTrendSeries(target, configuredHistoryDays())
+	} else if metric == "tampering" {
+		trend24h = tamperingTrendSeries()
+		trendDaily = tamperingDailyTrendSeries(configuredHistoryDays())
 	} else {
 		trend24h = trend
 	}
@@ -641,6 +666,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		exclusions := append([]TrafficTarget(nil), config.SourceExclusions...)
 		historyDays := configuredHistoryDaysLocked()
 		maWindow := configuredBlockedMAWindowLocked()
+		dailyMAWindow := configuredDailyMAWindowLocked()
 		anomalyPct := configuredBlockedAnomalyPctLocked()
 		anomalyBaseline := configuredBlockedAnomalyBaselineSourceLocked()
 		anomalyDays := configuredBlockedAnomalyBaselineDaysLocked()
@@ -649,6 +675,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		venAnomalyPct := configuredVENAnomalyPctLocked()
 		tamperMAWindow := configuredTamperingMAWindowLocked()
 		tamperAnomalyPct := configuredTamperingAnomalyPctLocked()
+		tamperDailyAnomalyPct := configuredTamperingDailyAnomalyPctLocked()
 		timezone := configuredTimezoneLocked()
 		effectiveTimezone := configuredEffectiveTimezoneLocked()
 		bindAddress := configuredBindAddressLocked()
@@ -669,54 +696,58 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"traffic_targets":            targets,
-			"traffic_source_exclusions":  exclusions,
-			"history_days":               historyDays,
-			"blocked_ma_window":          maWindow,
-			"blocked_anomaly_pct":        anomalyPct,
-			"blocked_anomaly_baseline":   anomalyBaseline,
-			"blocked_anomaly_days":       anomalyDays,
-			"blocked_anomaly_min_pct":    anomalyMinCoverage,
-			"ven_ma_window":              venMAWindow,
-			"ven_anomaly_pct":            venAnomalyPct,
-			"tampering_ma_window":        tamperMAWindow,
-			"tampering_anomaly_pct":      tamperAnomalyPct,
-			"timezone":                   timezone,
-			"timezone_effective":         effectiveTimezone,
-			"bind_address":               bindAddress,
-			"public_base_url":            publicBaseURL,
-			"webhook_url":                webhookURL,
-			"webhook_enabled":            webhookEnabled,
-			"webhook_provider":           webhookProvider,
-			"webhook_slack_channel":      slackChannel,
-			"webhook_slack_username":     slackUsername,
-			"webhook_slack_icon_emoji":   slackIconEmoji,
-			"webhook_teams_title_prefix": teamsTitlePrefix,
+			"traffic_targets":             targets,
+			"traffic_source_exclusions":   exclusions,
+			"history_days":                historyDays,
+			"blocked_ma_window":           maWindow,
+			"daily_ma_window":             dailyMAWindow,
+			"blocked_anomaly_pct":         anomalyPct,
+			"blocked_anomaly_baseline":    anomalyBaseline,
+			"blocked_anomaly_days":        anomalyDays,
+			"blocked_anomaly_min_pct":     anomalyMinCoverage,
+			"ven_ma_window":               venMAWindow,
+			"ven_anomaly_pct":             venAnomalyPct,
+			"tampering_ma_window":         tamperMAWindow,
+			"tampering_anomaly_pct":       tamperAnomalyPct,
+			"tampering_daily_anomaly_pct": tamperDailyAnomalyPct,
+			"timezone":                    timezone,
+			"timezone_effective":          effectiveTimezone,
+			"bind_address":                bindAddress,
+			"public_base_url":             publicBaseURL,
+			"webhook_url":                 webhookURL,
+			"webhook_enabled":             webhookEnabled,
+			"webhook_provider":            webhookProvider,
+			"webhook_slack_channel":       slackChannel,
+			"webhook_slack_username":      slackUsername,
+			"webhook_slack_icon_emoji":    slackIconEmoji,
+			"webhook_teams_title_prefix":  teamsTitlePrefix,
 		})
 	case http.MethodPut:
 		var req struct {
-			TrafficTargets          []TrafficTarget `json:"traffic_targets"`
-			SourceExclusions        []TrafficTarget `json:"traffic_source_exclusions"`
-			HistoryDays             int             `json:"history_days"`
-			BlockedMAWindow         int             `json:"blocked_ma_window"`
-			BlockedAnomalyPct       float64         `json:"blocked_anomaly_pct"`
-			BlockedAnomalyBaseline  *string         `json:"blocked_anomaly_baseline"`
-			BlockedAnomalyDays      int             `json:"blocked_anomaly_days"`
-			BlockedAnomalyMinPct    float64         `json:"blocked_anomaly_min_pct"`
-			VENMAWindow             int             `json:"ven_ma_window"`
-			VENAnomalyPct           float64         `json:"ven_anomaly_pct"`
-			TamperingMAWindow       int             `json:"tampering_ma_window"`
-			TamperingAnomalyPct     float64         `json:"tampering_anomaly_pct"`
-			Timezone                *string         `json:"timezone"`
-			BindAddress             *string         `json:"bind_address"`
-			PublicBaseURL           *string         `json:"public_base_url"`
-			WebhookURL              *string         `json:"webhook_url"`
-			WebhookEnabled          *bool           `json:"webhook_enabled"`
-			WebhookProvider         *string         `json:"webhook_provider"`
-			WebhookSlackChannel     *string         `json:"webhook_slack_channel"`
-			WebhookSlackUsername    *string         `json:"webhook_slack_username"`
-			WebhookSlackIconEmoji   *string         `json:"webhook_slack_icon_emoji"`
-			WebhookTeamsTitlePrefix *string         `json:"webhook_teams_title_prefix"`
+			TrafficTargets           []TrafficTarget `json:"traffic_targets"`
+			SourceExclusions         []TrafficTarget `json:"traffic_source_exclusions"`
+			HistoryDays              int             `json:"history_days"`
+			BlockedMAWindow          int             `json:"blocked_ma_window"`
+			DailyMAWindow            int             `json:"daily_ma_window"`
+			BlockedAnomalyPct        float64         `json:"blocked_anomaly_pct"`
+			BlockedAnomalyBaseline   *string         `json:"blocked_anomaly_baseline"`
+			BlockedAnomalyDays       int             `json:"blocked_anomaly_days"`
+			BlockedAnomalyMinPct     float64         `json:"blocked_anomaly_min_pct"`
+			VENMAWindow              int             `json:"ven_ma_window"`
+			VENAnomalyPct            float64         `json:"ven_anomaly_pct"`
+			TamperingMAWindow        int             `json:"tampering_ma_window"`
+			TamperingAnomalyPct      float64         `json:"tampering_anomaly_pct"`
+			TamperingDailyAnomalyPct float64         `json:"tampering_daily_anomaly_pct"`
+			Timezone                 *string         `json:"timezone"`
+			BindAddress              *string         `json:"bind_address"`
+			PublicBaseURL            *string         `json:"public_base_url"`
+			WebhookURL               *string         `json:"webhook_url"`
+			WebhookEnabled           *bool           `json:"webhook_enabled"`
+			WebhookProvider          *string         `json:"webhook_provider"`
+			WebhookSlackChannel      *string         `json:"webhook_slack_channel"`
+			WebhookSlackUsername     *string         `json:"webhook_slack_username"`
+			WebhookSlackIconEmoji    *string         `json:"webhook_slack_icon_emoji"`
+			WebhookTeamsTitlePrefix  *string         `json:"webhook_teams_title_prefix"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid json body", http.StatusBadRequest)
@@ -738,6 +769,9 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.BlockedMAWindow > 0 {
 			config.BlockedMAWindow = req.BlockedMAWindow
+		}
+		if req.DailyMAWindow > 0 {
+			config.DailyMAWindow = req.DailyMAWindow
 		}
 		if req.BlockedAnomalyPct > 0 {
 			config.BlockedAnomalyPct = req.BlockedAnomalyPct
@@ -762,6 +796,9 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.TamperingAnomalyPct > 0 {
 			config.TamperingAnomalyPct = req.TamperingAnomalyPct
+		}
+		if req.TamperingDailyAnomalyPct > 0 {
+			config.TamperingDailyAnomalyPct = req.TamperingDailyAnomalyPct
 		}
 		if req.Timezone != nil {
 			config.Timezone = normalizeTimezone(*req.Timezone)
@@ -795,6 +832,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		}
 		historyDays := configuredHistoryDaysLocked()
 		maWindow := configuredBlockedMAWindowLocked()
+		dailyMAWindow := configuredDailyMAWindowLocked()
 		anomalyPct := configuredBlockedAnomalyPctLocked()
 		anomalyBaseline := configuredBlockedAnomalyBaselineSourceLocked()
 		anomalyDays := configuredBlockedAnomalyBaselineDaysLocked()
@@ -803,6 +841,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		venAnomalyPct := configuredVENAnomalyPctLocked()
 		tamperMAWindow := configuredTamperingMAWindowLocked()
 		tamperAnomalyPct := configuredTamperingAnomalyPctLocked()
+		tamperDailyAnomalyPct := configuredTamperingDailyAnomalyPctLocked()
 		timezone := configuredTimezoneLocked()
 		effectiveTimezone := configuredEffectiveTimezoneLocked()
 		bindAddress := configuredBindAddressLocked()
@@ -821,31 +860,33 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"saved":                      true,
-			"traffic_targets":            cleaned,
-			"traffic_source_exclusions":  config.SourceExclusions,
-			"history_days":               historyDays,
-			"blocked_ma_window":          maWindow,
-			"blocked_anomaly_pct":        anomalyPct,
-			"blocked_anomaly_baseline":   anomalyBaseline,
-			"blocked_anomaly_days":       anomalyDays,
-			"blocked_anomaly_min_pct":    anomalyMinCoverage,
-			"ven_ma_window":              venMAWindow,
-			"ven_anomaly_pct":            venAnomalyPct,
-			"tampering_ma_window":        tamperMAWindow,
-			"tampering_anomaly_pct":      tamperAnomalyPct,
-			"timezone":                   timezone,
-			"timezone_effective":         effectiveTimezone,
-			"bind_address":               bindAddress,
-			"public_base_url":            publicBaseURL,
-			"webhook_url":                webhookURL,
-			"webhook_enabled":            webhookEnabled,
-			"webhook_provider":           webhookProvider,
-			"webhook_slack_channel":      slackChannel,
-			"webhook_slack_username":     slackUsername,
-			"webhook_slack_icon_emoji":   slackIconEmoji,
-			"webhook_teams_title_prefix": teamsTitlePrefix,
-			"message":                    "Saved. Click Refresh Now to apply immediately.",
+			"saved":                       true,
+			"traffic_targets":             cleaned,
+			"traffic_source_exclusions":   config.SourceExclusions,
+			"history_days":                historyDays,
+			"blocked_ma_window":           maWindow,
+			"daily_ma_window":             dailyMAWindow,
+			"blocked_anomaly_pct":         anomalyPct,
+			"blocked_anomaly_baseline":    anomalyBaseline,
+			"blocked_anomaly_days":        anomalyDays,
+			"blocked_anomaly_min_pct":     anomalyMinCoverage,
+			"ven_ma_window":               venMAWindow,
+			"ven_anomaly_pct":             venAnomalyPct,
+			"tampering_ma_window":         tamperMAWindow,
+			"tampering_anomaly_pct":       tamperAnomalyPct,
+			"tampering_daily_anomaly_pct": tamperDailyAnomalyPct,
+			"timezone":                    timezone,
+			"timezone_effective":          effectiveTimezone,
+			"bind_address":                bindAddress,
+			"public_base_url":             publicBaseURL,
+			"webhook_url":                 webhookURL,
+			"webhook_enabled":             webhookEnabled,
+			"webhook_provider":            webhookProvider,
+			"webhook_slack_channel":       slackChannel,
+			"webhook_slack_username":      slackUsername,
+			"webhook_slack_icon_emoji":    slackIconEmoji,
+			"webhook_teams_title_prefix":  teamsTitlePrefix,
+			"message":                     "Saved. Click Refresh Now to apply immediately.",
 		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1567,6 +1608,29 @@ func modeDailyTrendSeries(kind string, keepDays int) []TrendPoint {
 	return points
 }
 
+func tamperingDailyTrendSeries(keepDays int) []TrendPoint {
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	loc := configuredDayLocation()
+	cutoff := localDayStart(time.Now(), loc).AddDate(0, 0, -keepDays)
+	venHistoryMu.Lock()
+	defer venHistoryMu.Unlock()
+	points := make([]TrendPoint, 0, len(venDaily))
+	for day, snap := range venDaily {
+		d, err := parseDayKeyInLocation(day, loc)
+		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		points = append(points, TrendPoint{
+			Timestamp: d.Add(12 * time.Hour).UTC(),
+			Value:     snap.TamperingMax,
+		})
+	}
+	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
+	return points
+}
+
 func blockedTargetExists(target string, stats DashboardStats) bool {
 	for _, t := range stats.Blocked.Targets {
 		if strings.EqualFold(strings.TrimSpace(t.Name), strings.TrimSpace(target)) {
@@ -2210,17 +2274,6 @@ func getIllumioStats() DashboardStats {
 	} else {
 		stats.VENStatus.Status = FetchStatus{Success: true}
 	}
-	updateVENDailyHistory(nowUTC,
-		len(stats.VENStatus.Warning),
-		len(stats.VENStatus.Error),
-		stats.Workloads.EnforcementModes["idle"],
-		stats.Workloads.EnforcementModes["visibility_only"],
-		stats.Workloads.EnforcementModes["selective"],
-		stats.Workloads.EnforcementModes["full"],
-		stats.Workloads.Unmanaged,
-	)
-	pruneVENHistory(nowUTC, configuredHistoryDays())
-
 	windowStart, windowEnd, baseline := collectionWindow(nowUTC)
 	stats.Collection.WindowStart = windowStart
 	stats.Collection.WindowEnd = windowEnd
@@ -2305,6 +2358,17 @@ func getIllumioStats() DashboardStats {
 	)
 	stats.Tampering.Workloads = rollingWorkloads
 	stats.Tampering.Count = len(rollingWorkloads)
+	updateVENDailyHistory(nowUTC,
+		len(stats.VENStatus.Warning),
+		len(stats.VENStatus.Error),
+		stats.Tampering.Count,
+		stats.Workloads.EnforcementModes["idle"],
+		stats.Workloads.EnforcementModes["visibility_only"],
+		stats.Workloads.EnforcementModes["selective"],
+		stats.Workloads.EnforcementModes["full"],
+		stats.Workloads.Unmanaged,
+	)
+	pruneVENHistory(nowUTC, configuredHistoryDays())
 
 	anyWarmup := false
 	defaultMAWindow := configuredBlockedMAWindow()
@@ -2844,6 +2908,20 @@ func configuredBlockedMAWindowLocked() int {
 	return normalizeMAWindow(config.BlockedMAWindow, 12)
 }
 
+func configuredDailyMAWindow() int {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredDailyMAWindowLocked()
+}
+
+func configuredDailyMAWindowLocked() int {
+	base := normalizeAnomalyBaselineDays(config.BlockedAnomalyDays, 7)
+	if config.DailyMAWindow > 0 {
+		return normalizeAnomalyBaselineDays(config.DailyMAWindow, base)
+	}
+	return base
+}
+
 func configuredBlockedAnomalyPct() float64 {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
@@ -2936,6 +3014,20 @@ func configuredTamperingAnomalyPctLocked() float64 {
 	base := configuredBlockedAnomalyPctLocked()
 	if config.TamperingAnomalyPct > 0 {
 		return normalizeAnomalyPct(config.TamperingAnomalyPct, base)
+	}
+	return base
+}
+
+func configuredTamperingDailyAnomalyPct() float64 {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredTamperingDailyAnomalyPctLocked()
+}
+
+func configuredTamperingDailyAnomalyPctLocked() float64 {
+	base := configuredTamperingAnomalyPctLocked()
+	if config.TamperingDailyAnomalyPct > 0 {
+		return normalizeAnomalyPct(config.TamperingDailyAnomalyPct, base)
 	}
 	return base
 }
@@ -4082,6 +4174,7 @@ func loadVENHistory() {
 		venDaily[day] = venDailySnapshot{
 			WarningMax:       rec.WarningMax,
 			ErrorMax:         rec.ErrorMax,
+			TamperingMax:     rec.TamperingMax,
 			ModeIdleMax:      rec.ModeIdleMax,
 			ModeVisMax:       rec.ModeVisMax,
 			ModeSelectiveMax: rec.ModeSelectiveMax,
@@ -4377,6 +4470,7 @@ func saveVENHistory() {
 			Day:              day,
 			WarningMax:       snap.WarningMax,
 			ErrorMax:         snap.ErrorMax,
+			TamperingMax:     snap.TamperingMax,
 			ModeIdleMax:      snap.ModeIdleMax,
 			ModeVisMax:       snap.ModeVisMax,
 			ModeSelectiveMax: snap.ModeSelectiveMax,
@@ -4396,6 +4490,7 @@ func updateVENDailyHistory(
 	nowUTC time.Time,
 	warningCount int,
 	errorCount int,
+	tamperingCount int,
 	modeIdle int,
 	modeVisibility int,
 	modeSelective int,
@@ -4413,6 +4508,10 @@ func updateVENDailyHistory(
 	}
 	if errorCount > prev.ErrorMax {
 		prev.ErrorMax = errorCount
+		changed = true
+	}
+	if tamperingCount > prev.TamperingMax {
+		prev.TamperingMax = tamperingCount
 		changed = true
 	}
 	if modeIdle > prev.ModeIdleMax {
