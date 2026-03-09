@@ -3492,7 +3492,8 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 	if dayEnd.IsZero() {
 		return
 	}
-	dayStart := dayEnd.Add(-24 * time.Hour)
+	// Use calendar-day math to avoid DST gaps/overlaps (23h/25h days).
+	dayStart := dayEnd.AddDate(0, 0, -1)
 	dayKey := dayStart.Format("2006-01-02")
 
 	missing := make([]TrafficTarget, 0)
