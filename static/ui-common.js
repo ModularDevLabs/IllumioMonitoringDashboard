@@ -112,18 +112,23 @@
     if (zoomModalEl) zoomModalEl.style.display = 'none';
   }
 
-  function cloneChartOptions(src) {
-    var out = {};
-    if (!src) return out;
-    var pluginLegend = src.plugins && src.plugins.legend ? src.plugins.legend : {};
-    var xScale = src.scales && src.scales.x ? src.scales.x : {};
-    var yScale = src.scales && src.scales.y ? src.scales.y : {};
-    out.responsive = true;
-    out.maintainAspectRatio = false;
-    out.animation = false;
-    out.plugins = { legend: pluginLegend };
-    out.scales = { x: xScale, y: yScale };
-    return out;
+  function baseZoomOptions() {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: true }
+      },
+      scales: {
+        x: {
+          ticks: { maxRotation: 45, minRotation: 0 }
+        },
+        y: {
+          beginAtZero: true
+        }
+      }
+    };
   }
 
   function openChartZoomFromChart(chart, title) {
@@ -148,7 +153,7 @@
           return Object.assign({}, ds, { data: Array.isArray(ds.data) ? ds.data.slice() : ds.data });
         }) : []
       },
-      options: cloneChartOptions(chart.options || {})
+      options: baseZoomOptions()
     };
     zoomChart = new Chart(canvas.getContext('2d'), config);
     modal.style.display = 'flex';
