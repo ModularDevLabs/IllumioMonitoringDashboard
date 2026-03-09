@@ -14,6 +14,7 @@ coverage.out
 
 # Local runtime/secrets/state
 config.json
+HANDOFF.md
 rolling_state.json
 blocked_daily_history.json
 ven_daily_history.json
@@ -28,4 +29,3 @@ illumio-dashboard.exe
 illumio-dashboard-linux-amd64
 illumio-dashboard-mac-intel
 illumio-dashboard-mac-arm
-
