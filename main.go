@@ -65,8 +65,14 @@ type Config struct {
 	DailyMAWindow            int             `json:"daily_ma_window,omitempty"`
 	VENMAWindow              int             `json:"ven_ma_window,omitempty"`
 	VENAnomalyPct            float64         `json:"ven_anomaly_pct,omitempty"`
+	VENAnomalyBaseline       string          `json:"ven_anomaly_baseline,omitempty"`
+	VENAnomalyDays           int             `json:"ven_anomaly_days,omitempty"`
+	VENAnomalyMinPct         float64         `json:"ven_anomaly_min_coverage_pct,omitempty"`
 	TamperingMAWindow        int             `json:"tampering_ma_window,omitempty"`
 	TamperingAnomalyPct      float64         `json:"tampering_anomaly_pct,omitempty"`
+	TamperingAnomalyBaseline string          `json:"tampering_anomaly_baseline,omitempty"`
+	TamperingAnomalyDays     int             `json:"tampering_anomaly_days,omitempty"`
+	TamperingAnomalyMinPct   float64         `json:"tampering_anomaly_min_coverage_pct,omitempty"`
 	TamperingDailyAnomalyPct float64         `json:"tampering_daily_anomaly_pct,omitempty"`
 	WebhookURL               string          `json:"webhook_url,omitempty"`
 	WebhookEnabled           bool            `json:"webhook_enabled,omitempty"`
@@ -436,70 +442,89 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		window := configuredVENMAWindow()
 		dailyWindow := configuredDailyMAWindow()
 		pct := configuredVENAnomalyPct()
+		baselineSource := configuredVENAnomalyBaselineSource()
+		baselineDays := configuredVENAnomalyBaselineDays()
+		minCoverage := configuredVENAnomalyMinCoveragePct()
 		resp.Trend24h = venTrendSeries("warning")
 		resp.TrendDaily = venDailyTrendSeries("warning", configuredHistoryDays())
-		resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
-		resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
-		latest, avg, anomalous, reason := anomalyFromSeries(resp.Trend24h, window, pct)
-		resp.Anomalous = anomalous
-		resp.AnomalyReason = reason
-		resp.AnomalyWindow = window
+		resp.AnomalySource = baselineSource
+		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
+		resp.Anomalous = eval.Anomalous
+		resp.AnomalyReason = eval.Reason
+		resp.AnomalyWindow = eval.Window
 		resp.AnomalyPct = pct
-		resp.LatestValue = latest
-		resp.MovingAvgValue = avg
+		resp.AnomalyCoveragePct = eval.CoveragePct
+		resp.LatestValue = eval.Latest
+		resp.MovingAvgValue = eval.Baseline
 		resp.BlockedMAWindow = window
 		resp.BlockedAnomalyPct = pct
+		if baselineSource == "daily" {
+			resp.TrendMA24h = flatTrendLine(resp.Trend24h, eval.Baseline)
+			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
+		} else {
+			resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
+			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
+		}
 		resp.Trend = resp.Trend24h
 	}
 	if metric == "ven_error" {
 		window := configuredVENMAWindow()
 		dailyWindow := configuredDailyMAWindow()
 		pct := configuredVENAnomalyPct()
+		baselineSource := configuredVENAnomalyBaselineSource()
+		baselineDays := configuredVENAnomalyBaselineDays()
+		minCoverage := configuredVENAnomalyMinCoveragePct()
 		resp.Trend24h = venTrendSeries("error")
 		resp.TrendDaily = venDailyTrendSeries("error", configuredHistoryDays())
-		resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
-		resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
-		latest, avg, anomalous, reason := anomalyFromSeries(resp.Trend24h, window, pct)
-		resp.Anomalous = anomalous
-		resp.AnomalyReason = reason
-		resp.AnomalyWindow = window
+		resp.AnomalySource = baselineSource
+		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
+		resp.Anomalous = eval.Anomalous
+		resp.AnomalyReason = eval.Reason
+		resp.AnomalyWindow = eval.Window
 		resp.AnomalyPct = pct
-		resp.LatestValue = latest
-		resp.MovingAvgValue = avg
+		resp.AnomalyCoveragePct = eval.CoveragePct
+		resp.LatestValue = eval.Latest
+		resp.MovingAvgValue = eval.Baseline
 		resp.BlockedMAWindow = window
 		resp.BlockedAnomalyPct = pct
+		if baselineSource == "daily" {
+			resp.TrendMA24h = flatTrendLine(resp.Trend24h, eval.Baseline)
+			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
+		} else {
+			resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
+			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
+		}
 		resp.Trend = resp.Trend24h
 	}
 	if metric == "tampering" {
 		window := configuredTamperingMAWindow()
 		dailyWindow := configuredDailyMAWindow()
-		pctDaily := configuredTamperingDailyAnomalyPct()
-		pct5m := configuredTamperingAnomalyPct()
+		pct := configuredTamperingAnomalyPct()
+		baselineSource := configuredTamperingAnomalyBaselineSource()
+		baselineDays := configuredTamperingAnomalyBaselineDays()
+		minCoverage := configuredTamperingAnomalyMinCoveragePct()
+		if baselineSource == "daily" {
+			pct = configuredTamperingDailyAnomalyPct()
+		}
 		resp.Trend24h = tamperingTrendSeries()
 		resp.TrendDaily = tamperingDailyTrendSeries(configuredHistoryDays())
-		resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
-		resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
-		latest, avg, anomalous, reason := anomalyFromSeries(resp.TrendDaily, dailyWindow, pctDaily)
-		activePct := pctDaily
-		if len(resp.TrendDaily) <= dailyWindow {
-			latest, avg, anomalous, reason = anomalyFromSeries(resp.Trend24h, window, pct5m)
-			resp.AnomalySource = "5m"
-			activePct = pct5m
+		resp.AnomalySource = baselineSource
+		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
+		resp.Anomalous = eval.Anomalous
+		resp.AnomalyReason = eval.Reason
+		resp.AnomalyWindow = eval.Window
+		resp.AnomalyCoveragePct = eval.CoveragePct
+		resp.LatestValue = eval.Latest
+		resp.MovingAvgValue = eval.Baseline
+		resp.BlockedMAWindow = window
+		resp.BlockedAnomalyPct = pct
+		if baselineSource == "daily" {
+			resp.TrendMA24h = flatTrendLine(resp.Trend24h, eval.Baseline)
+			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
 		} else {
-			resp.AnomalySource = "daily"
+			resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
+			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
 		}
-		resp.Anomalous = anomalous
-		resp.AnomalyReason = reason
-		if resp.AnomalySource == "daily" {
-			resp.AnomalyWindow = dailyWindow
-		} else {
-			resp.AnomalyWindow = window
-		}
-		resp.AnomalyPct = activePct
-		resp.LatestValue = latest
-		resp.MovingAvgValue = avg
-		resp.BlockedMAWindow = dailyWindow
-		resp.BlockedAnomalyPct = activePct
 		resp.Trend = resp.Trend24h
 	}
 	if isEnforcementMetric(metric) {
@@ -673,8 +698,14 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		anomalyMinCoverage := configuredBlockedAnomalyMinCoveragePctLocked()
 		venMAWindow := configuredVENMAWindowLocked()
 		venAnomalyPct := configuredVENAnomalyPctLocked()
+		venAnomalyBaseline := configuredVENAnomalyBaselineSourceLocked()
+		venAnomalyDays := configuredVENAnomalyBaselineDaysLocked()
+		venAnomalyMinCoverage := configuredVENAnomalyMinCoveragePctLocked()
 		tamperMAWindow := configuredTamperingMAWindowLocked()
 		tamperAnomalyPct := configuredTamperingAnomalyPctLocked()
+		tamperAnomalyBaseline := configuredTamperingAnomalyBaselineSourceLocked()
+		tamperAnomalyDays := configuredTamperingAnomalyBaselineDaysLocked()
+		tamperAnomalyMinCoverage := configuredTamperingAnomalyMinCoveragePctLocked()
 		tamperDailyAnomalyPct := configuredTamperingDailyAnomalyPctLocked()
 		timezone := configuredTimezoneLocked()
 		effectiveTimezone := configuredEffectiveTimezoneLocked()
@@ -707,8 +738,14 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"blocked_anomaly_min_pct":     anomalyMinCoverage,
 			"ven_ma_window":               venMAWindow,
 			"ven_anomaly_pct":             venAnomalyPct,
+			"ven_anomaly_baseline":        venAnomalyBaseline,
+			"ven_anomaly_days":            venAnomalyDays,
+			"ven_anomaly_min_pct":         venAnomalyMinCoverage,
 			"tampering_ma_window":         tamperMAWindow,
 			"tampering_anomaly_pct":       tamperAnomalyPct,
+			"tampering_anomaly_baseline":  tamperAnomalyBaseline,
+			"tampering_anomaly_days":      tamperAnomalyDays,
+			"tampering_anomaly_min_pct":   tamperAnomalyMinCoverage,
 			"tampering_daily_anomaly_pct": tamperDailyAnomalyPct,
 			"timezone":                    timezone,
 			"timezone_effective":          effectiveTimezone,
@@ -735,8 +772,14 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			BlockedAnomalyMinPct     float64         `json:"blocked_anomaly_min_pct"`
 			VENMAWindow              int             `json:"ven_ma_window"`
 			VENAnomalyPct            float64         `json:"ven_anomaly_pct"`
+			VENAnomalyBaseline       *string         `json:"ven_anomaly_baseline"`
+			VENAnomalyDays           int             `json:"ven_anomaly_days"`
+			VENAnomalyMinPct         float64         `json:"ven_anomaly_min_pct"`
 			TamperingMAWindow        int             `json:"tampering_ma_window"`
 			TamperingAnomalyPct      float64         `json:"tampering_anomaly_pct"`
+			TamperingAnomalyBaseline *string         `json:"tampering_anomaly_baseline"`
+			TamperingAnomalyDays     int             `json:"tampering_anomaly_days"`
+			TamperingAnomalyMinPct   float64         `json:"tampering_anomaly_min_pct"`
 			TamperingDailyAnomalyPct float64         `json:"tampering_daily_anomaly_pct"`
 			Timezone                 *string         `json:"timezone"`
 			BindAddress              *string         `json:"bind_address"`
@@ -791,11 +834,29 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		if req.VENAnomalyPct > 0 {
 			config.VENAnomalyPct = req.VENAnomalyPct
 		}
+		if req.VENAnomalyBaseline != nil {
+			config.VENAnomalyBaseline = normalizeAnomalyBaselineSource(*req.VENAnomalyBaseline)
+		}
+		if req.VENAnomalyDays > 0 {
+			config.VENAnomalyDays = normalizeAnomalyBaselineDays(req.VENAnomalyDays, configuredVENAnomalyBaselineDaysLocked())
+		}
+		if req.VENAnomalyMinPct > 0 {
+			config.VENAnomalyMinPct = normalizeCoveragePct(req.VENAnomalyMinPct, configuredVENAnomalyMinCoveragePctLocked())
+		}
 		if req.TamperingMAWindow > 0 {
 			config.TamperingMAWindow = req.TamperingMAWindow
 		}
 		if req.TamperingAnomalyPct > 0 {
 			config.TamperingAnomalyPct = req.TamperingAnomalyPct
+		}
+		if req.TamperingAnomalyBaseline != nil {
+			config.TamperingAnomalyBaseline = normalizeAnomalyBaselineSource(*req.TamperingAnomalyBaseline)
+		}
+		if req.TamperingAnomalyDays > 0 {
+			config.TamperingAnomalyDays = normalizeAnomalyBaselineDays(req.TamperingAnomalyDays, configuredTamperingAnomalyBaselineDaysLocked())
+		}
+		if req.TamperingAnomalyMinPct > 0 {
+			config.TamperingAnomalyMinPct = normalizeCoveragePct(req.TamperingAnomalyMinPct, configuredTamperingAnomalyMinCoveragePctLocked())
 		}
 		if req.TamperingDailyAnomalyPct > 0 {
 			config.TamperingDailyAnomalyPct = req.TamperingDailyAnomalyPct
@@ -839,8 +900,14 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		anomalyMinCoverage := configuredBlockedAnomalyMinCoveragePctLocked()
 		venMAWindow := configuredVENMAWindowLocked()
 		venAnomalyPct := configuredVENAnomalyPctLocked()
+		venAnomalyBaseline := configuredVENAnomalyBaselineSourceLocked()
+		venAnomalyDays := configuredVENAnomalyBaselineDaysLocked()
+		venAnomalyMinCoverage := configuredVENAnomalyMinCoveragePctLocked()
 		tamperMAWindow := configuredTamperingMAWindowLocked()
 		tamperAnomalyPct := configuredTamperingAnomalyPctLocked()
+		tamperAnomalyBaseline := configuredTamperingAnomalyBaselineSourceLocked()
+		tamperAnomalyDays := configuredTamperingAnomalyBaselineDaysLocked()
+		tamperAnomalyMinCoverage := configuredTamperingAnomalyMinCoveragePctLocked()
 		tamperDailyAnomalyPct := configuredTamperingDailyAnomalyPctLocked()
 		timezone := configuredTimezoneLocked()
 		effectiveTimezone := configuredEffectiveTimezoneLocked()
@@ -872,8 +939,14 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"blocked_anomaly_min_pct":     anomalyMinCoverage,
 			"ven_ma_window":               venMAWindow,
 			"ven_anomaly_pct":             venAnomalyPct,
+			"ven_anomaly_baseline":        venAnomalyBaseline,
+			"ven_anomaly_days":            venAnomalyDays,
+			"ven_anomaly_min_pct":         venAnomalyMinCoverage,
 			"tampering_ma_window":         tamperMAWindow,
 			"tampering_anomaly_pct":       tamperAnomalyPct,
+			"tampering_anomaly_baseline":  tamperAnomalyBaseline,
+			"tampering_anomaly_days":      tamperAnomalyDays,
+			"tampering_anomaly_min_pct":   tamperAnomalyMinCoverage,
 			"tampering_daily_anomaly_pct": tamperDailyAnomalyPct,
 			"timezone":                    timezone,
 			"timezone_effective":          effectiveTimezone,
@@ -2990,6 +3063,44 @@ func configuredVENAnomalyPctLocked() float64 {
 	return base
 }
 
+func configuredVENAnomalyBaselineSource() string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredVENAnomalyBaselineSourceLocked()
+}
+
+func configuredVENAnomalyBaselineSourceLocked() string {
+	return normalizeAnomalyBaselineSource(config.VENAnomalyBaseline)
+}
+
+func configuredVENAnomalyBaselineDays() int {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredVENAnomalyBaselineDaysLocked()
+}
+
+func configuredVENAnomalyBaselineDaysLocked() int {
+	base := configuredBlockedAnomalyBaselineDaysLocked()
+	if config.VENAnomalyDays > 0 {
+		return normalizeAnomalyBaselineDays(config.VENAnomalyDays, base)
+	}
+	return base
+}
+
+func configuredVENAnomalyMinCoveragePct() float64 {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredVENAnomalyMinCoveragePctLocked()
+}
+
+func configuredVENAnomalyMinCoveragePctLocked() float64 {
+	base := configuredBlockedAnomalyMinCoveragePctLocked()
+	if config.VENAnomalyMinPct > 0 {
+		return normalizeCoveragePct(config.VENAnomalyMinPct, base)
+	}
+	return base
+}
+
 func configuredTamperingMAWindow() int {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
@@ -3014,6 +3125,47 @@ func configuredTamperingAnomalyPctLocked() float64 {
 	base := configuredBlockedAnomalyPctLocked()
 	if config.TamperingAnomalyPct > 0 {
 		return normalizeAnomalyPct(config.TamperingAnomalyPct, base)
+	}
+	return base
+}
+
+func configuredTamperingAnomalyBaselineSource() string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredTamperingAnomalyBaselineSourceLocked()
+}
+
+func configuredTamperingAnomalyBaselineSourceLocked() string {
+	if strings.TrimSpace(config.TamperingAnomalyBaseline) == "" {
+		return "daily"
+	}
+	return normalizeAnomalyBaselineSource(config.TamperingAnomalyBaseline)
+}
+
+func configuredTamperingAnomalyBaselineDays() int {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredTamperingAnomalyBaselineDaysLocked()
+}
+
+func configuredTamperingAnomalyBaselineDaysLocked() int {
+	base := configuredBlockedAnomalyBaselineDaysLocked()
+	if config.TamperingAnomalyDays > 0 {
+		return normalizeAnomalyBaselineDays(config.TamperingAnomalyDays, base)
+	}
+	return base
+}
+
+func configuredTamperingAnomalyMinCoveragePct() float64 {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredTamperingAnomalyMinCoveragePctLocked()
+}
+
+func configuredTamperingAnomalyMinCoveragePctLocked() float64 {
+	base := configuredBlockedAnomalyMinCoveragePctLocked()
+	if config.TamperingAnomalyMinPct > 0 {
+		return normalizeCoveragePct(config.TamperingAnomalyMinPct, base)
 	}
 	return base
 }

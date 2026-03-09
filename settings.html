@@ -100,95 +100,131 @@
             <details class="section-toggle" open>
                 <summary>Traffic And Data Settings</summary>
                 <p class="text-muted small mb-3 mt-1">Manage traffic targets, exclusions, retention, and anomaly defaults.</p>
+                <details class="section-toggle mb-2" open>
+                    <summary>Traffic Targets Settings</summary>
+                    <div class="mb-2 mt-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="history-days">Blocked Daily History Retention (days)</label>
+                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="history-days" value="365">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-ma-window">
+                            Blocked 5m Moving Average Window (points)
+                            <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                        </label>
+                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="blocked-ma-window" value="12">
+                        <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-pct">Blocked Anomaly Threshold (%)</label>
+                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="blocked-anomaly-pct" value="50">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-baseline">Blocked Anomaly Baseline Source</label>
+                        <select class="form-select form-select-sm" id="blocked-anomaly-baseline">
+                            <option value="5m">5m Moving Average</option>
+                            <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-days">
+                            Blocked Daily Baseline Lookback (days)
+                            <span class="help-tip" title="Used only when baseline source is Daily. The app averages the last N daily totals, then compares the latest 5m blocked value against that daily average and threshold.">?</span>
+                        </label>
+                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="blocked-anomaly-days" value="7">
+                        <div class="small text-muted mt-1">Daily baseline only: N is the number of recent daily totals used to build the blocked anomaly baseline.</div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="daily-ma-window">
+                            Daily Moving Average Window (points)
+                            <span class="help-tip" title="Daily points: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d. Used for Daily trend MA overlays and blocked daily-baseline overlays.">?</span>
+                        </label>
+                        <input type="number" min="2" max="3650" step="1" class="form-control form-control-sm" id="daily-ma-window" value="7">
+                        <div class="small text-muted mt-1">Reference: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d.</div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-min-pct">Blocked Baseline Min Coverage (%)</label>
+                        <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="blocked-anomaly-min-pct" value="70">
+                        <div class="small text-muted mt-1">If baseline is not fully built yet, alerts are suppressed until this coverage threshold is met (for example 70% means 5 of 7 days).</div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="source-exclusions">Traffic Source Exclusions (comma-separated names)</label>
+                        <input type="text" class="form-control form-control-sm" id="source-exclusions" placeholder="LG-SCANNERS">
+                    </div>
+                    <div id="target-editor"></div>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <button class="btn btn-outline-secondary btn-sm" id="btn-add-target" type="button">Add Target</button>
+                        <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic" type="button">Save Traffic/Data</button>
+                        <button class="btn btn-outline-success btn-sm" id="btn-refresh-now" type="button">Refresh Now</button>
+                    </div>
+                    <div class="small mt-2" id="msg-traffic"></div>
+                </details>
 
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="history-days">Blocked Daily History Retention (days)</label>
-                    <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="history-days" value="365">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="blocked-ma-window">
-                        Blocked 5m Moving Average Window (points)
-                        <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
-                    </label>
-                    <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="blocked-ma-window" value="12">
-                    <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-pct">Blocked Anomaly Threshold (%)</label>
-                    <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="blocked-anomaly-pct" value="50">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-baseline">Blocked Anomaly Baseline Source</label>
-                    <select class="form-select form-select-sm" id="blocked-anomaly-baseline">
-                        <option value="5m">5m Moving Average</option>
-                        <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
-                    </select>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-days">
-                        Blocked Daily Baseline Lookback (days)
-                        <span class="help-tip" title="Used only when baseline source is Daily. The app averages the last N daily totals, then compares the latest 5m blocked value against that daily average and threshold.">?</span>
-                    </label>
-                    <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="blocked-anomaly-days" value="7">
-                    <div class="small text-muted mt-1">Daily baseline only: N is the number of recent daily totals used to build the blocked anomaly baseline.</div>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="daily-ma-window">
-                        Daily Moving Average Window (points)
-                        <span class="help-tip" title="Daily points: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d. Used for Daily trend MA overlays and blocked daily-baseline overlays.">?</span>
-                    </label>
-                    <input type="number" min="2" max="3650" step="1" class="form-control form-control-sm" id="daily-ma-window" value="7">
-                    <div class="small text-muted mt-1">Reference: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d.</div>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-min-pct">Blocked Baseline Min Coverage (%)</label>
-                    <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="blocked-anomaly-min-pct" value="70">
-                    <div class="small text-muted mt-1">If baseline is not fully built yet, alerts are suppressed until this coverage threshold is met (for example 70% means 5 of 7 days).</div>
-                </div>
-                <hr>
-                <div class="small text-muted mb-2">VEN Warning/Error Anomaly Settings</div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="ven-ma-window">
-                        VEN 5m Moving Average Window (points)
-                        <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
-                    </label>
-                    <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="ven-ma-window" value="12">
-                    <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-pct">VEN Anomaly Threshold (%)</label>
-                    <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="ven-anomaly-pct" value="50">
-                </div>
-                <hr>
-                <div class="small text-muted mb-2">Tampering Anomaly Settings</div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="tampering-ma-window">
-                        Tampering 5m Moving Average Window (points)
-                        <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
-                    </label>
-                    <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="tampering-ma-window" value="12">
-                    <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-pct">Tampering Anomaly Threshold (%)</label>
-                    <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-anomaly-pct" value="50">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="tampering-daily-anomaly-pct">Daily Tampering Anomaly Threshold (%)</label>
-                    <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-daily-anomaly-pct" value="50">
-                    <div class="small text-muted mt-1">Used when evaluating tampering anomalies against Daily trend baseline.</div>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="source-exclusions">Traffic Source Exclusions (comma-separated names)</label>
-                    <input type="text" class="form-control form-control-sm" id="source-exclusions" placeholder="LG-SCANNERS">
-                </div>
-                <div id="target-editor"></div>
-                <div class="d-flex flex-wrap gap-2 mt-2">
-                    <button class="btn btn-outline-secondary btn-sm" id="btn-add-target" type="button">Add Target</button>
-                    <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic" type="button">Save Traffic/Data</button>
-                    <button class="btn btn-outline-success btn-sm" id="btn-refresh-now" type="button">Refresh Now</button>
-                </div>
-                <div class="small mt-2" id="msg-traffic"></div>
+                <details class="section-toggle mb-2">
+                    <summary>VEN Warning/Error Anomaly Settings</summary>
+                    <div class="mb-2 mt-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-ma-window">
+                            VEN 5m Moving Average Window (points)
+                            <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                        </label>
+                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="ven-ma-window" value="12">
+                        <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-pct">VEN Anomaly Threshold (%)</label>
+                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="ven-anomaly-pct" value="50">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-baseline">VEN Anomaly Baseline Source</label>
+                        <select class="form-select form-select-sm" id="ven-anomaly-baseline">
+                            <option value="5m">5m Moving Average</option>
+                            <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-days">VEN Daily Baseline Lookback (days)</label>
+                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="ven-anomaly-days" value="7">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-min-pct">VEN Baseline Min Coverage (%)</label>
+                        <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="ven-anomaly-min-pct" value="70">
+                    </div>
+                </details>
+
+                <details class="section-toggle">
+                    <summary>Tampering Anomaly Settings</summary>
+                    <div class="mb-2 mt-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-ma-window">
+                            Tampering 5m Moving Average Window (points)
+                            <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                        </label>
+                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="tampering-ma-window" value="12">
+                        <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-pct">Tampering Anomaly Threshold (%)</label>
+                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-anomaly-pct" value="50">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-baseline">Tampering Anomaly Baseline Source</label>
+                        <select class="form-select form-select-sm" id="tampering-anomaly-baseline">
+                            <option value="5m">5m Moving Average</option>
+                            <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-days">Tampering Daily Baseline Lookback (days)</label>
+                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="tampering-anomaly-days" value="7">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-min-pct">Tampering Baseline Min Coverage (%)</label>
+                        <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="tampering-anomaly-min-pct" value="70">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-daily-anomaly-pct">Daily Tampering Anomaly Threshold (%)</label>
+                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-daily-anomaly-pct" value="50">
+                        <div class="small text-muted mt-1">Used when Tampering baseline source is set to Daily.</div>
+                    </div>
+                </details>
             </details>
         </div>
 
@@ -292,8 +328,14 @@
         let dailyMAWindow = 7;
         let venMAWindow = 12;
         let venAnomalyPct = 50;
+        let venAnomalyBaseline = '5m';
+        let venAnomalyDays = 7;
+        let venAnomalyMinPct = 70;
         let tamperingMAWindow = 12;
         let tamperingAnomalyPct = 50;
+        let tamperingAnomalyBaseline = 'daily';
+        let tamperingAnomalyDays = 7;
+        let tamperingAnomalyMinPct = 70;
         let tamperingDailyAnomalyPct = 50;
         let bindAddress = ':18443';
         let publicBaseURL = 'http://localhost:18443';
@@ -360,8 +402,14 @@
             dailyMAWindow = Number(d.daily_ma_window || blockedAnomalyDays || 7);
             venMAWindow = Number(d.ven_ma_window || blockedMAWindow || 12);
             venAnomalyPct = Number(d.ven_anomaly_pct || blockedAnomalyPct || 50);
+            venAnomalyBaseline = String(d.ven_anomaly_baseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
+            venAnomalyDays = Number(d.ven_anomaly_days || blockedAnomalyDays || 7);
+            venAnomalyMinPct = Number(d.ven_anomaly_min_pct || blockedAnomalyMinPct || 70);
             tamperingMAWindow = Number(d.tampering_ma_window || blockedMAWindow || 12);
             tamperingAnomalyPct = Number(d.tampering_anomaly_pct || blockedAnomalyPct || 50);
+            tamperingAnomalyBaseline = String(d.tampering_anomaly_baseline || 'daily').trim().toLowerCase() === '5m' ? '5m' : 'daily';
+            tamperingAnomalyDays = Number(d.tampering_anomaly_days || blockedAnomalyDays || 7);
+            tamperingAnomalyMinPct = Number(d.tampering_anomaly_min_pct || blockedAnomalyMinPct || 70);
             tamperingDailyAnomalyPct = Number(d.tampering_daily_anomaly_pct || tamperingAnomalyPct || 50);
             bindAddress = String(d.bind_address || ':18443').trim();
             publicBaseURL = String(d.public_base_url || 'http://localhost:18443').trim();
@@ -375,8 +423,14 @@
             document.getElementById('daily-ma-window').value = dailyMAWindow;
             document.getElementById('ven-ma-window').value = venMAWindow;
             document.getElementById('ven-anomaly-pct').value = venAnomalyPct;
+            document.getElementById('ven-anomaly-baseline').value = venAnomalyBaseline;
+            document.getElementById('ven-anomaly-days').value = venAnomalyDays;
+            document.getElementById('ven-anomaly-min-pct').value = venAnomalyMinPct;
             document.getElementById('tampering-ma-window').value = tamperingMAWindow;
             document.getElementById('tampering-anomaly-pct').value = tamperingAnomalyPct;
+            document.getElementById('tampering-anomaly-baseline').value = tamperingAnomalyBaseline;
+            document.getElementById('tampering-anomaly-days').value = tamperingAnomalyDays;
+            document.getElementById('tampering-anomaly-min-pct').value = tamperingAnomalyMinPct;
             document.getElementById('tampering-daily-anomaly-pct').value = tamperingDailyAnomalyPct;
             document.getElementById('bind-address').value = bindAddress;
             document.getElementById('public-base-url').value = publicBaseURL;
@@ -452,12 +506,26 @@
             let parsedVenAnomalyPct = Number(document.getElementById('ven-anomaly-pct').value || venAnomalyPct || parsedAnomalyPct || 50);
             if (!Number.isFinite(parsedVenAnomalyPct) || parsedVenAnomalyPct < 1) parsedVenAnomalyPct = parsedAnomalyPct || 50;
             if (parsedVenAnomalyPct > 10000) parsedVenAnomalyPct = 10000;
+            const parsedVenBaseline = String(document.getElementById('ven-anomaly-baseline').value || venAnomalyBaseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
+            let parsedVenBaselineDays = Number(document.getElementById('ven-anomaly-days').value || venAnomalyDays || parsedBaselineDays || 7);
+            if (!Number.isFinite(parsedVenBaselineDays) || parsedVenBaselineDays < 1) parsedVenBaselineDays = parsedBaselineDays || 7;
+            if (parsedVenBaselineDays > 3650) parsedVenBaselineDays = 3650;
+            let parsedVenBaselineMinPct = Number(document.getElementById('ven-anomaly-min-pct').value || venAnomalyMinPct || parsedBaselineMinPct || 70);
+            if (!Number.isFinite(parsedVenBaselineMinPct) || parsedVenBaselineMinPct < 1) parsedVenBaselineMinPct = parsedBaselineMinPct || 70;
+            if (parsedVenBaselineMinPct > 100) parsedVenBaselineMinPct = 100;
             let parsedTamperingMAWindow = Number(document.getElementById('tampering-ma-window').value || tamperingMAWindow || parsedMAWindow || 12);
             if (!Number.isFinite(parsedTamperingMAWindow) || parsedTamperingMAWindow < 2) parsedTamperingMAWindow = parsedMAWindow || 12;
             if (parsedTamperingMAWindow > 288) parsedTamperingMAWindow = 288;
             let parsedTamperingAnomalyPct = Number(document.getElementById('tampering-anomaly-pct').value || tamperingAnomalyPct || parsedAnomalyPct || 50);
             if (!Number.isFinite(parsedTamperingAnomalyPct) || parsedTamperingAnomalyPct < 1) parsedTamperingAnomalyPct = parsedAnomalyPct || 50;
             if (parsedTamperingAnomalyPct > 10000) parsedTamperingAnomalyPct = 10000;
+            const parsedTamperingBaseline = String(document.getElementById('tampering-anomaly-baseline').value || tamperingAnomalyBaseline || 'daily').trim().toLowerCase() === '5m' ? '5m' : 'daily';
+            let parsedTamperingBaselineDays = Number(document.getElementById('tampering-anomaly-days').value || tamperingAnomalyDays || parsedBaselineDays || 7);
+            if (!Number.isFinite(parsedTamperingBaselineDays) || parsedTamperingBaselineDays < 1) parsedTamperingBaselineDays = parsedBaselineDays || 7;
+            if (parsedTamperingBaselineDays > 3650) parsedTamperingBaselineDays = 3650;
+            let parsedTamperingBaselineMinPct = Number(document.getElementById('tampering-anomaly-min-pct').value || tamperingAnomalyMinPct || parsedBaselineMinPct || 70);
+            if (!Number.isFinite(parsedTamperingBaselineMinPct) || parsedTamperingBaselineMinPct < 1) parsedTamperingBaselineMinPct = parsedBaselineMinPct || 70;
+            if (parsedTamperingBaselineMinPct > 100) parsedTamperingBaselineMinPct = 100;
             let parsedTamperingDailyAnomalyPct = Number(document.getElementById('tampering-daily-anomaly-pct').value || tamperingDailyAnomalyPct || parsedTamperingAnomalyPct || 50);
             if (!Number.isFinite(parsedTamperingDailyAnomalyPct) || parsedTamperingDailyAnomalyPct < 1) parsedTamperingDailyAnomalyPct = parsedTamperingAnomalyPct || 50;
             if (parsedTamperingDailyAnomalyPct > 10000) parsedTamperingDailyAnomalyPct = 10000;
@@ -481,8 +549,14 @@
                 daily_ma_window: Math.floor(parsedDailyMAWindow),
                 ven_ma_window: Math.floor(parsedVenMAWindow),
                 ven_anomaly_pct: Math.floor(parsedVenAnomalyPct),
+                ven_anomaly_baseline: parsedVenBaseline,
+                ven_anomaly_days: Math.floor(parsedVenBaselineDays),
+                ven_anomaly_min_pct: parsedVenBaselineMinPct,
                 tampering_ma_window: Math.floor(parsedTamperingMAWindow),
                 tampering_anomaly_pct: Math.floor(parsedTamperingAnomalyPct),
+                tampering_anomaly_baseline: parsedTamperingBaseline,
+                tampering_anomaly_days: Math.floor(parsedTamperingBaselineDays),
+                tampering_anomaly_min_pct: parsedTamperingBaselineMinPct,
                 tampering_daily_anomaly_pct: Math.floor(parsedTamperingDailyAnomalyPct),
                 timezone: parsedTimezone,
                 bind_address: parsedBindAddress,

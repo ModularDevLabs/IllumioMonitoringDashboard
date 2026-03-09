@@ -14,8 +14,15 @@
   "blocked_anomaly_min_coverage_pct": 70,
   "ven_ma_window": 12,
   "ven_anomaly_pct": 50,
+  "ven_anomaly_baseline": "5m",
+  "ven_anomaly_days": 7,
+  "ven_anomaly_min_coverage_pct": 70,
   "tampering_ma_window": 12,
   "tampering_anomaly_pct": 50,
+  "tampering_anomaly_baseline": "daily",
+  "tampering_anomaly_days": 7,
+  "tampering_anomaly_min_coverage_pct": 70,
+  "tampering_daily_anomaly_pct": 50,
   "traffic_targets": [
     { "name": "LG-E-PROD-ENVS", "kind": "auto" },
     { "name": "LG-E-NONPROD-ENVS", "kind": "auto" }

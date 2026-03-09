@@ -172,8 +172,15 @@ Runtime state is stored in a shared data directory:
   "blocked_anomaly_min_coverage_pct": 70,
   "ven_ma_window": 12,
   "ven_anomaly_pct": 50,
+  "ven_anomaly_baseline": "5m",
+  "ven_anomaly_days": 7,
+  "ven_anomaly_min_coverage_pct": 70,
   "tampering_ma_window": 12,
   "tampering_anomaly_pct": 50,
+  "tampering_anomaly_baseline": "daily",
+  "tampering_anomaly_days": 7,
+  "tampering_anomaly_min_coverage_pct": 70,
+  "tampering_daily_anomaly_pct": 50,
   "webhook_enabled": false,
   "webhook_provider": "generic",
   "webhook_url": "https://hooks.example.com/..."
@@ -200,8 +207,15 @@ Runtime state is stored in a shared data directory:
 | `blocked_anomaly_min_coverage_pct` | Minimum daily baseline coverage before anomaly alerts are allowed | `70` | Range `1..100`; lower coverage stays in warmup/suppressed state |
 | `ven_ma_window` | VEN warning/error MA window points | blocked MA fallback | Range `2..288` |
 | `ven_anomaly_pct` | VEN warning/error anomaly threshold percent | blocked threshold fallback | Range `1..10000` |
+| `ven_anomaly_baseline` | VEN anomaly baseline source | `5m` | `5m` compares latest 5m to 5m MA; `daily` compares latest 5m to N-day baseline |
+| `ven_anomaly_days` | VEN daily baseline lookback days (when baseline=`daily`) | blocked days fallback | Range `1..3650` |
+| `ven_anomaly_min_coverage_pct` | VEN minimum daily baseline coverage before anomaly checks | blocked min coverage fallback | Range `1..100` |
 | `tampering_ma_window` | Tampering MA window points | blocked MA fallback | Range `2..288` |
 | `tampering_anomaly_pct` | Tampering anomaly threshold percent | blocked threshold fallback | Range `1..10000` |
+| `tampering_anomaly_baseline` | Tampering anomaly baseline source | `daily` | `5m` compares latest 5m to 5m MA; `daily` compares latest 5m to N-day baseline |
+| `tampering_anomaly_days` | Tampering daily baseline lookback days (when baseline=`daily`) | blocked days fallback | Range `1..3650` |
+| `tampering_anomaly_min_coverage_pct` | Tampering minimum daily baseline coverage before anomaly checks | blocked min coverage fallback | Range `1..100` |
+| `tampering_daily_anomaly_pct` | Tampering threshold when baseline=`daily` | tampering anomaly fallback | Range `1..10000` |
 | `traffic_targets[]` | Blocked traffic targets | built-in defaults | Each item has `name`, `kind`, optional per-target MA/anomaly overrides |
 | `traffic_source_exclusions[]` | Source exclusions for blocked queries | `LG-SCANNERS` (auto) | Each item has `name`, `kind` |
 | `webhook_enabled` | Enable webhook alert sends | `false` | Requires valid `webhook_url` |
@@ -340,7 +354,7 @@ Use `/settings` to manage webhook alerting:
   - Current `bind_address` and `public_base_url`
 - `PUT /api/config/targets`:
   - Save traffic/data settings
-  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
+  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
 - `POST /api/refresh`:
   - Trigger immediate collection cycle
 - `GET /api/config/alerts`:
