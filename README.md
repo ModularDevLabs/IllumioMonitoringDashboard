@@ -305,6 +305,7 @@ Click these cards/badges to open detailed lists:
   - VEN trend charts (`24h (5m)` and `Daily`)
   - Blocked trend charts per target in collapsible groups
   - Enforcement mode trend charts in a collapsible group
+  - Click any chart to open a larger expanded view
   - Refresh metadata (next refresh + data staleness)
   - Day-range filters (`24h`, `7d`, `30d`, `90d`, `180d`, `365d`) for daily trend lines
 
