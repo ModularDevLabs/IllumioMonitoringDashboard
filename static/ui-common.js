@@ -132,6 +132,10 @@
     var titleEl = modal.querySelector('#chart-zoom-title');
     titleEl.textContent = title || (chart.data && chart.data.datasets && chart.data.datasets[0] ? chart.data.datasets[0].label : 'Chart');
     var canvas = modal.querySelector('#chart-zoom-canvas');
+    if (typeof Chart.getChart === 'function') {
+      var existing = Chart.getChart(canvas);
+      if (existing) existing.destroy();
+    }
     if (zoomChart) {
       zoomChart.destroy();
       zoomChart = null;
