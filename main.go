@@ -1738,10 +1738,11 @@ func blockedDailyTrendSeries(target string, keepDays int) []TrendPoint {
 		keepDays = 365
 	}
 	loc := configuredDayLocation()
-	cutoff := localDayStart(time.Now(), loc).AddDate(0, 0, -keepDays)
+	now := time.Now()
+	cutoff := localDayStart(now, loc).AddDate(0, 0, -keepDays)
 	historyMu.Lock()
-	defer historyMu.Unlock()
 	points := make([]TrendPoint, 0, len(blockedDaily))
+	hasToday := false
 	for day, targets := range blockedDaily {
 		d, err := parseDayKeyInLocation(day, loc)
 		if err != nil || d.Before(cutoff) {
@@ -1755,8 +1756,34 @@ func blockedDailyTrendSeries(target string, keepDays int) []TrendPoint {
 			Timestamp: d.Add(12 * time.Hour).UTC(),
 			Value:     v,
 		})
+		if day == localDayStart(now, loc).Format("2006-01-02") {
+			hasToday = true
+		}
 	}
+	historyMu.Unlock()
 	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
+
+	// Add a live "today so far" point so daily charts continue through the current day.
+	todayStartLocal := localDayStart(now, loc)
+	todayStartUTC := todayStartLocal.UTC()
+	if !hasToday {
+		todayCount := 0
+		rollingMu.Lock()
+		for _, b := range rollingCache.Buckets {
+			if !b.EndUTC.After(todayStartUTC) {
+				continue
+			}
+			if v, ok := b.BlockedByTarget[target]; ok {
+				todayCount += v
+			}
+		}
+		rollingMu.Unlock()
+		points = append(points, TrendPoint{
+			Timestamp: now.UTC(),
+			Value:     todayCount,
+		})
+		sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
+	}
 	return points
 }
 
