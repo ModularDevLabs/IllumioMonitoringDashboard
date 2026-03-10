@@ -110,7 +110,6 @@
                 <button id="trend-sum" type="button" class="btn btn-sm btn-outline-secondary">Daily</button>
             </div>
             <div id="range-controls" class="d-none d-flex range-controls mb-2">
-                <button id="range-1" type="button" class="btn btn-sm btn-outline-secondary">24h</button>
                 <button id="range-7" type="button" class="btn btn-sm btn-outline-secondary">7d</button>
                 <button id="range-30" type="button" class="btn btn-sm btn-outline-secondary">30d</button>
                 <button id="range-90" type="button" class="btn btn-sm btn-outline-secondary">90d</button>
@@ -163,7 +162,7 @@
         }
 
         function updateRangeButtons() {
-            [1, 7, 30, 90, 180, 365].forEach((d) => {
+            [7, 30, 90, 180, 365].forEach((d) => {
                 const btn = document.getElementById(`range-${d}`);
                 if (!btn) return;
                 btn.className = `btn btn-sm ${dayRange === d ? 'btn-primary' : 'btn-outline-secondary'}`;
@@ -366,7 +365,7 @@
                 trendPoints = trendDaily;
                 renderTrend(trendPoints, document.getElementById('title').innerText, { hideList: currentMetric === 'blocked_target', showControls: true });
             });
-            [1, 7, 30, 90, 180, 365].forEach((d) => {
+            [7, 30, 90, 180, 365].forEach((d) => {
                 const btn = document.getElementById(`range-${d}`);
                 if (!btn) return;
                 btn.addEventListener('click', () => {
