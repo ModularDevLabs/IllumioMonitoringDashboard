@@ -218,6 +218,25 @@
             return raw;
         }
 
+        function yAxisBoundsFromValues(values) {
+            const nums = (values || []).filter((v) => Number.isFinite(v));
+            if (!nums.length) return { beginAtZero: true, min: 0, max: 10, stepSize: 1 };
+            const min = Math.min(...nums);
+            const max = Math.max(...nums);
+            if (max <= 10) {
+                const yMin = Math.max(0, Math.floor(min));
+                const yMax = Math.max(yMin + 1, Math.ceil(max));
+                return { beginAtZero: yMin === 0, min: yMin, max: yMax, stepSize: 1 };
+            }
+            let step = Math.pow(10, Math.max(0, Math.floor(Math.log10(max)) - 1));
+            if (max >= 10 && step < 10) step = 10;
+            let yMin = min <= 0 ? 0 : Math.floor(min / step) * step;
+            if (yMin < 0) yMin = 0;
+            let yMax = Math.ceil(max / step) * step;
+            if (yMax <= yMin) yMax = yMin + step;
+            return { beginAtZero: yMin === 0, min: yMin, max: yMax, stepSize: step };
+        }
+
         function renderTrend(points, title, opts = {}) {
             const hideList = !!opts.hideList;
             const showControls = !!opts.showControls;
@@ -302,6 +321,10 @@
                     borderWidth: 2
                 });
             }
+            const allSeriesValues = datasets
+                .flatMap((ds) => Array.isArray(ds.data) ? ds.data : [])
+                .filter((v) => Number.isFinite(v));
+            const axis = yAxisBoundsFromValues(allSeriesValues);
             if (trendChart) trendChart.destroy();
             trendChart = new Chart(ctx, {
                 type: 'line',
@@ -318,8 +341,10 @@
                             grid: { color: gridColor }
                         },
                         y: {
-                            beginAtZero: true,
-                            ticks: { color: tickColor },
+                            beginAtZero: axis.beginAtZero,
+                            min: axis.min,
+                            max: axis.max,
+                            ticks: { color: tickColor, stepSize: axis.stepSize },
                             grid: { color: gridColor }
                         }
                     },

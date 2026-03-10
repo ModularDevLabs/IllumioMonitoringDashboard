@@ -306,6 +306,7 @@ Click these cards/badges to open detailed lists:
   - Blocked trend charts per target in collapsible groups
   - Enforcement mode trend charts in a collapsible group
   - Click any chart to open a larger expanded view
+  - Y-axis auto-scales to rounded place-value bands (for example 2800-2900 for values around 2808) instead of always starting at zero
   - Refresh metadata (next refresh + data staleness)
   - Day-range filters (`24h`, `7d`, `30d`, `90d`, `180d`, `365d`) for daily trend lines
 
