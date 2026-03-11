@@ -17,6 +17,7 @@ config.json
 HANDOFF.md
 rolling_state.json
 blocked_daily_history.json
+blocked_port_daily_history.json
 ven_daily_history.json
 alert_state.json
 

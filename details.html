@@ -119,6 +119,21 @@
             <div id="trend-wrap" class="chart-wrap mb-3 d-none">
                 <canvas id="trend-chart"></canvas>
             </div>
+            <div id="blocked-ports-wrap" class="d-none mb-3">
+                <h6>Blocked Ports (Daily Aggregate)</h6>
+                <div class="text-muted small mb-2" id="blocked-ports-meta"></div>
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Port/Proto</th>
+                                <th class="text-end">Total Flows</th>
+                            </tr>
+                        </thead>
+                        <tbody id="blocked-ports-body"></tbody>
+                    </table>
+                </div>
+            </div>
             <ul class="list-group" id="items"></ul>
         </div>
     </div>
@@ -138,6 +153,7 @@
         let blockedMAWindow = 12;
         let blockedAnomalyPct = 50;
         let blockedAnomalySource = '5m';
+        let blockedPortsDaily = [];
         const THEME_KEY = 'illumio_theme';
         let dayRange = 30;
         let nextRefreshAt = null;
@@ -352,6 +368,44 @@
                 }
             });
             UICommon.makeChartZoomable(trendChart, title);
+            renderBlockedPortsTable();
+        }
+
+        function renderBlockedPortsTable() {
+            const wrap = document.getElementById('blocked-ports-wrap');
+            const body = document.getElementById('blocked-ports-body');
+            const meta = document.getElementById('blocked-ports-meta');
+            if (currentMetric !== 'blocked_target') {
+                wrap.classList.add('d-none');
+                return;
+            }
+            wrap.classList.remove('d-none');
+            const cutoff = Date.now() - dayRange * 24 * 60 * 60 * 1000;
+            const totals = new Map();
+            (blockedPortsDaily || []).forEach((d) => {
+                const ts = new Date(d.timestamp).getTime();
+                if (!Number.isFinite(ts) || ts < cutoff) return;
+                (d.ports || []).forEach((p) => {
+                    const key = String(p.key || '').trim();
+                    const n = Number(p.count || 0);
+                    if (!key || !Number.isFinite(n) || n <= 0) return;
+                    totals.set(key, (totals.get(key) || 0) + n);
+                });
+            });
+            const rows = Array.from(totals.entries())
+                .map(([key, count]) => ({ key, count }))
+                .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+            body.innerHTML = '';
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="2" class="text-muted">No blocked ports recorded for selected daily range.</td></tr>';
+            } else {
+                rows.forEach((r) => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `<td class="mono">${r.key}</td><td class="text-end">${r.count.toLocaleString()}</td>`;
+                    body.appendChild(tr);
+                });
+            }
+            meta.innerText = `All blocked ports across last ${dayRange} day(s).`;
         }
 
         function bindTrendControls() {
@@ -373,6 +427,8 @@
                     if (trendMode === 'sum') {
                         trendPoints = trendDaily;
                         renderTrend(trendPoints, document.getElementById('title').innerText, { hideList: currentMetric === 'blocked_target', showControls: true });
+                    } else {
+                        renderBlockedPortsTable();
                     }
                 });
             });
@@ -413,6 +469,7 @@
                 trendDaily = d.trend_daily || [];
                 trendMA24h = d.trend_ma_24h || [];
                 trendMADaily = d.trend_ma_daily || [];
+                blockedPortsDaily = d.blocked_ports_daily || [];
                 blockedMAWindow = Number(d.blocked_ma_window || blockedMAWindow || 12);
                 blockedAnomalyPct = Number(d.blocked_anomaly_pct || blockedAnomalyPct || 50);
                 blockedAnomalySource = String(d.anomaly_source || '5m').toLowerCase() === 'daily' ? 'daily' : '5m';
@@ -427,6 +484,8 @@
                 renderTrend(trendPoints, d.target ? `${d.target} blocked traffic` : 'Blocked traffic', { hideList: true, showControls: true });
                 return;
             }
+            blockedPortsDaily = [];
+            renderBlockedPortsTable();
             if (d.metric === 'ven_warning' || d.metric === 'ven_error') {
                 document.getElementById('trend-raw').innerText = '24h (5m)';
                 document.getElementById('trend-sum').innerText = 'Daily';

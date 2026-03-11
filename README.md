@@ -297,6 +297,10 @@ Click these cards/badges to open detailed lists:
     - `24h (5m)` recent trend
     - `Daily` retained trend (bounded by `history_days`)
   - Blocked target drilldowns include `24h (5m)` and `Daily` trend toggle
+  - Blocked target drilldowns include `Blocked Ports (Daily Aggregate)` table:
+    - all observed blocked `port/proto` values (not top-only)
+    - totals are summed from flow `num_connections`
+    - aggregation follows selected daily range (`7d/30d/90d/180d/365d`)
 
 ### Trend View / Report
 
@@ -410,6 +414,7 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
   - If a blocked query appears to hit max results cap, target warning indicates possible truncation.
   - Rolling buckets are persisted in `rolling_state.json` (schema-versioned) for restart continuity.
   - Daily blocked totals are stored in `blocked_daily_history.json` using one record per target per completed day in configured timezone (or server local time by default).
+  - Daily blocked port/proto totals are stored in `blocked_port_daily_history.json` as compact aggregated records per target/day.
   - VEN daily maxima are stored in `ven_daily_history.json`.
   - On startup, legacy local state files are auto-migrated into the shared data directory if destination files are absent.
   - Retention is pruned based on `history_days`.
@@ -438,4 +443,5 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 - `scripts/rebuild-binaries.sh`: multi-platform build script
 - `config.json`: runtime configuration
 - `blocked_daily_history.json`: persisted daily blocked totals per target
+- `blocked_port_daily_history.json`: persisted daily blocked totals per target per `port/proto`
 - `ven_daily_history.json`: persisted daily VEN warning/error max values

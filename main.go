@@ -31,6 +31,7 @@ var templateFS embed.FS
 
 const configFileName = "config.json"
 const blockedHistoryFileName = "blocked_daily_history.json"
+const blockedPortHistoryFileName = "blocked_port_daily_history.json"
 const venHistoryFileName = "ven_daily_history.json"
 const rollingStateFileName = "rolling_state.json"
 const alertStateFileName = "alert_state.json"
@@ -153,28 +154,29 @@ type DashboardStats struct {
 }
 
 type DrilldownResponse struct {
-	Metric              string        `json:"metric"`
-	Target              string        `json:"target,omitempty"`
-	Title               string        `json:"title"`
-	Count               int           `json:"count"`
-	Items               []string      `json:"items"`
-	Trend               []TrendPoint  `json:"trend,omitempty"`
-	Trend24h            []TrendPoint  `json:"trend_24h,omitempty"`
-	TrendDaily          []TrendPoint  `json:"trend_daily,omitempty"`
-	TrendMA24h          []TrendPointF `json:"trend_ma_24h,omitempty"`
-	TrendMADaily        []TrendPointF `json:"trend_ma_daily,omitempty"`
-	BlockedMAWindow     int           `json:"blocked_ma_window,omitempty"`
-	BlockedAnomalyPct   float64       `json:"blocked_anomaly_pct,omitempty"`
-	Anomalous           bool          `json:"anomalous,omitempty"`
-	AnomalyReason       string        `json:"anomaly_reason,omitempty"`
-	AnomalyWindow       int           `json:"anomaly_window,omitempty"`
-	AnomalyPct          float64       `json:"anomaly_pct,omitempty"`
-	AnomalySource       string        `json:"anomaly_source,omitempty"`
-	AnomalyCoveragePct  float64       `json:"anomaly_coverage_pct,omitempty"`
-	LatestValue         int           `json:"latest_value,omitempty"`
-	MovingAvgValue      float64       `json:"moving_avg_value,omitempty"`
-	Baseline24h         int           `json:"baseline_24h,omitempty"`
-	BaselineCapturedUTC *time.Time    `json:"baseline_captured_utc,omitempty"`
+	Metric              string           `json:"metric"`
+	Target              string           `json:"target,omitempty"`
+	Title               string           `json:"title"`
+	Count               int              `json:"count"`
+	Items               []string         `json:"items"`
+	Trend               []TrendPoint     `json:"trend,omitempty"`
+	Trend24h            []TrendPoint     `json:"trend_24h,omitempty"`
+	TrendDaily          []TrendPoint     `json:"trend_daily,omitempty"`
+	TrendMA24h          []TrendPointF    `json:"trend_ma_24h,omitempty"`
+	TrendMADaily        []TrendPointF    `json:"trend_ma_daily,omitempty"`
+	BlockedMAWindow     int              `json:"blocked_ma_window,omitempty"`
+	BlockedAnomalyPct   float64          `json:"blocked_anomaly_pct,omitempty"`
+	Anomalous           bool             `json:"anomalous,omitempty"`
+	AnomalyReason       string           `json:"anomaly_reason,omitempty"`
+	AnomalyWindow       int              `json:"anomaly_window,omitempty"`
+	AnomalyPct          float64          `json:"anomaly_pct,omitempty"`
+	AnomalySource       string           `json:"anomaly_source,omitempty"`
+	AnomalyCoveragePct  float64          `json:"anomaly_coverage_pct,omitempty"`
+	LatestValue         int              `json:"latest_value,omitempty"`
+	MovingAvgValue      float64          `json:"moving_avg_value,omitempty"`
+	Baseline24h         int              `json:"baseline_24h,omitempty"`
+	BaselineCapturedUTC *time.Time       `json:"baseline_captured_utc,omitempty"`
+	BlockedPortsDaily   []BlockedPortDay `json:"blocked_ports_daily,omitempty"`
 }
 
 type TrendPoint struct {
@@ -185,6 +187,16 @@ type TrendPoint struct {
 type TrendPointF struct {
 	Timestamp time.Time `json:"timestamp"`
 	Value     float64   `json:"value"`
+}
+
+type PortCount struct {
+	Key   string `json:"key"`
+	Count int    `json:"count"`
+}
+
+type BlockedPortDay struct {
+	Timestamp time.Time   `json:"timestamp"`
+	Ports     []PortCount `json:"ports,omitempty"`
 }
 
 type rollingBucket struct {
@@ -260,6 +272,13 @@ type dailyBlockedRecord struct {
 	Count  int    `json:"count"`
 }
 
+type dailyBlockedPortRecord struct {
+	Day    string `json:"day"`
+	Target string `json:"target"`
+	Port   string `json:"port"`
+	Count  int    `json:"count"`
+}
+
 type venDailySnapshot struct {
 	WarningMax       int `json:"warning_max"`
 	ErrorMax         int `json:"error_max"`
@@ -301,14 +320,15 @@ var (
 	statsMutex   sync.RWMutex
 	isRefreshing atomic.Bool
 
-	rollingMu    sync.Mutex
-	rollingCache rollingState
-	historyMu    sync.Mutex
-	blockedDaily = map[string]map[string]int{}
-	venHistoryMu sync.Mutex
-	venDaily     = map[string]venDailySnapshot{}
-	alertMu      sync.Mutex
-	alertState   = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}}
+	rollingMu         sync.Mutex
+	rollingCache      rollingState
+	historyMu         sync.Mutex
+	blockedDaily      = map[string]map[string]int{}
+	blockedPortsDaily = map[string]map[string]map[string]int{}
+	venHistoryMu      sync.Mutex
+	venDaily          = map[string]venDailySnapshot{}
+	alertMu           sync.Mutex
+	alertState        = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}}
 
 	httpClient      = &http.Client{Timeout: 60 * time.Second}
 	dashboardTmpl   = template.Must(template.ParseFS(templateFS, "index.html"))
@@ -326,6 +346,7 @@ func main() {
 	}
 	initDataDir()
 	loadBlockedHistory()
+	loadBlockedPortHistory()
 	loadVENHistory()
 	loadRollingState()
 	loadAlertState()
@@ -544,6 +565,7 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Trend24h = blockedTrendSeries(target)
 		resp.TrendDaily = blockedDailyTrendSeries(target, configuredHistoryDays())
+		resp.BlockedPortsDaily = blockedPortDailySeries(target, configuredHistoryDays())
 		resp.BlockedMAWindow = window
 		resp.BlockedAnomalyPct = pct
 		resp.AnomalySource = baselineSource
@@ -1785,6 +1807,48 @@ func blockedDailyTrendSeries(target string, keepDays int) []TrendPoint {
 		sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
 	}
 	return points
+}
+
+func blockedPortDailySeries(target string, keepDays int) []BlockedPortDay {
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	loc := configuredDayLocation()
+	now := time.Now()
+	cutoff := localDayStart(now, loc).AddDate(0, 0, -keepDays)
+
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	out := make([]BlockedPortDay, 0, len(blockedPortsDaily))
+	for day, targets := range blockedPortsDaily {
+		d, err := parseDayKeyInLocation(day, loc)
+		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		portMap, ok := targets[target]
+		if !ok {
+			continue
+		}
+		ports := make([]PortCount, 0, len(portMap))
+		for key, count := range portMap {
+			if strings.TrimSpace(key) == "" || count <= 0 {
+				continue
+			}
+			ports = append(ports, PortCount{Key: key, Count: count})
+		}
+		sort.Slice(ports, func(i, j int) bool {
+			if ports[i].Count == ports[j].Count {
+				return ports[i].Key < ports[j].Key
+			}
+			return ports[i].Count > ports[j].Count
+		})
+		out = append(out, BlockedPortDay{
+			Timestamp: d.Add(12 * time.Hour).UTC(),
+			Ports:     ports,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.Before(out[j].Timestamp) })
+	return out
 }
 
 func movingAverageTrend(points []TrendPoint, window int) []TrendPointF {
@@ -3496,26 +3560,31 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 	dayStart := dayEnd.AddDate(0, 0, -1)
 	dayKey := dayStart.Format("2006-01-02")
 
-	missing := make([]TrafficTarget, 0)
+	missingCounts := make([]TrafficTarget, 0)
+	missingPorts := make([]TrafficTarget, 0)
 	historyMu.Lock()
 	for _, target := range targets {
 		targetMap := blockedDaily[dayKey]
 		if targetMap == nil {
-			missing = append(missing, target)
-			continue
+			missingCounts = append(missingCounts, target)
+		} else if _, ok := targetMap[target.Name]; !ok {
+			missingCounts = append(missingCounts, target)
 		}
-		if _, ok := targetMap[target.Name]; !ok {
-			missing = append(missing, target)
+		portTargetMap := blockedPortsDaily[dayKey]
+		if portTargetMap == nil {
+			missingPorts = append(missingPorts, target)
+		} else if _, ok := portTargetMap[target.Name]; !ok {
+			missingPorts = append(missingPorts, target)
 		}
 	}
 	historyMu.Unlock()
-	if len(missing) == 0 {
+	if len(missingCounts) == 0 && len(missingPorts) == 0 {
 		pruneBlockedHistory(nowUTC, historyDays)
 		return
 	}
 
 	changed := false
-	for _, target := range missing {
+	for _, target := range missingCounts {
 		qRes, err := getBlockedCountForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
 		if err != nil {
 			log.Printf("[HISTORY] daily blocked snapshot failed for %s (%s): %v", target.Name, dayKey, err)
@@ -3532,9 +3601,27 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 		historyMu.Unlock()
 		changed = true
 	}
+	for _, target := range missingPorts {
+		portCounts, err := getBlockedPortCountsForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
+		if err != nil {
+			log.Printf("[HISTORY] daily blocked port snapshot failed for %s (%s): %v", target.Name, dayKey, err)
+			continue
+		}
+		historyMu.Lock()
+		if blockedPortsDaily[dayKey] == nil {
+			blockedPortsDaily[dayKey] = map[string]map[string]int{}
+		}
+		if portCounts == nil {
+			portCounts = map[string]int{}
+		}
+		blockedPortsDaily[dayKey][target.Name] = portCounts
+		historyMu.Unlock()
+		changed = true
+	}
 	pruneBlockedHistory(nowUTC, historyDays)
 	if changed {
 		saveBlockedHistory()
+		saveBlockedPortHistory()
 	}
 }
 
@@ -3596,6 +3683,33 @@ func getBlockedCountForTargetWindow(baseURL string, target TrafficTarget, startU
 		return combined, nil
 	}
 	return runBothDirections(labelHRefs, target.Name)
+}
+
+func getBlockedPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (map[string]int, error) {
+	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
+	if err != nil {
+		return nil, err
+	}
+	sourceMap, err := performAsyncTrafficQueryWindowPortCounts(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_ports_src", startUTC, endUTC, true)
+	if err != nil {
+		return nil, err
+	}
+	destMap, err := performAsyncTrafficQueryWindowPortCounts(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_ports_dst", startUTC, endUTC, false)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int)
+	for k, v := range sourceMap {
+		if v > 0 {
+			out[k] += v
+		}
+	}
+	for k, v := range destMap {
+		if v > 0 {
+			out[k] += v
+		}
+	}
+	return out, nil
 }
 
 func resolveLabelHref(baseURL, targetName string) (string, error) {
@@ -3956,6 +4070,191 @@ func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceE
 	return trafficQueryResult{}, fmt.Errorf("async job timed out")
 }
 
+func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
+	if len(labelHRefs) == 0 {
+		return nil, errors.New("cannot run blocked traffic query with empty label list")
+	}
+	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
+	seen := make(map[string]struct{}, len(labelHRefs))
+	for _, h := range labelHRefs {
+		if h == "" {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
+	}
+	if len(includeList) == 0 {
+		return nil, errors.New("resolved labels are empty after normalization")
+	}
+	includeAny := make([]interface{}, 0, len(includeList))
+	for _, item := range includeList {
+		includeAny = append(includeAny, []interface{}{item})
+	}
+	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
+	for _, h := range sourceExcludeHRefs {
+		if strings.TrimSpace(h) == "" {
+			continue
+		}
+		sourceExcludes = append(sourceExcludes, map[string]interface{}{"label": map[string]string{"href": h}})
+	}
+	sources := map[string]interface{}{"include": []interface{}{}, "exclude": []interface{}{}}
+	destinations := map[string]interface{}{"include": []interface{}{}, "exclude": []interface{}{}}
+	if asSource {
+		sources["include"] = includeAny
+	} else {
+		destinations["include"] = includeAny
+	}
+	if len(sourceExcludes) > 0 {
+		ex := make([]interface{}, 0, len(sourceExcludes))
+		for _, e := range sourceExcludes {
+			ex = append(ex, e)
+		}
+		sources["exclude"] = ex
+	}
+	payload := map[string]interface{}{
+		"query_name":   fmt.Sprintf("Dash_%s_%d", queryName, time.Now().Unix()),
+		"sources":      sources,
+		"destinations": destinations,
+		"services": map[string]interface{}{
+			"include": []interface{}{},
+			"exclude": []interface{}{},
+		},
+		"policy_decisions": []string{"blocked"},
+		"start_date":       startUTC.Format(pceTimeFormat),
+		"end_date":         endUTC.Format(pceTimeFormat),
+		"max_results":      trafficQueryMaxResults,
+	}
+	var job map[string]interface{}
+	if err := apiCall(baseURL+"/traffic_flows/async_queries", "POST", payload, &job); err != nil {
+		return nil, err
+	}
+	jobHref, _ := job["href"].(string)
+	if jobHref == "" {
+		return nil, errors.New("async query did not return job href")
+	}
+	jobURL := resolveHrefToURL(jobHref)
+	for i := 0; i < 60; i++ {
+		var status map[string]interface{}
+		if err := apiCall(jobURL, "GET", nil, &status); err != nil {
+			return nil, err
+		}
+		s, _ := status["status"].(string)
+		switch s {
+		case "completed":
+			rows, err := getAsyncQueryResultRows(jobURL)
+			if err != nil {
+				return nil, err
+			}
+			return aggregatePortCounts(rows), nil
+		case "failed":
+			return nil, fmt.Errorf("async job failed: %s", statusMessage(status))
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return nil, fmt.Errorf("async job timed out")
+}
+
+func getAsyncQueryResultRows(jobURL string) ([]map[string]interface{}, error) {
+	for attempt := 0; attempt < 45; attempt++ {
+		for _, suffix := range []string{"/download", "/results"} {
+			rows, err := readAsyncResultRows(jobURL + suffix)
+			if err == nil {
+				return rows, nil
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return nil, errors.New("async job completed but no readable result endpoint")
+}
+
+func readAsyncResultRows(url string) ([]map[string]interface{}, error) {
+	body, err := apiCallRaw(url, "GET", nil)
+	if err != nil {
+		return nil, err
+	}
+	var arr []map[string]interface{}
+	if err := json.Unmarshal(body, &arr); err == nil {
+		return arr, nil
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal(body, &obj); err == nil {
+		for _, k := range []string{"results", "items", "flows"} {
+			items, ok := obj[k].([]interface{})
+			if !ok {
+				continue
+			}
+			out := make([]map[string]interface{}, 0, len(items))
+			for _, it := range items {
+				m, ok := it.(map[string]interface{})
+				if ok {
+					out = append(out, m)
+				}
+			}
+			return out, nil
+		}
+	}
+	return nil, errors.New("unexpected async result payload format")
+}
+
+func aggregatePortCounts(rows []map[string]interface{}) map[string]int {
+	out := make(map[string]int)
+	for _, row := range rows {
+		service, _ := row["service"].(map[string]interface{})
+		port := intFromAny(service["port"])
+		proto := intFromAny(service["proto"])
+		key := formatPortProtoKey(port, proto)
+		if key == "" {
+			continue
+		}
+		n := intFromAny(row["num_connections"])
+		if n <= 0 {
+			n = 1
+		}
+		out[key] += n
+	}
+	return out
+}
+
+func intFromAny(v interface{}) int {
+	switch t := v.(type) {
+	case int:
+		return t
+	case int64:
+		return int(t)
+	case float64:
+		return int(t)
+	case json.Number:
+		i, _ := t.Int64()
+		return int(i)
+	case string:
+		i, _ := strconv.Atoi(strings.TrimSpace(t))
+		return i
+	default:
+		return 0
+	}
+}
+
+func formatPortProtoKey(port, proto int) string {
+	if port <= 0 {
+		return ""
+	}
+	switch proto {
+	case 6:
+		return fmt.Sprintf("%d/tcp", port)
+	case 17:
+		return fmt.Sprintf("%d/udp", port)
+	case 1:
+		return fmt.Sprintf("%d/icmp", port)
+	case 0:
+		return fmt.Sprintf("%d", port)
+	default:
+		return fmt.Sprintf("%d/p%d", port, proto)
+	}
+}
+
 func extractResultCount(status map[string]interface{}) (int, bool) {
 	if count, ok := status["result_count"].(float64); ok {
 		return int(count), true
@@ -4245,7 +4544,7 @@ func migrateLegacyDataFiles() {
 	if strings.TrimSpace(dataDir) == "" || dataDir == "." {
 		return
 	}
-	for _, name := range []string{blockedHistoryFileName, venHistoryFileName, rollingStateFileName, alertStateFileName} {
+	for _, name := range []string{blockedHistoryFileName, blockedPortHistoryFileName, venHistoryFileName, rollingStateFileName, alertStateFileName} {
 		dst := dataFilePath(name)
 		if _, err := os.Stat(dst); err == nil {
 			continue
@@ -4327,6 +4626,39 @@ func loadBlockedHistory() {
 			blockedDaily[day] = map[string]int{}
 		}
 		blockedDaily[day][target] = rec.Count
+	}
+}
+
+func loadBlockedPortHistory() {
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	blockedPortsDaily = map[string]map[string]map[string]int{}
+
+	file, err := os.Open(dataFilePath(blockedPortHistoryFileName))
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	var records []dailyBlockedPortRecord
+	if err := json.NewDecoder(file).Decode(&records); err != nil {
+		log.Printf("[HISTORY] failed loading blocked port history: %v", err)
+		return
+	}
+	for _, rec := range records {
+		day := strings.TrimSpace(rec.Day)
+		target := strings.TrimSpace(rec.Target)
+		port := strings.TrimSpace(rec.Port)
+		if day == "" || target == "" || port == "" {
+			continue
+		}
+		if blockedPortsDaily[day] == nil {
+			blockedPortsDaily[day] = map[string]map[string]int{}
+		}
+		if blockedPortsDaily[day][target] == nil {
+			blockedPortsDaily[day][target] = map[string]int{}
+		}
+		blockedPortsDaily[day][target][port] = rec.Count
 	}
 }
 
@@ -4587,9 +4919,17 @@ func pruneBlockedHistory(nowUTC time.Time, keepDays int) {
 			changed = true
 		}
 	}
+	for day := range blockedPortsDaily {
+		parsed, err := parseDayKeyInLocation(day, loc)
+		if err != nil || parsed.Before(cutoff) {
+			delete(blockedPortsDaily, day)
+			changed = true
+		}
+	}
 	historyMu.Unlock()
 	if changed {
 		saveBlockedHistory()
+		saveBlockedPortHistory()
 	}
 }
 
@@ -4615,6 +4955,39 @@ func saveBlockedHistory() {
 
 	if err := writeJSONFileAtomic(dataFilePath(blockedHistoryFileName), records); err != nil {
 		log.Printf("[HISTORY] failed to save blocked history: %v", err)
+	}
+}
+
+func saveBlockedPortHistory() {
+	historyMu.Lock()
+	records := make([]dailyBlockedPortRecord, 0)
+	for day, targets := range blockedPortsDaily {
+		for target, ports := range targets {
+			for port, count := range ports {
+				if strings.TrimSpace(port) == "" {
+					continue
+				}
+				records = append(records, dailyBlockedPortRecord{
+					Day:    day,
+					Target: target,
+					Port:   port,
+					Count:  count,
+				})
+			}
+		}
+	}
+	historyMu.Unlock()
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Day == records[j].Day {
+			if records[i].Target == records[j].Target {
+				return records[i].Port < records[j].Port
+			}
+			return records[i].Target < records[j].Target
+		}
+		return records[i].Day < records[j].Day
+	})
+	if err := writeJSONFileAtomic(dataFilePath(blockedPortHistoryFileName), records); err != nil {
+		log.Printf("[HISTORY] failed to save blocked port history: %v", err)
 	}
 }
 
