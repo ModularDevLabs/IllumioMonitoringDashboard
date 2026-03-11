@@ -106,6 +106,20 @@
         .rank-chip.good { color: var(--good); border-color: var(--good); }
         .rank-chip.warn { color: var(--warn); border-color: var(--warn); }
         .rank-chip.bad { color: var(--bad); border-color: var(--bad); }
+        .narrative-box {
+            width: 100%;
+            min-height: 160px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--text);
+            padding: 10px;
+            font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+            font-size: 0.92rem;
+            line-height: 1.4;
+            resize: vertical;
+        }
+        .narrative-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
         @media (max-width: 900px) { .split, .board-grid { grid-template-columns: 1fr; } }
         @media print {
             body { background: #fff; color: #111; font-size: 12px; }
@@ -184,6 +198,16 @@
                 <tr><td colspan="6" class="muted">Loading target value ranking...</td></tr>
                 </tbody>
             </table>
+        </div>
+    </div>
+
+    <div class="panel non-board">
+        <h2>Narrative Summary</h2>
+        <div class="muted">Generated from current metrics for status updates and executive communication.</div>
+        <textarea id="narrative-text" class="narrative-box" readonly>Generating summary...</textarea>
+        <div class="narrative-actions">
+            <button id="btn-copy-narrative" type="button" class="btn">Copy Summary</button>
+            <button id="btn-download-narrative" type="button" class="btn">Download .txt</button>
         </div>
     </div>
 
@@ -412,6 +436,43 @@
         });
     }
 
+    function buildNarrativeSummary(stats, blockedDaily, actions, periodDays) {
+        const nowText = new Date().toLocaleString();
+        const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
+        const blockedPeriod = sumLastDays(blockedDaily, periodDays);
+        const blockedDeltaPeriod = comparePeriods(blockedDaily, periodDays);
+        const targets = stats.blocked?.targets || [];
+        const topTargets = [...targets]
+            .sort((a, b) => Number(b.count || 0) - Number(a.count || 0))
+            .slice(0, 3)
+            .map((t) => `${t.name} (${fmt(t.count || 0)} in 24h)`);
+        const anomalous = targets.filter((t) => t.anomalous).length;
+        const venWarn = (stats.ven_status?.warning || []).length;
+        const venErr = (stats.ven_status?.error || []).length;
+        const tampered = (stats.tampering?.workloads || []).length;
+        const pipelineBad = [stats.workloads?.status, stats.ven_status?.status, stats.tampering?.status, stats.blocked?.status].filter((s) => s && !s.success).length;
+
+        const lines = [];
+        lines.push(`Illumio Monitoring Dashboard Executive Summary (${nowText})`);
+        lines.push('');
+        lines.push(`Protection outcomes: ${fmt(blocked24h)} blocked flows in the last 24h; ${fmt(blockedPeriod)} blocked flows across the selected ${periodDays}-day window (${blockedDeltaPeriod >= 0 ? '+' : ''}${blockedDeltaPeriod.toFixed(1)}% vs prior ${periodDays}-day window).`);
+        lines.push(`Top protected targets (24h): ${topTargets.length ? topTargets.join(', ') : 'n/a'}.`);
+        lines.push(`Risk signals: ${anomalous} anomalous blocked targets, ${venWarn} VEN warnings, ${venErr} VEN errors, ${tampered} tampered VENs in the last 24h.`);
+        lines.push(`Pipeline confidence: ${pipelineBad === 0 ? 'healthy' : `${pipelineBad} collector stage(s) failing or partial`}.`);
+        lines.push('');
+        lines.push('Recommended actions:');
+        (actions && actions.length ? actions.slice(0, 3) : ['No immediate actions required.']).forEach((a, i) => {
+            lines.push(`${i + 1}. ${a}`);
+        });
+        return lines.join('\n');
+    }
+
+    function renderNarrativeSummary(text) {
+        const box = document.getElementById('narrative-text');
+        if (!box) return;
+        box.value = text || '';
+    }
+
     function updatePeriodButtons() {
         [7, 30, 90].forEach((d) => {
             const el = document.getElementById(`period-${d}`);
@@ -488,6 +549,7 @@
         }
         buildBoardSnapshot(stats, blockedDaily, targets, actions, selectedPeriodDays);
         renderValueRanking(stats, targetDetails, selectedPeriodDays);
+        renderNarrativeSummary(buildNarrativeSummary(stats, blockedDaily, actions, selectedPeriodDays));
         renderChart(blockedDaily);
 
         if (boardMode && queryAutoprint()) {
@@ -524,6 +586,45 @@
             UICommon.setTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark', THEME_KEY, 'btn-theme');
         });
         document.getElementById('btn-refresh').addEventListener('click', () => load().catch(() => {}));
+        const copyBtn = document.getElementById('btn-copy-narrative');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', async () => {
+                const box = document.getElementById('narrative-text');
+                const txt = box ? box.value : '';
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(txt);
+                    } else if (box) {
+                        box.removeAttribute('readonly');
+                        box.select();
+                        document.execCommand('copy');
+                        box.setAttribute('readonly', 'readonly');
+                    }
+                    copyBtn.textContent = 'Copied';
+                    setTimeout(() => { copyBtn.textContent = 'Copy Summary'; }, 1200);
+                } catch (_) {
+                    copyBtn.textContent = 'Copy Failed';
+                    setTimeout(() => { copyBtn.textContent = 'Copy Summary'; }, 1200);
+                }
+            });
+        }
+        const downloadBtn = document.getElementById('btn-download-narrative');
+        if (downloadBtn) {
+            downloadBtn.addEventListener('click', () => {
+                const box = document.getElementById('narrative-text');
+                const txt = box ? box.value : '';
+                const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `executive-summary-${new Date().toISOString().slice(0, 10)}.txt`;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => {
+                    URL.revokeObjectURL(a.href);
+                    a.remove();
+                }, 0);
+            });
+        }
         [7, 30, 90].forEach((d) => {
             const el = document.getElementById(`period-${d}`);
             if (!el) return;

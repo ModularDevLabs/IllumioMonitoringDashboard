@@ -386,6 +386,7 @@ Use `/settings` to manage webhook alerting:
     - protection outcomes (blocked value/volume metrics)
     - risk signals (anomalies, VEN warning/error, tampering, pipeline health)
     - business value ranking by target (24h, selected period totals, contribution share, risk context)
+    - narrative summary generator with copy/download for status updates
     - action queue with direct operational guidance
     - period selector (`7d/30d/90d`) for KPI and delta framing
   - Board-ready mode:
@@ -471,4 +472,4 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 Planned additions after board PDF mode:
 - SLO badges (freshness, pipeline success rate, partial/fail rate)
 - Anomaly outcomes panel (triggered vs resolved + MTTR)
-- Narrative summary generator for email/status reports
+- Board export bundle (combined executive/report artifacts)
