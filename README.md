@@ -416,6 +416,10 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 ## Operational Notes
 
 - Collector interval: 5 minutes
+- Lightweight server-side request timing logs are enabled:
+  - logs requests slower than `200ms`
+  - also logs any request with HTTP status `>=400`
+  - format: `[HTTP] route=... name=... method=... status=... dur=... bytes=...`
 - Rolling mode in this fork:
   - Startup performs a 24-hour baseline fetch.
   - Blocked traffic uses one 24-hour baseline query per target.

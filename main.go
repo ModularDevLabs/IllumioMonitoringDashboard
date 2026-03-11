@@ -45,6 +45,7 @@ const defaultPublicBaseURL = "http://localhost:18443"
 
 const pceTimeFormat = "2006-01-02T15:04:05.000Z"
 const maxHistoryDays = 3650
+const slowRequestLogThreshold = 200 * time.Millisecond
 
 type Config struct {
 	PCEURL                   string          `json:"pce_url"`
@@ -357,25 +358,25 @@ func main() {
 	initPendingStats()
 	go backgroundCollector()
 
-	http.HandleFunc("/", serveDashboard)
-	http.HandleFunc("/settings", serveSettings)
-	http.HandleFunc("/details", serveDetails)
-	http.HandleFunc("/report", serveReport)
-	http.HandleFunc("/trends", serveTrends)
-	http.HandleFunc("/executive", serveExecutive)
+	http.HandleFunc("/", withRequestTiming("dashboard", serveDashboard))
+	http.HandleFunc("/settings", withRequestTiming("settings", serveSettings))
+	http.HandleFunc("/details", withRequestTiming("details", serveDetails))
+	http.HandleFunc("/report", withRequestTiming("report", serveReport))
+	http.HandleFunc("/trends", withRequestTiming("trends", serveTrends))
+	http.HandleFunc("/executive", withRequestTiming("executive", serveExecutive))
 	staticFS, err := fs.Sub(templateFS, "static")
 	if err == nil {
 		http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	}
-	http.HandleFunc("/api/stats", handleStats)
-	http.HandleFunc("/api/drilldown", handleDrilldown)
-	http.HandleFunc("/api/export/drilldown.csv", handleExportDrilldownCSV)
-	http.HandleFunc("/api/export/report.csv", handleExportReportCSV)
-	http.HandleFunc("/api/debug/ven-status", handleDebugVENStatus)
-	http.HandleFunc("/api/config/targets", handleConfigTargets)
-	http.HandleFunc("/api/config/alerts", handleConfigAlerts)
-	http.HandleFunc("/api/refresh", handleRefreshNow)
-	http.HandleFunc("/api/webhook/test", handleWebhookTest)
+	http.HandleFunc("/api/stats", withRequestTiming("api.stats", handleStats))
+	http.HandleFunc("/api/drilldown", withRequestTiming("api.drilldown", handleDrilldown))
+	http.HandleFunc("/api/export/drilldown.csv", withRequestTiming("api.export.drilldown_csv", handleExportDrilldownCSV))
+	http.HandleFunc("/api/export/report.csv", withRequestTiming("api.export.report_csv", handleExportReportCSV))
+	http.HandleFunc("/api/debug/ven-status", withRequestTiming("api.debug.ven_status", handleDebugVENStatus))
+	http.HandleFunc("/api/config/targets", withRequestTiming("api.config.targets", handleConfigTargets))
+	http.HandleFunc("/api/config/alerts", withRequestTiming("api.config.alerts", handleConfigAlerts))
+	http.HandleFunc("/api/refresh", withRequestTiming("api.refresh", handleRefreshNow))
+	http.HandleFunc("/api/webhook/test", withRequestTiming("api.webhook.test", handleWebhookTest))
 
 	listenAddr := configuredBindAddress()
 	publicURL := configuredPublicBaseURL()
@@ -1621,6 +1622,45 @@ func parseBoolQuery(raw string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (sw *statusWriter) WriteHeader(code int) {
+	sw.status = code
+	sw.ResponseWriter.WriteHeader(code)
+}
+
+func (sw *statusWriter) Write(b []byte) (int, error) {
+	if sw.status == 0 {
+		sw.status = http.StatusOK
+	}
+	n, err := sw.ResponseWriter.Write(b)
+	sw.bytes += n
+	return n, err
+}
+
+func withRequestTiming(name string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w}
+		h(sw, r)
+		if sw.status == 0 {
+			sw.status = http.StatusOK
+		}
+		dur := time.Since(start)
+		if dur >= slowRequestLogThreshold || sw.status >= http.StatusBadRequest {
+			route := r.URL.Path
+			if q := strings.TrimSpace(r.URL.RawQuery); q != "" {
+				route = route + "?" + q
+			}
+			log.Printf("[HTTP] route=%s name=%s method=%s status=%d dur=%s bytes=%d", route, name, r.Method, sw.status, dur.Round(time.Millisecond), sw.bytes)
+		}
 	}
 }
 
