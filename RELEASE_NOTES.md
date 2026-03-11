@@ -1,5 +1,36 @@
 # Release Notes
 
+## v1.1.1 - 2026-03-11
+
+Patch release focused on security hardening and deployment guidance.
+
+### Security Fixes
+- Added trusted-origin protection for all mutable API routes:
+  - `PUT /api/config/targets`
+  - `PUT /api/config/alerts`
+  - `POST /api/refresh`
+  - `POST /api/webhook/test`
+- State-changing requests now validate browser `Origin`/`Referer` against trusted origins derived from:
+  - `public_base_url`
+  - current request host/protocol
+  - forwarded host/protocol headers when behind proxy
+- Cross-origin mutable requests are rejected with `403` and logged with security context.
+
+### UI Hardening
+- Hardened dynamic UI rendering against HTML injection by replacing unsafe `innerHTML` usage in key surfaces:
+  - dashboard blocked target tile rendering
+  - settings target editor rows
+  - blocked-port drilldown table rows
+
+### Testing
+- Added unit tests for origin normalization and trusted-origin allow/block behavior.
+
+### Documentation
+- Clarified deployment modes:
+  - convenience/internal direct-bind mode
+  - secure production mode (localhost bind + authenticated HTTPS reverse proxy)
+- Documented origin-check behavior for state-changing API routes.
+
 ## v1.1.0 - 2026-03-11
 
 Minor feature release focused on executive reporting, anomaly observability, and API efficiency improvements.
