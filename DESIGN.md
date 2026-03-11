@@ -51,6 +51,9 @@ Provide a single-binary, cross-platform Illumio monitoring tool with a local web
   - `timezone` (IANA timezone for daily buckets/trends; default server local timezone)
   - `bind_address` (listener address, default `:18443`)
   - `public_base_url` (absolute base URL used in generated links/webhook payloads, default `http://localhost:18443`)
+  - Deployment modes:
+    - direct listener mode for convenience/internal use
+    - secure mode via reverse proxy with TLS/auth where app binds localhost-only (`127.0.0.1:18443`) and proxy is the only exposed endpoint
 
 ### Frontend (HTML/JS)
 - Bootstrap + Chart.js.

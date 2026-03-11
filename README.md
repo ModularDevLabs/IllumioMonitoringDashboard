@@ -95,6 +95,10 @@ Cross-platform binaries are produced in the project root:
 
 ## Network Hosting Walkthrough
 
+This project supports two deployment modes:
+- Convenience mode (lab/internal only): bind directly on a network address (for example `0.0.0.0:18443`).
+- Secure mode (recommended for production): bind app to localhost only and publish through an authenticated HTTPS reverse proxy.
+
 1. Set `bind_address` to a network listener, for example `0.0.0.0:18443`.
 2. Set `public_base_url` to a reachable host URL used in generated links, for example `https://illumio-dashboard.internal`.
 3. Restart the binary so listener changes apply.
@@ -113,6 +117,12 @@ Use this pattern when you want users to browse `https://illumiodashboard.local`:
 - DNS record or hosts file maps `illumiodashboard.local` to the host IP.
 
 3. Reverse proxy terminates TLS on `:443` and forwards to `127.0.0.1:18443`.
+
+Security requirement for production:
+- Do not expose `:18443` directly when using this pattern.
+- Keep the dashboard listener on localhost (`127.0.0.1:18443`) and expose only the reverse proxy listener (`:443`).
+- Enforce authentication at the proxy (Basic auth, SSO/OIDC, mTLS, or equivalent).
+- State-changing API routes (`POST/PUT/PATCH/DELETE`) enforce browser-origin checks using `Origin`/`Referer` against the dashboard host/public URL.
 
 Nginx example:
 

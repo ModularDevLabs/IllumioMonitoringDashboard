@@ -407,10 +407,10 @@ func main() {
 	http.HandleFunc("/api/export/drilldown.csv", withRequestTiming("api.export.drilldown_csv", handleExportDrilldownCSV))
 	http.HandleFunc("/api/export/report.csv", withRequestTiming("api.export.report_csv", handleExportReportCSV))
 	http.HandleFunc("/api/debug/ven-status", withRequestTiming("api.debug.ven_status", handleDebugVENStatus))
-	http.HandleFunc("/api/config/targets", withRequestTiming("api.config.targets", handleConfigTargets))
-	http.HandleFunc("/api/config/alerts", withRequestTiming("api.config.alerts", handleConfigAlerts))
-	http.HandleFunc("/api/refresh", withRequestTiming("api.refresh", handleRefreshNow))
-	http.HandleFunc("/api/webhook/test", withRequestTiming("api.webhook.test", handleWebhookTest))
+	http.HandleFunc("/api/config/targets", withRequestTiming("api.config.targets", withTrustedOrigin("api.config.targets", handleConfigTargets)))
+	http.HandleFunc("/api/config/alerts", withRequestTiming("api.config.alerts", withTrustedOrigin("api.config.alerts", handleConfigAlerts)))
+	http.HandleFunc("/api/refresh", withRequestTiming("api.refresh", withTrustedOrigin("api.refresh", handleRefreshNow)))
+	http.HandleFunc("/api/webhook/test", withRequestTiming("api.webhook.test", withTrustedOrigin("api.webhook.test", handleWebhookTest)))
 	http.HandleFunc("/api/anomalies/history", withRequestTiming("api.anomalies.history", handleAnomalyHistory))
 
 	listenAddr := configuredBindAddress()
@@ -1985,6 +1985,163 @@ func withRequestTiming(name string, h http.HandlerFunc) http.HandlerFunc {
 			log.Printf("[HTTP] route=%s name=%s method=%s status=%d dur=%s bytes=%d", route, name, r.Method, sw.status, dur.Round(time.Millisecond), sw.bytes)
 		}
 	}
+}
+
+func withTrustedOrigin(name string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !isStateChangingMethod(r.Method) {
+			h(w, r)
+			return
+		}
+		ok, reason := isTrustedOriginRequest(r)
+		if !ok {
+			http.Error(w, "forbidden origin", http.StatusForbidden)
+			log.Printf("[SECURITY] blocked request route=%s name=%s method=%s reason=%s origin=%q referer=%q host=%q", r.URL.Path, name, r.Method, reason, strings.TrimSpace(r.Header.Get("Origin")), strings.TrimSpace(r.Header.Get("Referer")), strings.TrimSpace(r.Host))
+			return
+		}
+		h(w, r)
+	}
+}
+
+func isStateChangingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTrustedOriginRequest(r *http.Request) (bool, string) {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	referer := strings.TrimSpace(r.Header.Get("Referer"))
+	if origin == "" && referer == "" {
+		// Non-browser clients may not send Origin/Referer.
+		return true, "no_origin_or_referer"
+	}
+
+	requestOrigin, src, err := requestOriginFromHeaders(origin, referer)
+	if err != nil {
+		return false, "bad_" + src
+	}
+	allowed := trustedOriginsForRequest(r)
+	if len(allowed) == 0 {
+		return false, "no_trusted_origins"
+	}
+	if _, ok := allowed[requestOrigin]; ok {
+		return true, "trusted_" + src
+	}
+	return false, "origin_not_allowed"
+}
+
+func requestOriginFromHeaders(originHeader string, refererHeader string) (string, string, error) {
+	if originHeader != "" {
+		v, err := normalizeOrigin(originHeader)
+		return v, "origin", err
+	}
+	v, err := normalizeOrigin(refererHeader)
+	return v, "referer", err
+}
+
+func trustedOriginsForRequest(r *http.Request) map[string]struct{} {
+	allowed := make(map[string]struct{}, 3)
+	if v, err := normalizeOrigin(configuredPublicBaseURL()); err == nil && v != "" {
+		allowed[v] = struct{}{}
+	}
+	if v, err := normalizeOrigin(requestPublicOrigin(r)); err == nil && v != "" {
+		allowed[v] = struct{}{}
+	}
+	if host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); host != "" {
+		scheme := requestScheme(r)
+		if v, err := normalizeOrigin(scheme + "://" + host); err == nil && v != "" {
+			allowed[v] = struct{}{}
+		}
+	}
+	return allowed
+}
+
+func requestPublicOrigin(r *http.Request) string {
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		host = strings.TrimSpace(r.URL.Host)
+	}
+	if host == "" {
+		return ""
+	}
+	return requestScheme(r) + "://" + host
+}
+
+func requestScheme(r *http.Request) string {
+	if xf := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); xf != "" {
+		part := xf
+		if idx := strings.Index(part, ","); idx >= 0 {
+			part = part[:idx]
+		}
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part == "http" || part == "https" {
+			return part
+		}
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
+func normalizeOrigin(raw string) (string, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" || strings.EqualFold(v, "null") {
+		return "", errors.New("empty or null origin")
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return "", err
+	}
+	scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return "", errors.New("unsupported scheme")
+	}
+	host := normalizeHostPort(strings.TrimSpace(u.Host), scheme)
+	if host == "" {
+		return "", errors.New("empty host")
+	}
+	return scheme + "://" + host, nil
+}
+
+func normalizeHostPort(hostport string, scheme string) string {
+	hostport = strings.TrimSpace(hostport)
+	if hostport == "" {
+		return ""
+	}
+	if strings.Contains(hostport, "@") {
+		if u, err := url.Parse("dummy://" + hostport); err == nil {
+			hostport = u.Host
+		}
+	}
+	host := ""
+	port := ""
+	if h, p, err := net.SplitHostPort(hostport); err == nil {
+		host, port = h, p
+	} else {
+		host = hostport
+	}
+	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	if host == "" {
+		return ""
+	}
+	host = strings.ToLower(host)
+	if port == "" {
+		switch scheme {
+		case "https":
+			port = "443"
+		default:
+			port = "80"
+		}
+	}
+	if strings.Contains(host, ":") {
+		return net.JoinHostPort(host, port)
+	}
+	return host + ":" + port
 }
 
 func venTrendSeries(kind string) []TrendPoint {
