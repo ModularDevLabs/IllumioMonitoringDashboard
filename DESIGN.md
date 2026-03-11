@@ -1,4 +1,4 @@
-# Design Document: Illumio Monitoring Dashboard (Rolling/UI-Hardening + Persistent State + Webhooks + Network Hosting)
+# Design Document: Illumio Monitoring Dashboard
 
 ## 1. Objective
 Provide a single-binary, cross-platform Illumio monitoring tool with a local web UI that continuously surfaces operational and security posture metrics with drilldowns and trend visualizations.
@@ -25,6 +25,11 @@ Provide a single-binary, cross-platform Illumio monitoring tool with a local web
 - Optional webhook alerting:
   - Triggered/resolved notifications for blocked-target anomalies
   - Provider-specific formatting (`generic`, `slack`, `teams`)
+- Executive workflow:
+  - `/executive` with outcomes vs risk signals
+  - period selector (`7d/30d/90d`)
+  - business-value ranking
+  - narrative summary generator and board-ready print mode
 
 ## 3. Architecture
 ### Backend (Go)
@@ -41,6 +46,7 @@ Provide a single-binary, cross-platform Illumio monitoring tool with a local web
   - `blocked_daily_history.json`
   - `ven_daily_history.json`
   - `alert_state.json` (anomaly alert transition state)
+  - `anomaly_history.jsonl` (persisted anomaly transitions for blocked targets, VEN warnings/errors, tampering)
 - Host/runtime network settings via `config.json`:
   - `timezone` (IANA timezone for daily buckets/trends; default server local timezone)
   - `bind_address` (listener address, default `:18443`)
@@ -87,8 +93,11 @@ Provide a single-binary, cross-platform Illumio monitoring tool with a local web
   - summary cards + trend charts
   - blocked charts grouped in collapsible sections by target
   - enforcement mode charts grouped in collapsible section
+  - anomaly outcomes grouped in collapsible section
   - day-range controls for daily trends (`24h`, `7d`, `30d`, `90d`, `180d`, `365d`)
   - next-refresh/staleness indicators
+- Dashboard (`/`):
+  - pipeline status row includes SLO confidence badge
 
 ## 6. API Surface (UI-facing)
 - `GET /api/stats`
@@ -102,14 +111,17 @@ Provide a single-binary, cross-platform Illumio monitoring tool with a local web
 - `POST /api/refresh`
 - `GET /api/debug/ven-status`
 - `POST /api/webhook/test`
+- `GET /api/anomalies/history?days=<n>&limit=<n>`
 
 ## 7. Reliability/Scale Considerations
 - Large-PCE pagination support for workloads, VENs, labels, and label groups.
 - Label/label-group lookup diagnostics include scanned object counts.
 - Async blocked traffic querying with timeout/retry/fallback result extraction.
+- Per-target blocked query pacing/staggering to reduce request bursts every 5-minute cycle.
+- Query-result reuse path for blocked count + blocked ports in daily/history aggregation flows.
 - Partial-success status surfaced in UI rather than full pipeline failure.
 
 ## 8. Current Status
-- Implemented and functional in fork:
-  - `/home/ted/Codex/IllumioDashboard-rolling-networkhost-v1`
-- Includes all prior UI-hardening/trend features, cross-version persistent rolling state, and webhook anomaly notifications.
+- Implemented and functional in active repo:
+  - `/home/ted/Codex/IllumioMonitoringDashboard`
+- Includes UI hardening, network hosting controls, persisted rolling/daily history, anomaly history, webhook notifications, executive reporting, and trend/report anomaly outcomes.

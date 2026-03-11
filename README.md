@@ -1,4 +1,4 @@
-# Illumio PCE Health Dashboard (Go) - Rolling Window Experiment
+# Illumio Monitoring Dashboard
 
 A standalone Go dashboard for Illumio PCE health and security metrics.
 
@@ -65,6 +65,8 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Collapsible anomaly outcomes section in report/trends with active + transition counts
   - Blocked traffic trends grouped by target in collapsible sections
   - Enforcement mode trends grouped in a collapsible section
+- Operational confidence:
+  - Dashboard pipeline strip includes an SLO confidence badge (`HIGH`/`MEDIUM`/`LOW`/`UNKNOWN`)
 - Theme:
   - Light/dark mode toggle in dashboard, drilldown, and report views
   - Shared UI helpers embedded from `/static/ui-common.js`

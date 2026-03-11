@@ -1,5 +1,44 @@
 # Release Notes
 
+## v1.1.0 - 2026-03-11
+
+Minor feature release focused on executive reporting, anomaly observability, and API efficiency improvements.
+
+### Highlights
+- New **Executive View** capabilities:
+  - period selector (`7d/30d/90d`)
+  - business value ranking by blocked outcomes
+  - narrative summary generator (copy/download)
+  - board-ready print mode enhancements
+- New **Anomaly Outcomes** section in Trend/Report view:
+  - collapsible section with active and transition counts
+  - recent transition context from persisted history
+- New dashboard **SLO Confidence** badge in pipeline status strip.
+- New persisted anomaly history across all anomaly types:
+  - blocked targets
+  - VEN warnings
+  - VEN errors
+  - tampering
+- New anomaly history API:
+  - `GET /api/anomalies/history?days=<n>&limit=<n>`
+
+### Performance and Collector Changes
+- Added per-target blocked query pacing/staggering to smooth 5-minute burst load.
+- Added query result reuse for blocked count + port/proto extraction paths.
+- Daily blocked history now accumulates from 5-minute deltas (counts and ports), reducing separate daily snapshot pressure.
+
+### UI/UX
+- Trend/report anomaly outcomes integrated with collapsible behavior to match existing grouped sections.
+- Executive page now supports period-aware KPI framing and period-aware board links.
+
+### Data/Storage
+- Added `anomaly_history.jsonl` in shared data directory for durable transition history.
+- Retention follows `history_days`, keeping storage bounded.
+
+### Compatibility
+- Backward-compatible with existing persisted state and config.
+- No required config migration.
+
 ## v1.0.1 - 2026-03-09
 
 Patch release focused on chart UX and daily-history correctness.
