@@ -26,7 +26,3 @@ alert_state.json
 
 # Built binaries/artifacts
 illumio-dash
-illumio-dashboard.exe
-illumio-dashboard-linux-amd64
-illumio-dashboard-mac-intel
-illumio-dashboard-mac-arm
