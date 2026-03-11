@@ -59,6 +59,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - CSV export (`/api/export/report.csv`) for Excel
   - Print-friendly report page (`/report`) with summary + trend charts for PDF export
   - Trend view (`/trends`) reuses report layout and auto-refreshes every 5 minutes
+  - Collapsible anomaly outcomes section in report/trends with active + transition counts
   - Blocked traffic trends grouped by target in collapsible sections
   - Enforcement mode trends grouped in a collapsible section
 - Theme:
@@ -381,6 +382,7 @@ Use `/settings` to manage webhook alerting:
   - Render printable report view with summary and trend charts
 - `GET /trends`:
   - Live summary+trend view (same layout as report) with auto-refresh every 5 minutes
+  - Includes collapsible anomaly outcomes section
 - `GET /executive`:
   - Executive summary view with:
     - protection outcomes (blocked value/volume metrics)

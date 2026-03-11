@@ -103,6 +103,34 @@
             --bs-btn-padding-x: 0.45rem;
             --bs-btn-font-size: 0.72rem;
         }
+        .confidence-pill {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            border: 1px solid transparent;
+        }
+        .confidence-high {
+            background: rgba(25, 135, 84, 0.16);
+            color: #198754;
+            border-color: rgba(25, 135, 84, 0.38);
+        }
+        .confidence-medium {
+            background: rgba(245, 159, 0, 0.16);
+            color: #9a6700;
+            border-color: rgba(245, 159, 0, 0.42);
+        }
+        .confidence-low {
+            background: rgba(220, 53, 69, 0.16);
+            color: #b42333;
+            border-color: rgba(220, 53, 69, 0.42);
+        }
+        .confidence-unknown {
+            background: rgba(108, 117, 125, 0.16);
+            color: #5f6670;
+            border-color: rgba(108, 117, 125, 0.42);
+        }
         .mode-badge { font-size: 0.77rem; padding: 5px 10px; border-radius: 12px; letter-spacing: 0.01em; }
         .metric-link { cursor: pointer; }
         .metric-link:hover { background: var(--tile-hover); }
@@ -261,6 +289,7 @@
                         <div class="me-4" id="stat-ven"><span class="status-dot dot-yellow"></span> VEN Status</div>
                         <div class="me-4" id="stat-tampering"><span class="status-dot dot-yellow"></span> Tampered VENs</div>
                         <div class="me-4" id="stat-blocked"><span class="status-dot dot-yellow"></span> Blocked Traffic <span class="status-warn d-none">!</span></div>
+                        <div class="me-4" id="stat-confidence">SLO Confidence <span id="confidence-pill" class="confidence-pill confidence-unknown">UNKNOWN</span></div>
                     </div>
                 </div>
             </div>
@@ -496,6 +525,32 @@
             }
         }
 
+        function updateConfidenceBadge(stats) {
+            const pill = document.getElementById('confidence-pill');
+            if (!pill) return;
+            const statuses = [stats?.workloads?.status, stats?.ven_status?.status, stats?.tampering?.status, stats?.blocked?.status];
+            const failed = statuses.filter((s) => !(s && s.success)).length;
+            const partial = stats?.blocked?.partial ? 1 : 0;
+            const ts = UICommon.parseTS(stats?.timestamp);
+            const staleSecs = ts ? Math.max(0, Math.floor((Date.now() - ts.getTime()) / 1000)) : 999999;
+            let label = 'LOW';
+            let cls = 'confidence-low';
+            let title = `failed stages=${failed}, partial stages=${partial}, staleness=${staleSecs}s`;
+            if (failed === 0 && partial === 0 && staleSecs <= 420) {
+                label = 'HIGH';
+                cls = 'confidence-high';
+            } else if (failed <= 1 && staleSecs <= 900) {
+                label = 'MEDIUM';
+                cls = 'confidence-medium';
+            } else if (!Number.isFinite(staleSecs)) {
+                label = 'UNKNOWN';
+                cls = 'confidence-unknown';
+            }
+            pill.className = `confidence-pill ${cls}`;
+            pill.textContent = label;
+            pill.title = `SLO confidence derived from pipeline failures, partial results, and data staleness (${title})`;
+        }
+
         async function load() {
             if (loadInFlight) return;
             loadInFlight = true;
@@ -528,6 +583,7 @@
                 lastSnapshotTS = d.timestamp;
                 updateRefreshMeta(lastSnapshotTS);
                 updateCollectionBadge(d.collection);
+                updateConfidenceBadge(d);
             } catch (err) {
                 console.error('Fetch Error:', err);
                 document.getElementById('ts').innerText = 'Fetch failed: ' + err.message;

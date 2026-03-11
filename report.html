@@ -105,6 +105,7 @@
             color: var(--muted);
             margin-bottom: 8px;
         }
+        .anomaly-notes { margin-top: 8px; font-size: 0.83rem; color: var(--muted); }
         .enforcement-block {
             margin-top: 12px;
             border-top: 1px dashed var(--border);
@@ -173,6 +174,11 @@
         <div class="muted">Primary charts are shown first. Blocked traffic charts are grouped per target below.</div>
         <div class="muted" id="view-mode-hint"></div>
         <div class="chart-grid mt-2" id="charts-primary"></div>
+        <details class="enforcement-block mt-2" id="anomaly-details">
+            <summary class="enforcement-summary" id="anomaly-summary">Anomaly Outcomes</summary>
+            <div class="summary-grid" id="anomaly-outcomes"></div>
+            <div class="anomaly-notes" id="anomaly-notes"></div>
+        </details>
         <details class="enforcement-block mt-2" id="ven-details">
             <summary class="enforcement-summary" id="ven-summary">VEN Status Trends</summary>
             <div class="chart-grid" id="charts-ven"></div>
@@ -200,6 +206,7 @@
     let chartMode = 'both';
     let chartCountByContainer = {};
     let blockedGroupsMeta = [];
+    const ANOMALY_STATE_KEY = 'illumio_anomaly_outcomes_state_v1';
 
     function esc(s) {
         if (s === null || s === undefined) return '';
@@ -386,10 +393,13 @@
     }
 
     function finalizeSectionSummariesAndExpansion() {
+        const anomalyCount = chartCountByContainer['anomaly-outcomes'] || 0;
         const venCount = chartCountByContainer['charts-ven'] || 0;
         const enforcementCount = chartCountByContainer['charts-enforcement'] || 0;
+        const anomalySummary = document.getElementById('anomaly-summary');
         const venSummary = document.getElementById('ven-summary');
         const enforcementSummary = document.getElementById('enforcement-summary');
+        if (anomalySummary) anomalySummary.textContent = `Anomaly Outcomes (${anomalyCount})`;
         if (venSummary) venSummary.textContent = `VEN Status Trends (${venCount})`;
         if (enforcementSummary) enforcementSummary.textContent = `Enforcement Mode Trends (${enforcementCount})`;
 
@@ -399,9 +409,11 @@
             if (summary) summary.textContent = `Blocked Traffic - ${g.name} (${cnt})`;
         });
 
+        const anomalyDetails = document.getElementById('anomaly-details');
         const venDetails = document.getElementById('ven-details');
         const enforcementDetails = document.getElementById('enforcement-details');
         if (chartMode === 'both') {
+            if (anomalyDetails) anomalyDetails.open = false;
             if (venDetails) venDetails.open = false;
             if (enforcementDetails) enforcementDetails.open = false;
             blockedGroupsMeta.forEach((g) => {
@@ -410,12 +422,83 @@
             });
             return;
         }
+        if (anomalyDetails) anomalyDetails.open = anomalyCount > 0;
         if (venDetails) venDetails.open = venCount > 0;
         if (enforcementDetails) enforcementDetails.open = enforcementCount > 0;
         blockedGroupsMeta.forEach((g) => {
             const d = document.getElementById(g.detailsId);
             if (d) d.open = (chartCountByContainer[g.gridId] || 0) > 0;
         });
+    }
+
+    function loadAnomalyOutcomeState() {
+        try {
+            const raw = localStorage.getItem(ANOMALY_STATE_KEY);
+            if (!raw) return { blockedTargets: [], venWarning: false, venError: false, tampering: false };
+            const parsed = JSON.parse(raw);
+            return {
+                blockedTargets: Array.isArray(parsed.blockedTargets) ? parsed.blockedTargets : [],
+                venWarning: !!parsed.venWarning,
+                venError: !!parsed.venError,
+                tampering: !!parsed.tampering
+            };
+        } catch (_) {
+            return { blockedTargets: [], venWarning: false, venError: false, tampering: false };
+        }
+    }
+
+    function saveAnomalyOutcomeState(state) {
+        try {
+            localStorage.setItem(ANOMALY_STATE_KEY, JSON.stringify(state));
+        } catch (_) {}
+    }
+
+    function renderAnomalyOutcomes(stats, warnDD, errDD, tampDD) {
+        const box = document.getElementById('anomaly-outcomes');
+        const notes = document.getElementById('anomaly-notes');
+        if (!box) return;
+        box.innerHTML = '';
+
+        const activeBlockedTargets = (stats.blocked?.targets || [])
+            .filter((t) => t.anomalous)
+            .map((t) => t.name || 'unknown');
+        const current = {
+            blockedTargets: activeBlockedTargets,
+            venWarning: !!warnDD?.anomalous,
+            venError: !!errDD?.anomalous,
+            tampering: !!tampDD?.anomalous
+        };
+        const prev = loadAnomalyOutcomeState();
+
+        const prevSet = new Set(prev.blockedTargets || []);
+        const curSet = new Set(current.blockedTargets || []);
+        const blockedTriggered = [...curSet].filter((n) => !prevSet.has(n));
+        const blockedResolved = [...prevSet].filter((n) => !curSet.has(n));
+
+        const metricTriggered = [];
+        const metricResolved = [];
+        if (current.venWarning && !prev.venWarning) metricTriggered.push('VEN Warnings');
+        if (!current.venWarning && prev.venWarning) metricResolved.push('VEN Warnings');
+        if (current.venError && !prev.venError) metricTriggered.push('VEN Errors');
+        if (!current.venError && prev.venError) metricResolved.push('VEN Errors');
+        if (current.tampering && !prev.tampering) metricTriggered.push('Tampered VENs');
+        if (!current.tampering && prev.tampering) metricResolved.push('Tampered VENs');
+
+        const activeMetricCount = [current.venWarning, current.venError, current.tampering].filter(Boolean).length;
+        addSummaryItem(box, 'Active Blocked Target Anomalies', activeBlockedTargets.length);
+        addSummaryItem(box, 'Active Metric Anomalies', activeMetricCount);
+        addSummaryItem(box, 'Newly Triggered (This Refresh)', blockedTriggered.length + metricTriggered.length);
+        addSummaryItem(box, 'Newly Resolved (This Refresh)', blockedResolved.length + metricResolved.length);
+        chartCountByContainer['anomaly-outcomes'] = 4;
+
+        const noteParts = [];
+        if (blockedTriggered.length) noteParts.push(`Triggered targets: ${blockedTriggered.slice(0, 3).join(', ')}${blockedTriggered.length > 3 ? '...' : ''}`);
+        if (blockedResolved.length) noteParts.push(`Resolved targets: ${blockedResolved.slice(0, 3).join(', ')}${blockedResolved.length > 3 ? '...' : ''}`);
+        if (metricTriggered.length) noteParts.push(`Triggered metric trends: ${metricTriggered.join(', ')}`);
+        if (metricResolved.length) noteParts.push(`Resolved metric trends: ${metricResolved.join(', ')}`);
+        if (notes) notes.textContent = noteParts.length ? noteParts.join(' | ') : 'No anomaly state transitions detected in this refresh.';
+
+        saveAnomalyOutcomeState(current);
     }
 
     async function fetchJSON(url) {
@@ -431,6 +514,8 @@
         }
         document.getElementById('summary').innerHTML = '';
         document.getElementById('charts-primary').innerHTML = '';
+        document.getElementById('anomaly-outcomes').innerHTML = '';
+        document.getElementById('anomaly-notes').textContent = '';
         document.getElementById('charts-ven').innerHTML = '';
         document.getElementById('blocked-groups').innerHTML = '';
         document.getElementById('charts-enforcement').innerHTML = '';
@@ -492,6 +577,7 @@
             fetchJSON('/api/drilldown?metric=ven_error'),
             fetchJSON('/api/drilldown?metric=tampering').catch(() => null)
         ]);
+        renderAnomalyOutcomes(stats, warnDD, errDD, tampDD);
         renderLineChart(
             'VEN Warnings (24h, 5m)',
             warnDD.trend_24h || warnDD.trend || [],
