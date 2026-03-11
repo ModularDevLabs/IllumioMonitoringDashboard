@@ -570,6 +570,31 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.BlockedPortDailyEnabled = configuredBlockedPortDailyEnabled()
 		if resp.BlockedPortDailyEnabled {
 			resp.BlockedPortsDaily = blockedPortDailySeries(target, configuredHistoryDays())
+			configMutex.RLock()
+			pceURL := config.PCEURL
+			orgID := config.OrgID
+			configMutex.RUnlock()
+			baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), orgID)
+			excludedHRefs, exclusionWarn := resolveSourceExclusionHRefs(baseURL, configuredSourceExclusions())
+			if exclusionWarn != "" {
+				log.Printf("[DRILLDOWN] source exclusion warning: %s", exclusionWarn)
+			}
+			loc := configuredDayLocation()
+			now := time.Now()
+			todayStart := localDayStart(now, loc)
+			targetCfg, ok := configuredTrafficTargetByName(target)
+			if !ok {
+				targetCfg = TrafficTarget{Name: target, Kind: "auto"}
+			}
+			todayPorts, err := getBlockedPortCountsForTargetWindow(baseURL, targetCfg, todayStart.UTC(), now.UTC(), excludedHRefs)
+			if err != nil {
+				log.Printf("[DRILLDOWN] blocked ports today-so-far query failed for %s: %v", target, err)
+			} else if len(todayPorts) > 0 {
+				resp.BlockedPortsDaily = append(resp.BlockedPortsDaily, BlockedPortDay{
+					Timestamp: now.UTC(),
+					Ports:     portCountMapToSortedSlice(todayPorts),
+				})
+			}
 		}
 		resp.BlockedMAWindow = window
 		resp.BlockedAnomalyPct = pct
@@ -1846,19 +1871,7 @@ func blockedPortDailySeries(target string, keepDays int) []BlockedPortDay {
 		if !ok {
 			continue
 		}
-		ports := make([]PortCount, 0, len(portMap))
-		for key, count := range portMap {
-			if strings.TrimSpace(key) == "" || count <= 0 {
-				continue
-			}
-			ports = append(ports, PortCount{Key: key, Count: count})
-		}
-		sort.Slice(ports, func(i, j int) bool {
-			if ports[i].Count == ports[j].Count {
-				return ports[i].Key < ports[j].Key
-			}
-			return ports[i].Count > ports[j].Count
-		})
+		ports := portCountMapToSortedSlice(portMap)
 		out = append(out, BlockedPortDay{
 			Timestamp: d.Add(12 * time.Hour).UTC(),
 			Ports:     ports,
@@ -1866,6 +1879,23 @@ func blockedPortDailySeries(target string, keepDays int) []BlockedPortDay {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.Before(out[j].Timestamp) })
 	return out
+}
+
+func portCountMapToSortedSlice(portMap map[string]int) []PortCount {
+	ports := make([]PortCount, 0, len(portMap))
+	for key, count := range portMap {
+		if strings.TrimSpace(key) == "" || count <= 0 {
+			continue
+		}
+		ports = append(ports, PortCount{Key: key, Count: count})
+	}
+	sort.Slice(ports, func(i, j int) bool {
+		if ports[i].Count == ports[j].Count {
+			return ports[i].Key < ports[j].Key
+		}
+		return ports[i].Count > ports[j].Count
+	})
+	return ports
 }
 
 func movingAverageTrend(points []TrendPoint, window int) []TrendPointF {
