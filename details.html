@@ -153,6 +153,7 @@
         let blockedMAWindow = 12;
         let blockedAnomalyPct = 50;
         let blockedAnomalySource = '5m';
+        let blockedPortDailyEnabled = true;
         let blockedPortsDaily = [];
         const THEME_KEY = 'illumio_theme';
         let dayRange = 30;
@@ -380,6 +381,11 @@
                 return;
             }
             wrap.classList.remove('d-none');
+            if (!blockedPortDailyEnabled) {
+                body.innerHTML = '<tr><td colspan="2" class="text-muted">Blocked port daily aggregation is disabled in settings.</td></tr>';
+                meta.innerText = 'Disabled.';
+                return;
+            }
             const cutoff = Date.now() - dayRange * 24 * 60 * 60 * 1000;
             const totals = new Map();
             (blockedPortsDaily || []).forEach((d) => {
@@ -469,6 +475,7 @@
                 trendDaily = d.trend_daily || [];
                 trendMA24h = d.trend_ma_24h || [];
                 trendMADaily = d.trend_ma_daily || [];
+                blockedPortDailyEnabled = d.blocked_port_daily_enabled !== false;
                 blockedPortsDaily = d.blocked_ports_daily || [];
                 blockedMAWindow = Number(d.blocked_ma_window || blockedMAWindow || 12);
                 blockedAnomalyPct = Number(d.blocked_anomaly_pct || blockedAnomalyPct || 50);
@@ -485,6 +492,7 @@
                 return;
             }
             blockedPortsDaily = [];
+            blockedPortDailyEnabled = true;
             renderBlockedPortsTable();
             if (d.metric === 'ven_warning' || d.metric === 'ven_error') {
                 document.getElementById('trend-raw').innerText = '24h (5m)';

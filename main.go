@@ -58,6 +58,7 @@ type Config struct {
 	TrafficTargets           []TrafficTarget `json:"traffic_targets,omitempty"`
 	SourceExclusions         []TrafficTarget `json:"traffic_source_exclusions,omitempty"`
 	HistoryDays              int             `json:"history_days,omitempty"`
+	BlockedPortDailyEnabled  *bool           `json:"blocked_port_daily_enabled,omitempty"`
 	BlockedMAWindow          int             `json:"blocked_ma_window,omitempty"`
 	BlockedAnomalyPct        float64         `json:"blocked_anomaly_pct,omitempty"`
 	BlockedAnomalyBaseline   string          `json:"blocked_anomaly_baseline,omitempty"`
@@ -154,29 +155,30 @@ type DashboardStats struct {
 }
 
 type DrilldownResponse struct {
-	Metric              string           `json:"metric"`
-	Target              string           `json:"target,omitempty"`
-	Title               string           `json:"title"`
-	Count               int              `json:"count"`
-	Items               []string         `json:"items"`
-	Trend               []TrendPoint     `json:"trend,omitempty"`
-	Trend24h            []TrendPoint     `json:"trend_24h,omitempty"`
-	TrendDaily          []TrendPoint     `json:"trend_daily,omitempty"`
-	TrendMA24h          []TrendPointF    `json:"trend_ma_24h,omitempty"`
-	TrendMADaily        []TrendPointF    `json:"trend_ma_daily,omitempty"`
-	BlockedMAWindow     int              `json:"blocked_ma_window,omitempty"`
-	BlockedAnomalyPct   float64          `json:"blocked_anomaly_pct,omitempty"`
-	Anomalous           bool             `json:"anomalous,omitempty"`
-	AnomalyReason       string           `json:"anomaly_reason,omitempty"`
-	AnomalyWindow       int              `json:"anomaly_window,omitempty"`
-	AnomalyPct          float64          `json:"anomaly_pct,omitempty"`
-	AnomalySource       string           `json:"anomaly_source,omitempty"`
-	AnomalyCoveragePct  float64          `json:"anomaly_coverage_pct,omitempty"`
-	LatestValue         int              `json:"latest_value,omitempty"`
-	MovingAvgValue      float64          `json:"moving_avg_value,omitempty"`
-	Baseline24h         int              `json:"baseline_24h,omitempty"`
-	BaselineCapturedUTC *time.Time       `json:"baseline_captured_utc,omitempty"`
-	BlockedPortsDaily   []BlockedPortDay `json:"blocked_ports_daily,omitempty"`
+	Metric                  string           `json:"metric"`
+	Target                  string           `json:"target,omitempty"`
+	Title                   string           `json:"title"`
+	Count                   int              `json:"count"`
+	Items                   []string         `json:"items"`
+	Trend                   []TrendPoint     `json:"trend,omitempty"`
+	Trend24h                []TrendPoint     `json:"trend_24h,omitempty"`
+	TrendDaily              []TrendPoint     `json:"trend_daily,omitempty"`
+	TrendMA24h              []TrendPointF    `json:"trend_ma_24h,omitempty"`
+	TrendMADaily            []TrendPointF    `json:"trend_ma_daily,omitempty"`
+	BlockedMAWindow         int              `json:"blocked_ma_window,omitempty"`
+	BlockedAnomalyPct       float64          `json:"blocked_anomaly_pct,omitempty"`
+	Anomalous               bool             `json:"anomalous,omitempty"`
+	AnomalyReason           string           `json:"anomaly_reason,omitempty"`
+	AnomalyWindow           int              `json:"anomaly_window,omitempty"`
+	AnomalyPct              float64          `json:"anomaly_pct,omitempty"`
+	AnomalySource           string           `json:"anomaly_source,omitempty"`
+	AnomalyCoveragePct      float64          `json:"anomaly_coverage_pct,omitempty"`
+	LatestValue             int              `json:"latest_value,omitempty"`
+	MovingAvgValue          float64          `json:"moving_avg_value,omitempty"`
+	Baseline24h             int              `json:"baseline_24h,omitempty"`
+	BaselineCapturedUTC     *time.Time       `json:"baseline_captured_utc,omitempty"`
+	BlockedPortsDaily       []BlockedPortDay `json:"blocked_ports_daily,omitempty"`
+	BlockedPortDailyEnabled bool             `json:"blocked_port_daily_enabled"`
 }
 
 type TrendPoint struct {
@@ -565,7 +567,10 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Trend24h = blockedTrendSeries(target)
 		resp.TrendDaily = blockedDailyTrendSeries(target, configuredHistoryDays())
-		resp.BlockedPortsDaily = blockedPortDailySeries(target, configuredHistoryDays())
+		resp.BlockedPortDailyEnabled = configuredBlockedPortDailyEnabled()
+		if resp.BlockedPortDailyEnabled {
+			resp.BlockedPortsDaily = blockedPortDailySeries(target, configuredHistoryDays())
+		}
 		resp.BlockedMAWindow = window
 		resp.BlockedAnomalyPct = pct
 		resp.AnomalySource = baselineSource
@@ -712,6 +717,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		targets := append([]TrafficTarget(nil), config.TrafficTargets...)
 		exclusions := append([]TrafficTarget(nil), config.SourceExclusions...)
 		historyDays := configuredHistoryDaysLocked()
+		blockedPortDailyEnabled := configuredBlockedPortDailyEnabledLocked()
 		maWindow := configuredBlockedMAWindowLocked()
 		dailyMAWindow := configuredDailyMAWindowLocked()
 		anomalyPct := configuredBlockedAnomalyPctLocked()
@@ -752,6 +758,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"traffic_targets":             targets,
 			"traffic_source_exclusions":   exclusions,
 			"history_days":                historyDays,
+			"blocked_port_daily_enabled":  blockedPortDailyEnabled,
 			"blocked_ma_window":           maWindow,
 			"daily_ma_window":             dailyMAWindow,
 			"blocked_anomaly_pct":         anomalyPct,
@@ -786,6 +793,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			TrafficTargets           []TrafficTarget `json:"traffic_targets"`
 			SourceExclusions         []TrafficTarget `json:"traffic_source_exclusions"`
 			HistoryDays              int             `json:"history_days"`
+			BlockedPortDailyEnabled  *bool           `json:"blocked_port_daily_enabled"`
 			BlockedMAWindow          int             `json:"blocked_ma_window"`
 			DailyMAWindow            int             `json:"daily_ma_window"`
 			BlockedAnomalyPct        float64         `json:"blocked_anomaly_pct"`
@@ -831,6 +839,10 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 				req.HistoryDays = maxHistoryDays
 			}
 			config.HistoryDays = req.HistoryDays
+		}
+		if req.BlockedPortDailyEnabled != nil {
+			v := *req.BlockedPortDailyEnabled
+			config.BlockedPortDailyEnabled = &v
 		}
 		if req.BlockedMAWindow > 0 {
 			config.BlockedMAWindow = req.BlockedMAWindow
@@ -914,6 +926,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			config.WebhookTeamsTitlePrefix = strings.TrimSpace(*req.WebhookTeamsTitlePrefix)
 		}
 		historyDays := configuredHistoryDaysLocked()
+		blockedPortDailyEnabled := configuredBlockedPortDailyEnabledLocked()
 		maWindow := configuredBlockedMAWindowLocked()
 		dailyMAWindow := configuredDailyMAWindowLocked()
 		anomalyPct := configuredBlockedAnomalyPctLocked()
@@ -953,6 +966,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"traffic_targets":             cleaned,
 			"traffic_source_exclusions":   config.SourceExclusions,
 			"history_days":                historyDays,
+			"blocked_port_daily_enabled":  blockedPortDailyEnabled,
 			"blocked_ma_window":           maWindow,
 			"daily_ma_window":             dailyMAWindow,
 			"blocked_anomaly_pct":         anomalyPct,
@@ -1810,6 +1824,9 @@ func blockedDailyTrendSeries(target string, keepDays int) []TrendPoint {
 }
 
 func blockedPortDailySeries(target string, keepDays int) []BlockedPortDay {
+	if !configuredBlockedPortDailyEnabled() {
+		return nil
+	}
 	if keepDays <= 0 {
 		keepDays = 365
 	}
@@ -3062,6 +3079,19 @@ func configuredHistoryDaysLocked() int {
 	return days
 }
 
+func configuredBlockedPortDailyEnabled() bool {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredBlockedPortDailyEnabledLocked()
+}
+
+func configuredBlockedPortDailyEnabledLocked() bool {
+	if config.BlockedPortDailyEnabled == nil {
+		return true
+	}
+	return *config.BlockedPortDailyEnabled
+}
+
 func configuredBlockedMAWindow() int {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
@@ -3551,6 +3581,7 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 		return
 	}
 	historyDays := configuredHistoryDays()
+	portDailyEnabled := configuredBlockedPortDailyEnabled()
 	loc := configuredDayLocation()
 	dayEnd := localDayStart(nowUTC, loc)
 	if dayEnd.IsZero() {
@@ -3570,11 +3601,13 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 		} else if _, ok := targetMap[target.Name]; !ok {
 			missingCounts = append(missingCounts, target)
 		}
-		portTargetMap := blockedPortsDaily[dayKey]
-		if portTargetMap == nil {
-			missingPorts = append(missingPorts, target)
-		} else if _, ok := portTargetMap[target.Name]; !ok {
-			missingPorts = append(missingPorts, target)
+		if portDailyEnabled {
+			portTargetMap := blockedPortsDaily[dayKey]
+			if portTargetMap == nil {
+				missingPorts = append(missingPorts, target)
+			} else if _, ok := portTargetMap[target.Name]; !ok {
+				missingPorts = append(missingPorts, target)
+			}
 		}
 	}
 	historyMu.Unlock()

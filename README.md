@@ -165,6 +165,7 @@ Runtime state is stored in a shared data directory:
   "public_base_url": "https://illumio-dashboard.internal",
   "data_dir": "/path/to/shared/state",
   "history_days": 365,
+  "blocked_port_daily_enabled": true,
   "blocked_ma_window": 12,
   "blocked_anomaly_pct": 50,
   "blocked_anomaly_baseline": "daily",
@@ -200,6 +201,7 @@ Runtime state is stored in a shared data directory:
 | `public_base_url` | External URL used in generated links/webhooks | `http://localhost:18443` | No trailing slash needed |
 | `data_dir` | Shared state directory | `$HOME/.illumio-monitoring-dashboard` | Override via env `ILLUMIO_DASH_DATA_DIR` |
 | `history_days` | Retention days for daily history files | `365` | Range `1..3650` |
+| `blocked_port_daily_enabled` | Enable daily blocked `port/proto` aggregation | `true` | Controls blocked target drilldown blocked-ports table and daily port history collection |
 | `blocked_ma_window` | Global 5m moving-average window points | `12` | Range `2..288` |
 | `blocked_anomaly_pct` | Global blocked anomaly threshold percent | `50` | Range `1..10000` |
 | `blocked_anomaly_baseline` | Baseline source for blocked anomaly detection | `5m` | `5m` compares latest 5m to 5m MA; `daily` compares latest 5m to N-day baseline |
@@ -267,7 +269,7 @@ If `traffic_targets` is omitted, defaults are used:
 - `LG-E-PROD-ENVS`
 - `LG-E-NONPROD-ENVS`
 
-`history_days` controls how many days of daily blocked totals are retained on disk.
+`history_days` controls how many days of daily blocked totals (and blocked port daily aggregates) are retained on disk.
 
 - default: `365`
 - valid range: `1` to `3650`
@@ -360,7 +362,7 @@ Use `/settings` to manage webhook alerting:
   - Current `bind_address` and `public_base_url`
 - `PUT /api/config/targets`:
   - Save traffic/data settings
-  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
+  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
 - `POST /api/refresh`:
   - Trigger immediate collection cycle
 - `GET /api/config/alerts`:
