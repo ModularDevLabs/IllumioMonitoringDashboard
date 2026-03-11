@@ -71,10 +71,11 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Light/dark mode toggle in dashboard, drilldown, and report views
   - Shared UI helpers embedded from `/static/ui-common.js`
 - Durable cross-version state:
-  - Rolling 24h in-memory series is now persisted to disk (`rolling_state.json`)
-  - Daily history remains persisted (`blocked_daily_history.json`, `ven_daily_history.json`)
-  - State files are stored in a shared data directory so new fork/binary versions can reuse history
-  - Atomic JSON writes and schema versioning are used for safe upgrades
+  - State files are stored in a shared data directory so new fork/binary versions can reuse history.
+  - Storage backend options:
+    - `json` (default): JSON files
+    - `sqlite`: single `metrics.db` file for history/state
+  - SQLite mode supports one-time import from legacy JSON files when DB sections are empty.
 
 ## Binaries
 
@@ -219,7 +220,7 @@ Runtime state is stored in a shared data directory:
 | `data_dir` | Shared state directory | `$HOME/.illumio-monitoring-dashboard` | Override via env `ILLUMIO_DASH_DATA_DIR` |
 | `history_days` | Retention days for daily history files | `365` | Range `1..3650` |
 | `blocked_port_daily_enabled` | Enable daily blocked `port/proto` aggregation | `true` | Controls blocked target drilldown blocked-ports table and daily port history collection |
-| `blocked_port_store_backend` | Blocked port history backend | `json` | `json` or `sqlite`; when `sqlite`, data is stored in `metrics.db` in the shared data directory |
+| `blocked_port_store_backend` | History/state backend | `json` | `json` or `sqlite`; when `sqlite`, persisted history/state is stored in `metrics.db` |
 | `blocked_ma_window` | Global 5m moving-average window points | `12` | Range `2..288` |
 | `blocked_anomaly_pct` | Global blocked anomaly threshold percent | `50` | Range `1..10000` |
 | `blocked_anomaly_baseline` | Baseline source for blocked anomaly detection | `5m` | `5m` compares latest 5m to 5m MA; `daily` compares latest 5m to N-day baseline |
@@ -384,7 +385,7 @@ Use `/settings` to manage webhook alerting:
   - Current `bind_address` and `public_base_url`
 - `PUT /api/config/targets`:
   - Save traffic/data settings
-  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
+  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
 - `POST /api/refresh`:
   - Trigger immediate collection cycle
 - `GET /api/config/alerts`:
@@ -466,13 +467,15 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
     - `Past Xm (5m agg)` where `X` grows over time
   - After warmup reaches 24h, each target consolidates to a single rolling 24h value.
   - If a blocked query appears to hit max results cap, target warning indicates possible truncation.
-  - Rolling buckets are persisted in `rolling_state.json` (schema-versioned) for restart continuity.
-  - Daily blocked totals are stored in `blocked_daily_history.json` using one record per target per completed day in configured timezone (or server local time by default).
-  - Daily blocked port/proto totals are stored as compact aggregated records per target/day.
-  - Port store backend can be set to:
-    - `json`: `blocked_port_daily_history.json`
-    - `sqlite`: `metrics.db` (includes daily and rolling 5m blocked port/proto snapshots)
-  - VEN daily maxima are stored in `ven_daily_history.json`.
+  - JSON backend files:
+    - `rolling_state.json` (schema-versioned rolling state)
+    - `blocked_daily_history.json`
+    - `blocked_port_daily_history.json`
+    - `ven_daily_history.json`
+    - `alert_state.json`
+    - `anomaly_history.jsonl`
+  - SQLite backend file:
+    - `metrics.db` (rolling state, blocked/VEN daily history, blocked port daily + 5m snapshots, alert state, anomaly history)
   - On startup, legacy local state files are auto-migrated into the shared data directory if destination files are absent.
   - Retention is pruned based on `history_days`.
 - HTTP basic auth is used for PCE API calls
@@ -499,11 +502,13 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 - `integration_live_test.go`: live API integration test
 - `scripts/rebuild-binaries.sh`: multi-platform build script
 - `config.json`: runtime configuration
-- `blocked_daily_history.json`: persisted daily blocked totals per target
-- `blocked_port_daily_history.json`: persisted daily blocked totals per target per `port/proto`
-- `metrics.db`: optional SQLite storage for blocked port/proto daily + 5m rolling snapshots when `blocked_port_store_backend=sqlite`
-- `ven_daily_history.json`: persisted daily VEN warning/error max values
-- `anomaly_history.jsonl`: persisted anomaly transition events (triggered/resolved) for blocked targets, VEN warning/error, and tampering
+- `blocked_daily_history.json`: persisted daily blocked totals per target (JSON backend)
+- `blocked_port_daily_history.json`: persisted daily blocked totals per target per `port/proto` (JSON backend)
+- `ven_daily_history.json`: persisted daily VEN warning/error max values (JSON backend)
+- `rolling_state.json`: persisted rolling state (JSON backend)
+- `alert_state.json`: persisted alert transition state (JSON backend)
+- `anomaly_history.jsonl`: persisted anomaly transition events (JSON backend)
+- `metrics.db`: SQLite backend file containing persisted history/state when `blocked_port_store_backend=sqlite`
 
 ## Executive Roadmap
 

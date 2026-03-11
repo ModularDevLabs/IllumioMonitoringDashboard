@@ -48,6 +48,11 @@ const defaultDataDirName = ".illumio-monitoring-dashboard"
 const defaultBindAddress = ":18443"
 const defaultPublicBaseURL = "http://localhost:18443"
 const defaultBlockedPortStoreBackend = "json"
+const stateKeyBlockedDaily = "blocked_daily_records_v1"
+const stateKeyVENDaily = "ven_daily_records_v1"
+const stateKeyRolling = "rolling_state_v1"
+const stateKeyAlert = "alert_state_v1"
+const stateKeyAnomalyHistory = "anomaly_history_v1"
 
 const pceTimeFormat = "2006-01-02T15:04:05.000Z"
 const maxHistoryDays = 3650
@@ -5547,6 +5552,10 @@ func initBlockedPortStore() {
 		return
 	}
 	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS kv_state (
+			key TEXT PRIMARY KEY,
+			value_json TEXT NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS blocked_ports_daily (
 			day TEXT NOT NULL,
 			target TEXT NOT NULL,
@@ -5573,6 +5582,7 @@ func initBlockedPortStore() {
 	}
 	metricsDB = db
 	migrateBlockedPortDailyJSONToSQLite()
+	migrateLegacyJSONStateToSQLite()
 	log.Printf("[STORE] blocked-port store backend=sqlite db=%s", dbPath)
 }
 
@@ -5643,6 +5653,131 @@ func readBlockedPortHistoryJSONFile(path string) ([]dailyBlockedPortRecord, erro
 		return nil, err
 	}
 	return records, nil
+}
+
+func sqliteKVSetJSON(key string, value interface{}) error {
+	if metricsDB == nil {
+		return errors.New("sqlite not initialized")
+	}
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	_, err = metricsDB.Exec(`INSERT OR REPLACE INTO kv_state(key, value_json) VALUES(?, ?)`, key, string(b))
+	return err
+}
+
+func sqliteKVGetJSON(key string, target interface{}) (bool, error) {
+	if metricsDB == nil {
+		return false, errors.New("sqlite not initialized")
+	}
+	var raw string
+	err := metricsDB.QueryRow(`SELECT value_json FROM kv_state WHERE key = ?`, key).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := json.Unmarshal([]byte(raw), target); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func sqliteKVHasKey(key string) (bool, error) {
+	if metricsDB == nil {
+		return false, errors.New("sqlite not initialized")
+	}
+	var n int
+	if err := metricsDB.QueryRow(`SELECT COUNT(1) FROM kv_state WHERE key = ?`, key).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+func migrateLegacyJSONStateToSQLite() {
+	if metricsDB == nil {
+		return
+	}
+	migrateKVFromJSONFile(stateKeyBlockedDaily, dataFilePath(blockedHistoryFileName), &[]dailyBlockedRecord{})
+	migrateKVFromJSONFile(stateKeyVENDaily, dataFilePath(venHistoryFileName), &[]venDailyRecord{})
+	migrateKVFromJSONFile(stateKeyRolling, dataFilePath(rollingStateFileName), &persistedRollingState{})
+	migrateKVFromJSONFile(stateKeyAlert, dataFilePath(alertStateFileName), &persistedAlertState{})
+	migrateAnomalyHistoryJSONLToSQLite()
+}
+
+func migrateKVFromJSONFile(key string, path string, ptr interface{}) {
+	exists, err := sqliteKVHasKey(key)
+	if err != nil {
+		log.Printf("[STORE] sqlite key check failed for %s: %v", key, err)
+		return
+	}
+	if exists {
+		return
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("[STORE] sqlite migration open failed for %s: %v", path, err)
+		}
+		return
+	}
+	defer file.Close()
+	if err := json.NewDecoder(file).Decode(ptr); err != nil {
+		log.Printf("[STORE] sqlite migration decode failed for %s: %v", path, err)
+		return
+	}
+	if err := sqliteKVSetJSON(key, ptr); err != nil {
+		log.Printf("[STORE] sqlite migration save failed for %s: %v", key, err)
+		return
+	}
+	log.Printf("[STORE] migrated legacy file %s into sqlite key %s", path, key)
+}
+
+func migrateAnomalyHistoryJSONLToSQLite() {
+	exists, err := sqliteKVHasKey(stateKeyAnomalyHistory)
+	if err != nil {
+		log.Printf("[STORE] sqlite key check failed for %s: %v", stateKeyAnomalyHistory, err)
+		return
+	}
+	if exists {
+		return
+	}
+	file, err := os.Open(dataFilePath(anomalyHistoryFileName))
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("[STORE] sqlite anomaly migration open failed: %v", err)
+		}
+		return
+	}
+	defer file.Close()
+	events := make([]anomalyHistoryEvent, 0, 256)
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var ev anomalyHistoryEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			continue
+		}
+		if ev.Timestamp.IsZero() {
+			continue
+		}
+		events = append(events, ev)
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("[STORE] sqlite anomaly migration read failed: %v", err)
+		return
+	}
+	if err := sqliteKVSetJSON(stateKeyAnomalyHistory, events); err != nil {
+		log.Printf("[STORE] sqlite anomaly migration save failed: %v", err)
+		return
+	}
+	log.Printf("[STORE] migrated %d anomaly history events into sqlite", len(events))
 }
 
 func sqliteReplaceBlockedPortDaily(records []dailyBlockedPortRecord) error {
@@ -5736,17 +5871,26 @@ func loadBlockedHistory() {
 	historyMu.Lock()
 	defer historyMu.Unlock()
 	blockedDaily = map[string]map[string]int{}
-
-	file, err := os.Open(dataFilePath(blockedHistoryFileName))
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
 	var records []dailyBlockedRecord
-	if err := json.NewDecoder(file).Decode(&records); err != nil {
-		log.Printf("[HISTORY] failed loading blocked history: %v", err)
-		return
+	if blockedPortStoreIsSQLite() {
+		ok, err := sqliteKVGetJSON(stateKeyBlockedDaily, &records)
+		if err != nil {
+			log.Printf("[HISTORY] failed loading blocked history from sqlite: %v", err)
+			return
+		}
+		if !ok {
+			return
+		}
+	} else {
+		file, err := os.Open(dataFilePath(blockedHistoryFileName))
+		if err != nil {
+			return
+		}
+		defer file.Close()
+		if err := json.NewDecoder(file).Decode(&records); err != nil {
+			log.Printf("[HISTORY] failed loading blocked history: %v", err)
+			return
+		}
 	}
 	for _, rec := range records {
 		day := strings.TrimSpace(rec.Day)
@@ -5806,17 +5950,26 @@ func loadVENHistory() {
 	venHistoryMu.Lock()
 	defer venHistoryMu.Unlock()
 	venDaily = map[string]venDailySnapshot{}
-
-	file, err := os.Open(dataFilePath(venHistoryFileName))
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
 	var records []venDailyRecord
-	if err := json.NewDecoder(file).Decode(&records); err != nil {
-		log.Printf("[HISTORY] failed loading VEN history: %v", err)
-		return
+	if blockedPortStoreIsSQLite() {
+		ok, err := sqliteKVGetJSON(stateKeyVENDaily, &records)
+		if err != nil {
+			log.Printf("[HISTORY] failed loading VEN history from sqlite: %v", err)
+			return
+		}
+		if !ok {
+			return
+		}
+	} else {
+		file, err := os.Open(dataFilePath(venHistoryFileName))
+		if err != nil {
+			return
+		}
+		defer file.Close()
+		if err := json.NewDecoder(file).Decode(&records); err != nil {
+			log.Printf("[HISTORY] failed loading VEN history: %v", err)
+			return
+		}
 	}
 	for _, rec := range records {
 		day := strings.TrimSpace(rec.Day)
@@ -5840,17 +5993,26 @@ func loadRollingState() {
 	rollingMu.Lock()
 	defer rollingMu.Unlock()
 	rollingCache = rollingState{}
-
-	file, err := os.Open(dataFilePath(rollingStateFileName))
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
 	var persisted persistedRollingState
-	if err := json.NewDecoder(file).Decode(&persisted); err != nil {
-		log.Printf("[STATE] failed loading rolling state: %v", err)
-		return
+	if blockedPortStoreIsSQLite() {
+		ok, err := sqliteKVGetJSON(stateKeyRolling, &persisted)
+		if err != nil {
+			log.Printf("[STATE] failed loading rolling state from sqlite: %v", err)
+			return
+		}
+		if !ok {
+			return
+		}
+	} else {
+		file, err := os.Open(dataFilePath(rollingStateFileName))
+		if err != nil {
+			return
+		}
+		defer file.Close()
+		if err := json.NewDecoder(file).Decode(&persisted); err != nil {
+			log.Printf("[STATE] failed loading rolling state: %v", err)
+			return
+		}
 	}
 	if persisted.SchemaVersion == 0 {
 		persisted.SchemaVersion = 1
@@ -5988,7 +6150,12 @@ func saveRollingState() {
 		persisted.Buckets = append(persisted.Buckets, item)
 	}
 	rollingMu.Unlock()
-
+	if blockedPortStoreIsSQLite() {
+		if err := sqliteKVSetJSON(stateKeyRolling, persisted); err != nil {
+			log.Printf("[STATE] failed to save rolling state (sqlite): %v", err)
+		}
+		return
+	}
 	if err := writeJSONFileAtomic(dataFilePath(rollingStateFileName), persisted); err != nil {
 		log.Printf("[STATE] failed to save rolling state: %v", err)
 	}
@@ -5998,17 +6165,26 @@ func loadAlertState() {
 	alertMu.Lock()
 	defer alertMu.Unlock()
 	alertState = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
-
-	file, err := os.Open(dataFilePath(alertStateFileName))
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
 	var persisted persistedAlertState
-	if err := json.NewDecoder(file).Decode(&persisted); err != nil {
-		log.Printf("[WEBHOOK] failed loading alert state: %v", err)
-		return
+	if blockedPortStoreIsSQLite() {
+		ok, err := sqliteKVGetJSON(stateKeyAlert, &persisted)
+		if err != nil {
+			log.Printf("[WEBHOOK] failed loading alert state from sqlite: %v", err)
+			return
+		}
+		if !ok {
+			return
+		}
+	} else {
+		file, err := os.Open(dataFilePath(alertStateFileName))
+		if err != nil {
+			return
+		}
+		defer file.Close()
+		if err := json.NewDecoder(file).Decode(&persisted); err != nil {
+			log.Printf("[WEBHOOK] failed loading alert state: %v", err)
+			return
+		}
 	}
 	if persisted.SchemaVersion == 0 {
 		persisted.SchemaVersion = 1
@@ -6030,31 +6206,41 @@ func loadAnomalyHistory() {
 	anomalyHistoryMu.Lock()
 	defer anomalyHistoryMu.Unlock()
 	anomalyHistory = make([]anomalyHistoryEvent, 0)
-
-	file, err := os.Open(dataFilePath(anomalyHistoryFileName))
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+	if blockedPortStoreIsSQLite() {
+		loaded := make([]anomalyHistoryEvent, 0)
+		ok, err := sqliteKVGetJSON(stateKeyAnomalyHistory, &loaded)
+		if err != nil {
+			log.Printf("[ANOMALY] failed loading history from sqlite: %v", err)
+			return
 		}
-		var ev anomalyHistoryEvent
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			continue
+		if ok {
+			anomalyHistory = loaded
 		}
-		if ev.Timestamp.IsZero() {
-			continue
+	} else {
+		file, err := os.Open(dataFilePath(anomalyHistoryFileName))
+		if err != nil {
+			return
 		}
-		anomalyHistory = append(anomalyHistory, ev)
-	}
-	if err := scanner.Err(); err != nil {
-		log.Printf("[ANOMALY] failed reading history: %v", err)
+		defer file.Close()
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			var ev anomalyHistoryEvent
+			if err := json.Unmarshal([]byte(line), &ev); err != nil {
+				continue
+			}
+			if ev.Timestamp.IsZero() {
+				continue
+			}
+			anomalyHistory = append(anomalyHistory, ev)
+		}
+		if err := scanner.Err(); err != nil {
+			log.Printf("[ANOMALY] failed reading history: %v", err)
+		}
 	}
 	pruneAnomalyHistoryLocked(time.Now().UTC(), configuredHistoryDays())
 	if err := saveAnomalyHistoryLocked(); err != nil {
@@ -6084,6 +6270,9 @@ func pruneAnomalyHistoryLocked(nowUTC time.Time, keepDays int) {
 }
 
 func saveAnomalyHistoryLocked() error {
+	if blockedPortStoreIsSQLite() {
+		return sqliteKVSetJSON(stateKeyAnomalyHistory, anomalyHistory)
+	}
 	path := dataFilePath(anomalyHistoryFileName)
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
@@ -6156,6 +6345,12 @@ func saveAlertState() {
 		persisted.Metrics[k] = v
 	}
 	alertMu.Unlock()
+	if blockedPortStoreIsSQLite() {
+		if err := sqliteKVSetJSON(stateKeyAlert, persisted); err != nil {
+			log.Printf("[WEBHOOK] failed saving alert state (sqlite): %v", err)
+		}
+		return
+	}
 	if err := writeJSONFileAtomic(dataFilePath(alertStateFileName), persisted); err != nil {
 		log.Printf("[WEBHOOK] failed saving alert state: %v", err)
 	}
@@ -6212,6 +6407,12 @@ func saveBlockedHistory() {
 		}
 		return records[i].Day < records[j].Day
 	})
+	if blockedPortStoreIsSQLite() {
+		if err := sqliteKVSetJSON(stateKeyBlockedDaily, records); err != nil {
+			log.Printf("[HISTORY] failed to save blocked history (sqlite): %v", err)
+		}
+		return
+	}
 
 	if err := writeJSONFileAtomic(dataFilePath(blockedHistoryFileName), records); err != nil {
 		log.Printf("[HISTORY] failed to save blocked history: %v", err)
@@ -6299,6 +6500,12 @@ func saveVENHistory() {
 	}
 	venHistoryMu.Unlock()
 	sort.Slice(records, func(i, j int) bool { return records[i].Day < records[j].Day })
+	if blockedPortStoreIsSQLite() {
+		if err := sqliteKVSetJSON(stateKeyVENDaily, records); err != nil {
+			log.Printf("[HISTORY] failed to save VEN history (sqlite): %v", err)
+		}
+		return
+	}
 
 	if err := writeJSONFileAtomic(dataFilePath(venHistoryFileName), records); err != nil {
 		log.Printf("[HISTORY] failed to save VEN history: %v", err)
