@@ -82,6 +82,30 @@
         .board-only { display: none; }
         body.board-mode .board-only { display: block; }
         body.board-mode .non-board { display: none; }
+        .rank-table-wrap { overflow-x: auto; }
+        table.rank-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+        .rank-table th, .rank-table td {
+            border-bottom: 1px solid var(--border);
+            padding: 8px 6px;
+            text-align: left;
+            vertical-align: middle;
+            white-space: nowrap;
+        }
+        .rank-table th { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .rank-chip {
+            display: inline-block;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 2px 8px;
+            font-size: 0.75rem;
+        }
+        .rank-chip.good { color: var(--good); border-color: var(--good); }
+        .rank-chip.warn { color: var(--warn); border-color: var(--warn); }
+        .rank-chip.bad { color: var(--bad); border-color: var(--bad); }
         @media (max-width: 900px) { .split, .board-grid { grid-template-columns: 1fr; } }
         @media print {
             body { background: #fff; color: #111; font-size: 12px; }
@@ -139,6 +163,28 @@
     <div class="panel">
         <h2>Risk Signals</h2>
         <div class="grid kpi-grid" id="risk-kpis"></div>
+    </div>
+
+    <div class="panel non-board">
+        <h2>Business Value Ranking</h2>
+        <div class="muted">Targets ranked by blocked traffic outcomes and concentration over the selected period.</div>
+        <div class="rank-table-wrap">
+            <table class="rank-table">
+                <thead>
+                <tr>
+                    <th>Rank</th>
+                    <th>Target</th>
+                    <th>Blocked 24h</th>
+                    <th>Blocked (<span id="rank-period-label">7d</span>)</th>
+                    <th>Share</th>
+                    <th>Risk Context</th>
+                </tr>
+                </thead>
+                <tbody id="value-ranking-body">
+                <tr><td colspan="6" class="muted">Loading target value ranking...</td></tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <div class="split non-board">
@@ -311,6 +357,61 @@
         setList('board-actions', actions, 'No immediate actions required.');
     }
 
+    function renderValueRanking(stats, targetDetails, periodDays) {
+        const body = document.getElementById('value-ranking-body');
+        const periodLabel = document.getElementById('rank-period-label');
+        if (!body) return;
+        if (periodLabel) periodLabel.textContent = `${periodDays}d`;
+        const targets = stats.blocked?.targets || [];
+        if (!targets.length) {
+            body.innerHTML = '<tr><td colspan="6" class="muted">No blocked targets configured or no data returned yet.</td></tr>';
+            return;
+        }
+
+        const rows = targets.map((t, idx) => {
+            const d = targetDetails[idx] || {};
+            const periodTotal = sumLastDays(d.trend_daily || [], periodDays);
+            return {
+                name: t.name || 'unknown',
+                blocked24h: Number(t.count || 0),
+                periodTotal,
+                anomalous: !!t.anomalous,
+                warnings: Array.isArray(t.warnings) ? t.warnings : []
+            };
+        }).sort((a, b) => b.periodTotal - a.periodTotal || b.blocked24h - a.blocked24h || a.name.localeCompare(b.name));
+
+        const totalPeriod = rows.reduce((a, r) => a + r.periodTotal, 0);
+        body.innerHTML = '';
+        rows.forEach((r, i) => {
+            const share = totalPeriod > 0 ? `${((r.periodTotal / totalPeriod) * 100).toFixed(1)}%` : '0.0%';
+            const riskClass = r.anomalous ? 'bad' : (r.warnings.length ? 'warn' : 'good');
+            const riskText = r.anomalous ? 'Anomalous' : (r.warnings.length ? 'Warning' : 'Normal');
+            const tr = document.createElement('tr');
+            const rankTd = document.createElement('td');
+            rankTd.textContent = `#${i + 1}`;
+            const nameTd = document.createElement('td');
+            nameTd.textContent = r.name;
+            const d24Td = document.createElement('td');
+            d24Td.textContent = fmt(r.blocked24h);
+            const periodTd = document.createElement('td');
+            periodTd.textContent = fmt(r.periodTotal);
+            const shareTd = document.createElement('td');
+            shareTd.textContent = share;
+            const riskTd = document.createElement('td');
+            const chip = document.createElement('span');
+            chip.className = `rank-chip ${riskClass}`;
+            chip.textContent = riskText;
+            riskTd.appendChild(chip);
+            tr.appendChild(rankTd);
+            tr.appendChild(nameTd);
+            tr.appendChild(d24Td);
+            tr.appendChild(periodTd);
+            tr.appendChild(shareTd);
+            tr.appendChild(riskTd);
+            body.appendChild(tr);
+        });
+    }
+
     function updatePeriodButtons() {
         [7, 30, 90].forEach((d) => {
             const el = document.getElementById(`period-${d}`);
@@ -386,6 +487,7 @@
             });
         }
         buildBoardSnapshot(stats, blockedDaily, targets, actions, selectedPeriodDays);
+        renderValueRanking(stats, targetDetails, selectedPeriodDays);
         renderChart(blockedDaily);
 
         if (boardMode && queryAutoprint()) {
