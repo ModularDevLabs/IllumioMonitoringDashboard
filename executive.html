@@ -41,6 +41,7 @@
         .head h1 { margin: 0; font-size: 1.5rem; }
         .muted { color: var(--muted); font-size: 0.88rem; }
         .actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+        .period-controls { display: inline-flex; gap: 6px; align-items: center; }
         .btn {
             border: 1px solid var(--border);
             background: var(--surface);
@@ -51,6 +52,7 @@
             cursor: pointer;
         }
         .btn.primary { background: var(--illumio-orange); color: #fff; border-color: var(--illumio-orange); }
+        .btn.active { outline: 2px solid var(--illumio-orange); outline-offset: 0; }
         .panel {
             background: var(--surface);
             border: 1px solid var(--border);
@@ -98,6 +100,12 @@
         <div class="actions">
             <button id="btn-theme" type="button" class="btn">Dark Mode</button>
             <button id="btn-refresh" type="button" class="btn primary">Refresh</button>
+            <span class="period-controls">
+                <span class="muted">Period</span>
+                <button id="period-7" type="button" class="btn">7d</button>
+                <button id="period-30" type="button" class="btn">30d</button>
+                <button id="period-90" type="button" class="btn">90d</button>
+            </span>
             <a class="btn" id="btn-board" href="/executive?board=1">Board PDF View</a>
             <a class="btn" href="/report?live=1">Trend View</a>
             <a class="btn" href="/">Back to Dashboard</a>
@@ -155,6 +163,7 @@
     let timer = null;
     let lastSnapshotTS = null;
     let boardMode = false;
+    let selectedPeriodDays = 7;
 
     function queryBoard() {
         const p = new URLSearchParams(window.location.search);
@@ -164,6 +173,12 @@
     function queryAutoprint() {
         const p = new URLSearchParams(window.location.search);
         return p.get('autoprint') === '1';
+    }
+
+    function queryPeriodDays() {
+        const p = new URLSearchParams(window.location.search);
+        const v = Number(p.get('period') || 7);
+        return [7, 30, 90].includes(v) ? v : 7;
     }
 
     function fmt(n) { return Number(n || 0).toLocaleString(); }
@@ -242,7 +257,7 @@
         UICommon.makeChartZoomable(chart, 'Blocked Flows (Daily)');
     }
 
-    function actionItems(stats, blockedSeries, tamperDaily) {
+    function actionItems(stats, blockedSeries, tamperDaily, periodDays) {
         const out = [];
         const anomalous = (stats.blocked?.targets || []).filter((t) => t.anomalous);
         if (anomalous.length) out.push(`Investigate ${anomalous.length} anomalous blocked target(s): ${anomalous.slice(0, 3).map((t) => t.name).join(', ')}.`);
@@ -252,10 +267,10 @@
         if (warn > 0) out.push(`Review ${warn} VEN warning state workload(s).`);
         const tampered = (stats.tampering?.workloads || []).length;
         if (tampered > 0) out.push(`Validate ${tampered} tampered VEN/workload indicator(s).`);
-        const blockedChange = comparePeriods(blockedSeries, 7);
-        if (blockedChange > 50) out.push(`Blocked flows increased ${blockedChange.toFixed(0)}% vs prior 7-day window; confirm expected policy/value behavior.`);
-        const tamperChange = comparePeriods(tamperDaily || [], 7);
-        if (tamperChange > 20) out.push(`Tampering trend increased ${tamperChange.toFixed(0)}% vs prior 7-day window.`);
+        const blockedChange = comparePeriods(blockedSeries, periodDays);
+        if (blockedChange > 50) out.push(`Blocked flows increased ${blockedChange.toFixed(0)}% vs prior ${periodDays}-day window; confirm expected policy/value behavior.`);
+        const tamperChange = comparePeriods(tamperDaily || [], periodDays);
+        if (tamperChange > 20) out.push(`Tampering trend increased ${tamperChange.toFixed(0)}% vs prior ${periodDays}-day window.`);
         if (!out.length) out.push('No immediate risk actions: posture appears stable. Continue monitoring anomaly triggers and pipeline health.');
         return out;
     }
@@ -272,14 +287,14 @@
         });
     }
 
-    function buildBoardSnapshot(stats, blockedDaily, targets, actions) {
+    function buildBoardSnapshot(stats, blockedDaily, targets, actions, periodDays) {
         const anomalous = (stats.blocked?.targets || []).filter((t) => t.anomalous);
         const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
-        const sevenDay = sumLastDays(blockedDaily, 7);
+        const periodTotal = sumLastDays(blockedDaily, periodDays);
         const bestTarget = [...(stats.blocked?.targets || [])].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
         const wins = [
             `Blocked ${fmt(blocked24h)} flows in the last 24h (protection outcome).`,
-            `Blocked ${fmt(sevenDay)} flows across 7d.`,
+            `Blocked ${fmt(periodTotal)} flows across ${periodDays}d.`,
             bestTarget ? `Highest protected target: ${bestTarget.name} (${fmt(bestTarget.count)} in 24h).` : 'Protected target activity available once targets return data.'
         ];
         const risks = [];
@@ -294,6 +309,28 @@
         setList('board-wins', wins, 'No notable protection wins yet in current window.');
         setList('board-risks', risks, 'No material risk signals detected in current snapshot.');
         setList('board-actions', actions, 'No immediate actions required.');
+    }
+
+    function updatePeriodButtons() {
+        [7, 30, 90].forEach((d) => {
+            const el = document.getElementById(`period-${d}`);
+            if (!el) return;
+            el.classList.toggle('active', d === selectedPeriodDays);
+        });
+    }
+
+    function updateActionLinks() {
+        const boardBtn = document.getElementById('btn-board');
+        if (boardBtn) {
+            const base = boardMode ? '/executive?board=1&autoprint=1' : '/executive?board=1';
+            boardBtn.href = `${base}&period=${selectedPeriodDays}`;
+        }
+    }
+
+    function syncPeriodInURL() {
+        const url = new URL(window.location.href);
+        url.searchParams.set('period', String(selectedPeriodDays));
+        window.history.replaceState({}, '', url.toString());
     }
 
     async function load() {
@@ -317,13 +354,13 @@
         if (actionsRoot) actionsRoot.innerHTML = '';
 
         const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
-        const sevenDay = sumLastDays(blockedDaily, 7);
+        const periodTotal = sumLastDays(blockedDaily, selectedPeriodDays);
         const thirtyDay = sumLastDays(blockedDaily, 30);
-        const blockedDelta7 = comparePeriods(blockedDaily, 7);
+        const blockedDeltaPeriod = comparePeriods(blockedDaily, selectedPeriodDays);
         const bestTarget = [...(stats.blocked?.targets || [])].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
 
         addKPI(protection, 'Blocked Flows (24h)', fmt(blocked24h), 'Protection outcome volume');
-        addKPI(protection, 'Blocked Flows (7d)', fmt(sevenDay), `${blockedDelta7 >= 0 ? '+' : ''}${blockedDelta7.toFixed(1)}% vs prior 7d`);
+        addKPI(protection, `Blocked Flows (${selectedPeriodDays}d)`, fmt(periodTotal), `${blockedDeltaPeriod >= 0 ? '+' : ''}${blockedDeltaPeriod.toFixed(1)}% vs prior ${selectedPeriodDays}d`);
         addKPI(protection, 'Blocked Flows (30d)', fmt(thirtyDay), 'Aggregated daily totals');
         addKPI(protection, 'Most Active Target (24h)', bestTarget ? `${bestTarget.name}: ${fmt(bestTarget.count)}` : 'n/a', 'Highest blocked flow target');
 
@@ -340,7 +377,7 @@
         addKPI(risk, 'Pipeline Confidence', pipelineBad === 0 ? 'Healthy' : `${pipelineBad} failing stage(s)`, 'Collector/API stage status', pipelineBad === 0 ? 'risk-good' : 'risk-warn');
         addKPI(risk, 'Blocked Port Daily', targets.blocked_port_daily_enabled === false ? 'Disabled' : 'Enabled', 'Controls blocked-port daily aggregation', targets.blocked_port_daily_enabled === false ? 'risk-warn' : 'risk-good');
 
-        const actions = actionItems(stats, blockedDaily, tamper?.trend_daily || []);
+        const actions = actionItems(stats, blockedDaily, tamper?.trend_daily || [], selectedPeriodDays);
         if (actionsRoot) {
             actions.forEach((txt) => {
                 const li = document.createElement('li');
@@ -348,7 +385,7 @@
                 actionsRoot.appendChild(li);
             });
         }
-        buildBoardSnapshot(stats, blockedDaily, targets, actions);
+        buildBoardSnapshot(stats, blockedDaily, targets, actions, selectedPeriodDays);
         renderChart(blockedDaily);
 
         if (boardMode && queryAutoprint()) {
@@ -368,6 +405,8 @@
 
     function boot() {
         boardMode = queryBoard();
+        selectedPeriodDays = queryPeriodDays();
+        syncPeriodInURL();
         if (boardMode) {
             document.body.classList.add('board-mode');
             const title = document.getElementById('page-title');
@@ -375,7 +414,6 @@
             const boardBtn = document.getElementById('btn-board');
             if (boardBtn) {
                 boardBtn.textContent = 'Print Board PDF';
-                boardBtn.href = '/executive?board=1&autoprint=1';
             }
         }
 
@@ -384,6 +422,19 @@
             UICommon.setTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark', THEME_KEY, 'btn-theme');
         });
         document.getElementById('btn-refresh').addEventListener('click', () => load().catch(() => {}));
+        [7, 30, 90].forEach((d) => {
+            const el = document.getElementById(`period-${d}`);
+            if (!el) return;
+            el.addEventListener('click', () => {
+                selectedPeriodDays = d;
+                updatePeriodButtons();
+                syncPeriodInURL();
+                updateActionLinks();
+                load().catch(() => {});
+            });
+        });
+        updatePeriodButtons();
+        updateActionLinks();
 
         nextRefreshAt = Date.now() + 300000;
         load().catch((e) => {

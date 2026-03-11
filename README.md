@@ -386,6 +386,7 @@ Use `/settings` to manage webhook alerting:
     - protection outcomes (blocked value/volume metrics)
     - risk signals (anomalies, VEN warning/error, tampering, pipeline health)
     - action queue with direct operational guidance
+    - period selector (`7d/30d/90d`) for KPI and delta framing
   - Board-ready mode:
     - `/executive?board=1` for one-page board layout
     - `/executive?board=1&autoprint=1` to open print dialog automatically
