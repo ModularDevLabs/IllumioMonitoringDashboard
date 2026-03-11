@@ -452,6 +452,15 @@
             return statusObj.success ? 'OK' : `Warning: ${statusObj.error || 'Failed'}`;
         }
 
+        function escHTML(v) {
+            return String(v ?? '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
         function renderBlockedTargets(targets) {
             const container = document.getElementById('blocked-targets');
             container.innerHTML = '';
@@ -473,16 +482,16 @@
                     </div>
                 ` : '';
                 const mainLabel = isWarmup ? 'Current View (Warmup)' : 'Rolling 24h';
-                const warnHtml = target.warning ? `<div class="small text-warning">${target.warning}</div>` : '';
+                const warnHtml = target.warning ? `<div class="small text-warning">${escHTML(target.warning)}</div>` : '';
                 const anomalyBasisLabel = (target.anomaly_source || '5m') === 'daily' ? 'Baseline' : 'MA';
                 const anomalyHtml = target.anomalous
-                    ? `<div class="anomaly-badge" title="${target.anomaly_reason || ''}">⚠ Anomalous (${target.latest_5m || 0} vs ${anomalyBasisLabel} ${Number(target.moving_avg_5m || 0).toFixed(2)})</div>`
+                    ? `<div class="anomaly-badge" title="${escHTML(target.anomaly_reason || '')}">⚠ Anomalous (${target.latest_5m || 0} vs ${anomalyBasisLabel} ${Number(target.moving_avg_5m || 0).toFixed(2)})</div>`
                     : '';
                 if (target.anomalous) {
                     div.classList.add('anomalous');
                 }
                 div.innerHTML = `
-                    <div class="label">${target.name} <span class="text-muted">(${kind})</span></div>
+                    <div class="label">${escHTML(target.name)} <span class="text-muted">(${escHTML(kind)})</span></div>
                     <div class="small text-muted">${mainLabel}</div>
                     <div class="value">${target.count || 0}</div>
                     ${warmupHtml}

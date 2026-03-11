@@ -407,7 +407,14 @@
             } else {
                 rows.forEach((r) => {
                     const tr = document.createElement('tr');
-                    tr.innerHTML = `<td class="mono">${r.key}</td><td class="text-end">${r.count.toLocaleString()}</td>`;
+                    const keyTd = document.createElement('td');
+                    keyTd.className = 'mono';
+                    keyTd.innerText = String(r.key || '');
+                    const countTd = document.createElement('td');
+                    countTd.className = 'text-end';
+                    countTd.innerText = Number(r.count || 0).toLocaleString();
+                    tr.appendChild(keyTd);
+                    tr.appendChild(countTd);
                     body.appendChild(tr);
                 });
             }

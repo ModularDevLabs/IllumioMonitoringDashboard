@@ -356,6 +356,15 @@
             el.innerText = text;
         }
 
+        function escAttr(v) {
+            return String(v ?? '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
         function renderTargetEditor() {
             const root = document.getElementById('target-editor');
             root.innerHTML = '';
@@ -363,7 +372,7 @@
                 const row = document.createElement('div');
                 row.className = 'target-row';
                 row.innerHTML = `
-                    <input type="text" class="form-control form-control-sm" placeholder="Target name" value="${target.name || ''}" data-type="name" data-idx="${idx}">
+                    <input type="text" class="form-control form-control-sm" placeholder="Target name" value="${escAttr(target.name || '')}" data-type="name" data-idx="${idx}">
                     <div class="target-row-controls">
                         <select class="form-select form-select-sm" data-type="kind" data-idx="${idx}">
                             <option value="auto" ${target.kind === 'auto' ? 'selected' : ''}>auto</option>
