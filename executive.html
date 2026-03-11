@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Executive View - Illumio Monitoring Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --illumio-orange: rgb(250, 102, 36);
+            --bg: #f5f6f8;
+            --surface: #fff;
+            --text: #111;
+            --muted: #6c757d;
+            --border: #e1e5ea;
+            --good: #198754;
+            --warn: #f59f00;
+            --bad: #dc3545;
+        }
+        body[data-theme="dark"] {
+            --bg: #393b3f;
+            --surface: #4a4e54;
+            --text: #f7fafc;
+            --muted: #d6dee7;
+            --border: #707883;
+        }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: "Segoe UI", Tahoma, Arial, sans-serif; }
+        .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+        .head { background: var(--surface); border: 1px solid var(--border); border-left: 5px solid var(--illumio-orange); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+        .head h1 { margin: 0; font-size: 1.5rem; }
+        .muted { color: var(--muted); font-size: 0.88rem; }
+        .actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+        .btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 7px; padding: 6px 10px; text-decoration: none; cursor: pointer; }
+        .btn.primary { background: var(--illumio-orange); color: #fff; border-color: var(--illumio-orange); }
+        .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+        .panel h2 { margin: 0 0 10px; font-size: 1.05rem; }
+        .grid { display: grid; gap: 10px; }
+        .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+        .kpi { border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+        .kpi .label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+        .kpi .value { font-size: 1.45rem; font-weight: 700; margin-top: 3px; }
+        .kpi .sub { font-size: 0.83rem; color: var(--muted); }
+        .risk-good { color: var(--good); }
+        .risk-warn { color: var(--warn); }
+        .risk-bad { color: var(--bad); }
+        .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .chart-wrap { height: 260px; }
+        .list { margin: 0; padding-left: 18px; }
+        .list li { margin: 6px 0; }
+        @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="head">
+        <h1>Executive Summary</h1>
+        <div class="muted" id="meta">Loading...</div>
+        <div class="actions">
+            <button id="btn-theme" type="button" class="btn">Dark Mode</button>
+            <button id="btn-refresh" type="button" class="btn primary">Refresh</button>
+            <a class="btn" href="/report?live=1">Trend View</a>
+            <a class="btn" href="/">Back to Dashboard</a>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Protection Outcomes</h2>
+        <div class="grid kpi-grid" id="protection-kpis"></div>
+    </div>
+
+    <div class="panel">
+        <h2>Risk Signals</h2>
+        <div class="grid kpi-grid" id="risk-kpis"></div>
+    </div>
+
+    <div class="split">
+        <div class="panel">
+            <h2>Blocked Flow Trend (Daily)</h2>
+            <div class="muted">Aggregated across all configured blocked traffic targets.</div>
+            <div class="chart-wrap"><canvas id="blocked-daily-chart"></canvas></div>
+        </div>
+        <div class="panel">
+            <h2>Action Queue</h2>
+            <div class="muted">Prioritized from current anomaly/warning/error signals.</div>
+            <ul class="list" id="actions-list"></ul>
+        </div>
+    </div>
+</div>
+
+<script src="/static/ui-common.js"></script>
+<script>
+    const THEME_KEY = 'illumio_theme';
+    let chart = null;
+    let nextRefreshAt = null;
+    let timer = null;
+    let lastSnapshotTS = null;
+
+    function fmt(n) { return Number(n || 0).toLocaleString(); }
+    function dateKey(ts) { return new Date(ts).toISOString().slice(0, 10); }
+
+    function sumLastDays(series, days) {
+        const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+        return (series || []).filter((p) => new Date(p.timestamp).getTime() >= cutoff)
+            .reduce((a, p) => a + Number(p.value || 0), 0);
+    }
+
+    function comparePeriods(series, days) {
+        const now = Date.now();
+        const currentStart = now - days * 24 * 60 * 60 * 1000;
+        const prevStart = now - days * 2 * 24 * 60 * 60 * 1000;
+        const cur = (series || []).filter((p) => {
+            const t = new Date(p.timestamp).getTime();
+            return t >= currentStart && t <= now;
+        }).reduce((a, p) => a + Number(p.value || 0), 0);
+        const prev = (series || []).filter((p) => {
+            const t = new Date(p.timestamp).getTime();
+            return t >= prevStart && t < currentStart;
+        }).reduce((a, p) => a + Number(p.value || 0), 0);
+        if (prev <= 0) return 0;
+        return ((cur - prev) / prev) * 100;
+    }
+
+    function addKPI(root, label, value, sub, cls = '') {
+        root.insertAdjacentHTML('beforeend', `
+            <div class="kpi">
+                <div class="label">${label}</div>
+                <div class="value ${cls}">${value}</div>
+                <div class="sub">${sub || ''}</div>
+            </div>
+        `);
+    }
+
+    function aggregateDailyBlocked(details) {
+        const byDay = new Map();
+        (details || []).forEach((d) => {
+            const series = d && d.trend_daily ? d.trend_daily : [];
+            series.forEach((p) => {
+                const k = dateKey(p.timestamp);
+                byDay.set(k, (byDay.get(k) || 0) + Number(p.value || 0));
+            });
+        });
+        return Array.from(byDay.entries())
+            .map(([k, v]) => ({ timestamp: k + 'T12:00:00Z', value: v }))
+            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    }
+
+    function renderChart(series) {
+        const ctx = document.getElementById('blocked-daily-chart').getContext('2d');
+        if (chart) chart.destroy();
+        const labels = (series || []).map((p) => new Date(p.timestamp).toLocaleDateString());
+        const values = (series || []).map((p) => Number(p.value || 0));
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: { labels, datasets: [{ label: 'Blocked Flows (Daily)', data: values, borderColor: 'rgb(250, 102, 36)', backgroundColor: 'rgba(250, 102, 36, 0.15)', tension: 0.22, fill: true, pointRadius: 2 }] },
+            options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { beginAtZero: true } } }
+        });
+        UICommon.makeChartZoomable(chart, 'Blocked Flows (Daily)');
+    }
+
+    function actionItems(stats, blockedSeries, tamperDaily) {
+        const out = [];
+        const anomalous = (stats.blocked?.targets || []).filter((t) => t.anomalous);
+        if (anomalous.length) out.push(`Investigate ${anomalous.length} anomalous blocked target(s): ${anomalous.slice(0, 3).map((t) => t.name).join(', ')}.`);
+        const warn = (stats.ven_status?.warning || []).length;
+        const err = (stats.ven_status?.error || []).length;
+        if (err > 0) out.push(`Review ${err} VEN error state workload(s) and reasons.`);
+        if (warn > 0) out.push(`Review ${warn} VEN warning state workload(s).`);
+        const tampered = (stats.tampering?.workloads || []).length;
+        if (tampered > 0) out.push(`Validate ${tampered} tampered VEN/workload indicator(s).`);
+        const blockedChange = comparePeriods(blockedSeries, 7);
+        if (blockedChange > 50) out.push(`Blocked flows increased ${blockedChange.toFixed(0)}% vs prior 7-day window; confirm expected policy/value behavior.`);
+        const tamperChange = comparePeriods(tamperDaily || [], 7);
+        if (tamperChange > 20) out.push(`Tampering trend increased ${tamperChange.toFixed(0)}% vs prior 7-day window.`);
+        if (!out.length) out.push('No immediate risk actions: posture appears stable. Continue monitoring anomaly triggers and pipeline health.');
+        return out;
+    }
+
+    async function load() {
+        const stats = await fetch('/api/stats?ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.json());
+        const targets = await fetch('/api/config/targets?ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.json());
+        const targetDetails = await Promise.all((stats.blocked?.targets || []).map((t) =>
+            fetch(`/api/drilldown?metric=blocked_target&target=${encodeURIComponent(t.name)}&ts=${Date.now()}`, { cache: 'no-store' })
+                .then((r) => r.ok ? r.json() : null).catch(() => null)
+        ));
+        const blockedDaily = aggregateDailyBlocked(targetDetails.filter(Boolean));
+        const tamper = await fetch('/api/drilldown?metric=tampering&ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.ok ? r.json() : null).catch(() => null);
+
+        lastSnapshotTS = stats.timestamp;
+        updateMeta();
+
+        const protection = document.getElementById('protection-kpis');
+        const risk = document.getElementById('risk-kpis');
+        const actions = document.getElementById('actions-list');
+        protection.innerHTML = '';
+        risk.innerHTML = '';
+        actions.innerHTML = '';
+
+        const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
+        const sevenDay = sumLastDays(blockedDaily, 7);
+        const thirtyDay = sumLastDays(blockedDaily, 30);
+        const blockedDelta7 = comparePeriods(blockedDaily, 7);
+        const bestTarget = [...(stats.blocked?.targets || [])].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
+
+        addKPI(protection, 'Blocked Flows (24h)', fmt(blocked24h), 'Protection outcome volume');
+        addKPI(protection, 'Blocked Flows (7d)', fmt(sevenDay), `${blockedDelta7 >= 0 ? '+' : ''}${blockedDelta7.toFixed(1)}% vs prior 7d`);
+        addKPI(protection, 'Blocked Flows (30d)', fmt(thirtyDay), 'Aggregated daily totals');
+        addKPI(protection, 'Most Active Target (24h)', bestTarget ? `${bestTarget.name}: ${fmt(bestTarget.count)}` : 'n/a', 'Highest blocked flow target');
+
+        const anomalous = (stats.blocked?.targets || []).filter((t) => t.anomalous).length;
+        const venWarn = (stats.ven_status?.warning || []).length;
+        const venErr = (stats.ven_status?.error || []).length;
+        const tampered = (stats.tampering?.workloads || []).length;
+        const pipelineBad = [stats.workloads?.status, stats.ven_status?.status, stats.tampering?.status, stats.blocked?.status].filter((s) => s && !s.success).length;
+
+        addKPI(risk, 'Anomalous Targets', fmt(anomalous), 'Triggered by configured anomaly baselines', anomalous > 0 ? 'risk-bad' : 'risk-good');
+        addKPI(risk, 'VEN Warnings', fmt(venWarn), 'Current warning health states', venWarn > 0 ? 'risk-warn' : 'risk-good');
+        addKPI(risk, 'VEN Errors', fmt(venErr), 'Current error health states', venErr > 0 ? 'risk-bad' : 'risk-good');
+        addKPI(risk, 'Tampered VENs', fmt(tampered), 'Unique impacted names (24h)', tampered > 0 ? 'risk-bad' : 'risk-good');
+        addKPI(risk, 'Pipeline Confidence', pipelineBad === 0 ? 'Healthy' : `${pipelineBad} failing stage(s)`, 'Collector/API stage status', pipelineBad === 0 ? 'risk-good' : 'risk-warn');
+        addKPI(risk, 'Blocked Port Daily', targets.blocked_port_daily_enabled === false ? 'Disabled' : 'Enabled', 'Controls blocked-port daily aggregation', targets.blocked_port_daily_enabled === false ? 'risk-warn' : 'risk-good');
+
+        actionItems(stats, blockedDaily, tamper?.trend_daily || []).forEach((txt) => {
+            const li = document.createElement('li');
+            li.textContent = txt;
+            actions.appendChild(li);
+        });
+        renderChart(blockedDaily);
+    }
+
+    function updateMeta() {
+        const meta = document.getElementById('meta');
+        if (!meta) return;
+        if (!lastSnapshotTS) {
+            meta.textContent = 'Loading...';
+            return;
+        }
+        meta.textContent = `Snapshot ${new Date(lastSnapshotTS).toLocaleString()} | ${UICommon.formatStaleness(UICommon.parseTS(lastSnapshotTS))} | ${UICommon.nextRefreshText(nextRefreshAt)}`;
+    }
+
+    function boot() {
+        UICommon.applyTheme(THEME_KEY, 'btn-theme');
+        document.getElementById('btn-theme').addEventListener('click', () => {
+            UICommon.setTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark', THEME_KEY, 'btn-theme');
+        });
+        document.getElementById('btn-refresh').addEventListener('click', () => load().catch(() => {}));
+        nextRefreshAt = Date.now() + 300000;
+        load().catch((e) => { document.getElementById('meta').textContent = 'Failed to load executive data: ' + e.message; });
+        if (timer) clearInterval(timer);
+        timer = setInterval(updateMeta, 1000);
+        setInterval(() => {
+            nextRefreshAt = Date.now() + 300000;
+            load().catch(() => {});
+        }, 300000);
+    }
+    boot();
+</script>
+</body>
+</html>

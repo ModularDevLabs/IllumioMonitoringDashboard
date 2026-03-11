@@ -307,6 +307,7 @@ Click these cards/badges to open detailed lists:
 ### Trend View / Report
 
 - `GET /trends` is a live auto-refreshing summary+trend page
+- `GET /executive` is an executive summary page focused on outcomes vs risk signals
 - Report/trend pages include:
   - VEN trend charts (`24h (5m)` and `Daily`)
   - Blocked trend charts per target in collapsible groups
@@ -377,6 +378,11 @@ Use `/settings` to manage webhook alerting:
   - Render printable report view with summary and trend charts
 - `GET /trends`:
   - Live summary+trend view (same layout as report) with auto-refresh every 5 minutes
+- `GET /executive`:
+  - Executive summary view with:
+    - protection outcomes (blocked value/volume metrics)
+    - risk signals (anomalies, VEN warning/error, tampering, pipeline health)
+    - action queue with direct operational guidance
 
 ## Build and Test
 

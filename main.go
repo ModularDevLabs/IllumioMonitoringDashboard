@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-//go:embed index.html settings.html details.html report.html static/*
+//go:embed index.html settings.html details.html report.html executive.html static/*
 var templateFS embed.FS
 
 const configFileName = "config.json"
@@ -332,12 +332,13 @@ var (
 	alertMu           sync.Mutex
 	alertState        = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}}
 
-	httpClient      = &http.Client{Timeout: 60 * time.Second}
-	dashboardTmpl   = template.Must(template.ParseFS(templateFS, "index.html"))
-	settingsTmpl    = template.Must(template.ParseFS(templateFS, "settings.html"))
-	detailsPageTmpl = template.Must(template.ParseFS(templateFS, "details.html"))
-	reportPageTmpl  = template.Must(template.ParseFS(templateFS, "report.html"))
-	dataDir         string
+	httpClient        = &http.Client{Timeout: 60 * time.Second}
+	dashboardTmpl     = template.Must(template.ParseFS(templateFS, "index.html"))
+	settingsTmpl      = template.Must(template.ParseFS(templateFS, "settings.html"))
+	detailsPageTmpl   = template.Must(template.ParseFS(templateFS, "details.html"))
+	reportPageTmpl    = template.Must(template.ParseFS(templateFS, "report.html"))
+	executivePageTmpl = template.Must(template.ParseFS(templateFS, "executive.html"))
+	dataDir           string
 )
 
 func main() {
@@ -361,6 +362,7 @@ func main() {
 	http.HandleFunc("/details", serveDetails)
 	http.HandleFunc("/report", serveReport)
 	http.HandleFunc("/trends", serveTrends)
+	http.HandleFunc("/executive", serveExecutive)
 	staticFS, err := fs.Sub(templateFS, "static")
 	if err == nil {
 		http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
@@ -5214,6 +5216,12 @@ func serveReport(w http.ResponseWriter, r *http.Request) {
 
 func serveTrends(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/report?live=1", http.StatusFound)
+}
+
+func serveExecutive(w http.ResponseWriter, r *http.Request) {
+	if err := executivePageTmpl.Execute(w, nil); err != nil {
+		http.Error(w, "failed to render executive page", http.StatusInternalServerError)
+	}
 }
 
 func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
