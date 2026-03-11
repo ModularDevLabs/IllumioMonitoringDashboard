@@ -47,6 +47,8 @@ const defaultPublicBaseURL = "http://localhost:18443"
 const pceTimeFormat = "2006-01-02T15:04:05.000Z"
 const maxHistoryDays = 3650
 const slowRequestLogThreshold = 200 * time.Millisecond
+const blockedTargetWorkerCount = 4
+const blockedTargetStartStagger = 150 * time.Millisecond
 
 type Config struct {
 	PCEURL                   string          `json:"pce_url"`
@@ -332,6 +334,16 @@ type anomalyHistoryEvent struct {
 	AnomalySource       string    `json:"anomaly_source,omitempty"`
 	AnomalyCoveragePct  float64   `json:"anomaly_coverage_pct,omitempty"`
 	Reason              string    `json:"reason,omitempty"`
+}
+
+type blockedTargetCycleResult struct {
+	Index          int
+	Result         BlockedTargetResult
+	CurrentCount   int
+	BaselineCount  int
+	NewlyBaselined bool
+	Success        bool
+	WarningMessage string
 }
 
 var (
@@ -2872,47 +2884,16 @@ func getIllumioStats() DashboardStats {
 		warningParts = append(warningParts, exclusionWarn)
 	}
 	blockedDeltaStart := blockedDeltaWindowStart(nowUTC)
-	blockedCurrent := make(map[string]int, len(targets))
-	blockedBaseline := make(map[string]int)
-	newlyBaselined := make(map[string]bool)
-	successCount := 0
-
-	for _, target := range targets {
-		count := 0
-		warning := ""
-		err := error(nil)
-		if baseline || !hasTargetBaseline(target.Name) {
-			var qRes trafficQueryResult
-			qRes, err = getBlockedCountForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, excludedHRefs)
-			count = qRes.Count
-			warning = qRes.Warning
-			if err == nil {
-				blockedBaseline[target.Name] = count
-				newlyBaselined[target.Name] = true
-			}
-		} else {
-			var qRes trafficQueryResult
-			qRes, err = getBlockedCountForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, excludedHRefs)
-			count = qRes.Count
-			warning = qRes.Warning
-		}
-		result := BlockedTargetResult{Name: target.Name, Kind: target.Kind, Count: count}
-		if err != nil {
-			result.Status = FetchStatus{Success: false, Error: err.Error()}
-			warningParts = append(warningParts, fmt.Sprintf("%s: %s", target.Name, err.Error()))
-		} else {
-			result.Status = FetchStatus{Success: true}
-			if warning != "" {
-				result.Warning = warning
-				warningParts = append(warningParts, fmt.Sprintf("%s: %s", target.Name, warning))
-			}
-			successCount++
-			if !newlyBaselined[target.Name] {
-				blockedCurrent[target.Name] = count
-			}
-		}
-		stats.Blocked.Targets = append(stats.Blocked.Targets, result)
-	}
+	blockedResults, blockedCurrent, blockedBaseline, successCount, pacedWarnings := collectBlockedTargetsWithPacing(
+		baseURL,
+		targets,
+		nowUTC,
+		baseline,
+		blockedDeltaStart,
+		excludedHRefs,
+	)
+	stats.Blocked.Targets = append(stats.Blocked.Targets, blockedResults...)
+	warningParts = append(warningParts, pacedWarnings...)
 	log.Printf("[COLLECTOR] Blocked targets=%d successful=%d warnings=%d", len(targets), successCount, len(warningParts))
 
 	_, rollingWorkloads, rollingBlocked, baselineBlocked, incrementalBlocked, warmupByTarget, warmupMinutesByTarget := updateRollingAndBuildView(
@@ -4111,6 +4092,109 @@ func getBlockedCountForTargetWindow(baseURL string, target TrafficTarget, startU
 		return combined, nil
 	}
 	return runBothDirections(labelHRefs, target.Name)
+}
+
+func collectBlockedTargetPaced(
+	index int,
+	baseURL string,
+	target TrafficTarget,
+	nowUTC time.Time,
+	baseline bool,
+	blockedDeltaStart time.Time,
+	sourceExcludeHRefs []string,
+) blockedTargetCycleResult {
+	res := blockedTargetCycleResult{
+		Index:  index,
+		Result: BlockedTargetResult{Name: target.Name, Kind: target.Kind},
+	}
+	queryBaseline := baseline || !hasTargetBaseline(target.Name)
+	var qRes trafficQueryResult
+	var err error
+	if queryBaseline {
+		qRes, err = getBlockedCountForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+		res.BaselineCount = qRes.Count
+		res.NewlyBaselined = err == nil
+	} else {
+		qRes, err = getBlockedCountForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+		res.CurrentCount = qRes.Count
+	}
+	res.Result.Count = qRes.Count
+	res.WarningMessage = strings.TrimSpace(qRes.Warning)
+	if err != nil {
+		res.Result.Status = FetchStatus{Success: false, Error: err.Error()}
+		return res
+	}
+	res.Result.Status = FetchStatus{Success: true}
+	if res.WarningMessage != "" {
+		res.Result.Warning = res.WarningMessage
+	}
+	res.Success = true
+	return res
+}
+
+func collectBlockedTargetsWithPacing(
+	baseURL string,
+	targets []TrafficTarget,
+	nowUTC time.Time,
+	baseline bool,
+	blockedDeltaStart time.Time,
+	sourceExcludeHRefs []string,
+) ([]BlockedTargetResult, map[string]int, map[string]int, int, []string) {
+	if len(targets) == 0 {
+		return nil, map[string]int{}, map[string]int{}, 0, nil
+	}
+	workers := blockedTargetWorkerCount
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(targets) {
+		workers = len(targets)
+	}
+	jobs := make(chan int, len(targets))
+	out := make(chan blockedTargetCycleResult, len(targets))
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				delay := time.Duration(idx) * blockedTargetStartStagger
+				if delay > 0 {
+					time.Sleep(delay)
+				}
+				out <- collectBlockedTargetPaced(idx, baseURL, targets[idx], nowUTC, baseline, blockedDeltaStart, sourceExcludeHRefs)
+			}
+		}()
+	}
+	for idx := range targets {
+		jobs <- idx
+	}
+	close(jobs)
+	wg.Wait()
+	close(out)
+
+	ordered := make([]BlockedTargetResult, len(targets))
+	blockedCurrent := make(map[string]int, len(targets))
+	blockedBaseline := make(map[string]int)
+	warningParts := make([]string, 0)
+	successCount := 0
+	for r := range out {
+		ordered[r.Index] = r.Result
+		if !r.Result.Status.Success {
+			warningParts = append(warningParts, fmt.Sprintf("%s: %s", r.Result.Name, r.Result.Status.Error))
+			continue
+		}
+		successCount++
+		if r.WarningMessage != "" {
+			warningParts = append(warningParts, fmt.Sprintf("%s: %s", r.Result.Name, r.WarningMessage))
+		}
+		if r.NewlyBaselined {
+			blockedBaseline[r.Result.Name] = r.BaselineCount
+		} else {
+			blockedCurrent[r.Result.Name] = r.CurrentCount
+		}
+	}
+	return ordered, blockedCurrent, blockedBaseline, successCount, warningParts
 }
 
 func getBlockedPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (map[string]int, error) {

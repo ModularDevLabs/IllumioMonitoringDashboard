@@ -29,6 +29,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Configurable targets (labels and/or label groups)
   - Configurable source exclusions (default `LG-SCANNERS`)
   - Async traffic flow query support
+  - Pacing/staggering of per-target blocked queries to reduce burst pressure on API rate limits
   - Counts combine blocked source + blocked destination queries per target
   - Uses `max_results: 200000` for blocked traffic queries
   - Partial-success handling (green + warning badge)
