@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"database/sql"
 	"embed"
 	"encoding/csv"
 	"encoding/json"
@@ -24,6 +25,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 //go:embed index.html settings.html details.html report.html executive.html static/*
@@ -36,6 +39,7 @@ const venHistoryFileName = "ven_daily_history.json"
 const rollingStateFileName = "rolling_state.json"
 const alertStateFileName = "alert_state.json"
 const anomalyHistoryFileName = "anomaly_history.jsonl"
+const metricsDBFileName = "metrics.db"
 const trafficQueryMaxResults = 200000
 const venQueryMaxDuration = 4 * time.Minute
 const tamperingQueryMaxDuration = 4 * time.Minute
@@ -43,6 +47,7 @@ const rollingStateSchemaVersion = 1
 const defaultDataDirName = ".illumio-monitoring-dashboard"
 const defaultBindAddress = ":18443"
 const defaultPublicBaseURL = "http://localhost:18443"
+const defaultBlockedPortStoreBackend = "json"
 
 const pceTimeFormat = "2006-01-02T15:04:05.000Z"
 const maxHistoryDays = 3650
@@ -87,6 +92,7 @@ type Config struct {
 	WebhookSlackUsername     string          `json:"webhook_slack_username,omitempty"`
 	WebhookSlackIconEmoji    string          `json:"webhook_slack_icon_emoji,omitempty"`
 	WebhookTeamsTitlePrefix  string          `json:"webhook_teams_title_prefix,omitempty"`
+	BlockedPortStoreBackend  string          `json:"blocked_port_store_backend,omitempty"`
 }
 
 type TrafficTarget struct {
@@ -373,6 +379,7 @@ var (
 	reportPageTmpl    = template.Must(template.ParseFS(templateFS, "report.html"))
 	executivePageTmpl = template.Must(template.ParseFS(templateFS, "executive.html"))
 	dataDir           string
+	metricsDB         *sql.DB
 )
 
 func main() {
@@ -382,6 +389,7 @@ func main() {
 		fmt.Printf("Loaded configuration for PCE: %s\n", config.PCEURL)
 	}
 	initDataDir()
+	initBlockedPortStore()
 	loadBlockedHistory()
 	loadBlockedPortHistory()
 	loadVENHistory()
@@ -610,33 +618,9 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.BlockedPortDailyEnabled = configuredBlockedPortDailyEnabled()
 		if resp.BlockedPortDailyEnabled && includePorts {
 			resp.BlockedPortsDaily = blockedPortDailySeries(target, configuredHistoryDays())
-			if includeLivePorts {
-				configMutex.RLock()
-				pceURL := config.PCEURL
-				orgID := config.OrgID
-				configMutex.RUnlock()
-				baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), orgID)
-				excludedHRefs, exclusionWarn := resolveSourceExclusionHRefs(baseURL, configuredSourceExclusions())
-				if exclusionWarn != "" {
-					log.Printf("[DRILLDOWN] source exclusion warning: %s", exclusionWarn)
-				}
-				loc := configuredDayLocation()
-				now := time.Now()
-				todayStart := localDayStart(now, loc)
-				targetCfg, ok := configuredTrafficTargetByName(target)
-				if !ok {
-					targetCfg = TrafficTarget{Name: target, Kind: "auto"}
-				}
-				todayPorts, err := getBlockedPortCountsForTargetWindow(baseURL, targetCfg, todayStart.UTC(), now.UTC(), excludedHRefs)
-				if err != nil {
-					log.Printf("[DRILLDOWN] blocked ports today-so-far query failed for %s: %v", target, err)
-				} else if len(todayPorts) > 0 {
-					resp.BlockedPortsDaily = append(resp.BlockedPortsDaily, BlockedPortDay{
-						Timestamp: now.UTC(),
-						Ports:     portCountMapToSortedSlice(todayPorts),
-					})
-				}
-			}
+		}
+		if includeLivePorts {
+			log.Printf("[DRILLDOWN] include_live_ports requested for target=%s but live query path is disabled; serving persisted history only", target)
 		}
 		resp.BlockedMAWindow = window
 		resp.BlockedAnomalyPct = pct
@@ -806,6 +790,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		effectiveTimezone := configuredEffectiveTimezoneLocked()
 		bindAddress := configuredBindAddressLocked()
 		publicBaseURL := configuredPublicBaseURLLocked()
+		blockedPortStoreBackend := configuredBlockedPortStoreBackendLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := config.WebhookEnabled && webhookURL != ""
 		webhookProvider := configuredWebhookProviderLocked()
@@ -847,6 +832,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"timezone_effective":          effectiveTimezone,
 			"bind_address":                bindAddress,
 			"public_base_url":             publicBaseURL,
+			"blocked_port_store_backend":  blockedPortStoreBackend,
 			"webhook_url":                 webhookURL,
 			"webhook_enabled":             webhookEnabled,
 			"webhook_provider":            webhookProvider,
@@ -881,6 +867,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			Timezone                 *string         `json:"timezone"`
 			BindAddress              *string         `json:"bind_address"`
 			PublicBaseURL            *string         `json:"public_base_url"`
+			BlockedPortStoreBackend  *string         `json:"blocked_port_store_backend"`
 			WebhookURL               *string         `json:"webhook_url"`
 			WebhookEnabled           *bool           `json:"webhook_enabled"`
 			WebhookProvider          *string         `json:"webhook_provider"`
@@ -971,6 +958,9 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		if req.PublicBaseURL != nil {
 			config.PublicBaseURL = normalizePublicBaseURL(*req.PublicBaseURL)
 		}
+		if req.BlockedPortStoreBackend != nil {
+			config.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(*req.BlockedPortStoreBackend)
+		}
 		if req.WebhookURL != nil {
 			config.WebhookURL = strings.TrimSpace(*req.WebhookURL)
 		}
@@ -1015,6 +1005,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		effectiveTimezone := configuredEffectiveTimezoneLocked()
 		bindAddress := configuredBindAddressLocked()
 		publicBaseURL := configuredPublicBaseURLLocked()
+		blockedPortStoreBackend := configuredBlockedPortStoreBackendLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := configuredWebhookEnabledLocked()
 		webhookProvider := configuredWebhookProviderLocked()
@@ -1055,6 +1046,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"timezone_effective":          effectiveTimezone,
 			"bind_address":                bindAddress,
 			"public_base_url":             publicBaseURL,
+			"blocked_port_store_backend":  blockedPortStoreBackend,
 			"webhook_url":                 webhookURL,
 			"webhook_enabled":             webhookEnabled,
 			"webhook_provider":            webhookProvider,
@@ -3628,6 +3620,16 @@ func configuredBlockedPortDailyEnabledLocked() bool {
 	return *config.BlockedPortDailyEnabled
 }
 
+func configuredBlockedPortStoreBackend() string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredBlockedPortStoreBackendLocked()
+}
+
+func configuredBlockedPortStoreBackendLocked() string {
+	return normalizeBlockedPortStoreBackend(config.BlockedPortStoreBackend)
+}
+
 func configuredBlockedMAWindow() int {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
@@ -3928,6 +3930,15 @@ func normalizeWebhookProvider(raw string) string {
 	}
 }
 
+func normalizeBlockedPortStoreBackend(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "sqlite":
+		return "sqlite"
+	default:
+		return defaultBlockedPortStoreBackend
+	}
+}
+
 func normalizeBindAddress(raw string) string {
 	s := strings.TrimSpace(raw)
 	if s == "" {
@@ -4116,6 +4127,11 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 	if len(blockedCounts) == 0 && (!portDailyEnabled || len(blockedPorts) == 0) {
 		pruneBlockedHistory(nowUTC, configuredHistoryDays())
 		return
+	}
+	if blockedPortStoreIsSQLite() && portDailyEnabled && len(blockedPorts) > 0 {
+		if err := sqliteInsertBlockedPort5m(nowUTC, blockedPorts); err != nil {
+			log.Printf("[STORE] failed persisting blocked 5m port snapshot: %v", err)
+		}
 	}
 	loc := configuredDayLocation()
 	dayKey := localDayStart(nowUTC, loc).Format("2006-01-02")
@@ -5379,6 +5395,8 @@ func loadConfig() bool {
 	config.Timezone = normalizeTimezone(config.Timezone)
 	config.BindAddress = normalizeBindAddress(config.BindAddress)
 	config.PublicBaseURL = normalizePublicBaseURL(config.PublicBaseURL)
+	config.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(config.BlockedPortStoreBackend)
+	config.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(config.BlockedPortStoreBackend)
 	config.HistoryDays = configuredHistoryDaysLocked()
 	config.TrafficTargets = sanitizeTargets(config.TrafficTargets)
 	config.SourceExclusions = sanitizeTargets(config.SourceExclusions)
@@ -5505,6 +5523,215 @@ func writeJSONFileAtomic(path string, value interface{}) error {
 	return os.Rename(tmp, path)
 }
 
+func blockedPortStoreIsSQLite() bool {
+	return configuredBlockedPortStoreBackend() == "sqlite"
+}
+
+func initBlockedPortStore() {
+	if !blockedPortStoreIsSQLite() {
+		return
+	}
+	if strings.TrimSpace(dataDir) == "" {
+		return
+	}
+	dbPath := dataFilePath(metricsDBFileName)
+	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		log.Printf("[STORE] sqlite open failed: %v", err)
+		return
+	}
+	if err := db.Ping(); err != nil {
+		log.Printf("[STORE] sqlite ping failed: %v", err)
+		_ = db.Close()
+		return
+	}
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS blocked_ports_daily (
+			day TEXT NOT NULL,
+			target TEXT NOT NULL,
+			port TEXT NOT NULL,
+			count INTEGER NOT NULL,
+			PRIMARY KEY(day, target, port)
+		);`,
+		`CREATE TABLE IF NOT EXISTS blocked_ports_5m (
+			ts_unix INTEGER NOT NULL,
+			target TEXT NOT NULL,
+			port TEXT NOT NULL,
+			count INTEGER NOT NULL,
+			PRIMARY KEY(ts_unix, target, port)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_blocked_ports_5m_target_ts ON blocked_ports_5m(target, ts_unix);`,
+		`CREATE INDEX IF NOT EXISTS idx_blocked_ports_5m_ts ON blocked_ports_5m(ts_unix);`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			log.Printf("[STORE] sqlite schema init failed: %v", err)
+			_ = db.Close()
+			return
+		}
+	}
+	metricsDB = db
+	migrateBlockedPortDailyJSONToSQLite()
+	log.Printf("[STORE] blocked-port store backend=sqlite db=%s", dbPath)
+}
+
+func migrateBlockedPortDailyJSONToSQLite() {
+	if metricsDB == nil {
+		return
+	}
+	var existing int
+	if err := metricsDB.QueryRow(`SELECT COUNT(1) FROM blocked_ports_daily`).Scan(&existing); err != nil {
+		log.Printf("[STORE] sqlite daily count check failed: %v", err)
+		return
+	}
+	if existing > 0 {
+		return
+	}
+	path := dataFilePath(blockedPortHistoryFileName)
+	records, err := readBlockedPortHistoryJSONFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("[STORE] sqlite migration read json failed: %v", err)
+		}
+		return
+	}
+	if len(records) == 0 {
+		return
+	}
+	tx, err := metricsDB.Begin()
+	if err != nil {
+		log.Printf("[STORE] sqlite migration begin failed: %v", err)
+		return
+	}
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO blocked_ports_daily(day, target, port, count) VALUES(?,?,?,?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		log.Printf("[STORE] sqlite migration prepare failed: %v", err)
+		return
+	}
+	for _, rec := range records {
+		day := strings.TrimSpace(rec.Day)
+		target := strings.TrimSpace(rec.Target)
+		port := strings.TrimSpace(rec.Port)
+		if day == "" || target == "" || port == "" {
+			continue
+		}
+		if _, err := stmt.Exec(day, target, port, rec.Count); err != nil {
+			_ = stmt.Close()
+			_ = tx.Rollback()
+			log.Printf("[STORE] sqlite migration insert failed: %v", err)
+			return
+		}
+	}
+	_ = stmt.Close()
+	if err := tx.Commit(); err != nil {
+		log.Printf("[STORE] sqlite migration commit failed: %v", err)
+		return
+	}
+	log.Printf("[STORE] migrated %d blocked-port daily records from json to sqlite", len(records))
+}
+
+func readBlockedPortHistoryJSONFile(path string) ([]dailyBlockedPortRecord, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var records []dailyBlockedPortRecord
+	if err := json.NewDecoder(file).Decode(&records); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+func sqliteReplaceBlockedPortDaily(records []dailyBlockedPortRecord) error {
+	if metricsDB == nil {
+		return errors.New("sqlite not initialized")
+	}
+	tx, err := metricsDB.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM blocked_ports_daily`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO blocked_ports_daily(day, target, port, count) VALUES(?,?,?,?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for _, rec := range records {
+		if _, err := stmt.Exec(rec.Day, rec.Target, rec.Port, rec.Count); err != nil {
+			_ = stmt.Close()
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	_ = stmt.Close()
+	return tx.Commit()
+}
+
+func sqliteLoadBlockedPortDaily() ([]dailyBlockedPortRecord, error) {
+	if metricsDB == nil {
+		return nil, errors.New("sqlite not initialized")
+	}
+	rows, err := metricsDB.Query(`SELECT day, target, port, count FROM blocked_ports_daily ORDER BY day, target, port`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]dailyBlockedPortRecord, 0, 1024)
+	for rows.Next() {
+		var rec dailyBlockedPortRecord
+		if err := rows.Scan(&rec.Day, &rec.Target, &rec.Port, &rec.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func sqliteInsertBlockedPort5m(tsUTC time.Time, blockedPorts map[string]map[string]int) error {
+	if metricsDB == nil || len(blockedPorts) == 0 {
+		return nil
+	}
+	bucketUnix := tsUTC.UTC().Unix()
+	tx, err := metricsDB.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO blocked_ports_5m(ts_unix, target, port, count) VALUES(?,?,?,?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for target, portMap := range blockedPorts {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		for port, count := range portMap {
+			port = strings.TrimSpace(port)
+			if port == "" || count <= 0 {
+				continue
+			}
+			if _, err := stmt.Exec(bucketUnix, target, port, count); err != nil {
+				_ = stmt.Close()
+				_ = tx.Rollback()
+				return err
+			}
+		}
+	}
+	_ = stmt.Close()
+	if _, err := tx.Exec(`DELETE FROM blocked_ports_5m WHERE ts_unix < ?`, tsUTC.UTC().Add(-24*time.Hour).Unix()); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
 func loadBlockedHistory() {
 	historyMu.Lock()
 	defer historyMu.Unlock()
@@ -5539,16 +5766,24 @@ func loadBlockedPortHistory() {
 	defer historyMu.Unlock()
 	blockedPortsDaily = map[string]map[string]map[string]int{}
 
-	file, err := os.Open(dataFilePath(blockedPortHistoryFileName))
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
 	var records []dailyBlockedPortRecord
-	if err := json.NewDecoder(file).Decode(&records); err != nil {
-		log.Printf("[HISTORY] failed loading blocked port history: %v", err)
-		return
+	if blockedPortStoreIsSQLite() {
+		loaded, err := sqliteLoadBlockedPortDaily()
+		if err != nil {
+			log.Printf("[HISTORY] failed loading blocked port history from sqlite: %v", err)
+			return
+		}
+		records = loaded
+	} else {
+		file, err := os.Open(dataFilePath(blockedPortHistoryFileName))
+		if err != nil {
+			return
+		}
+		defer file.Close()
+		if err := json.NewDecoder(file).Decode(&records); err != nil {
+			log.Printf("[HISTORY] failed loading blocked port history: %v", err)
+			return
+		}
 	}
 	for _, rec := range records {
 		day := strings.TrimSpace(rec.Day)
@@ -6011,6 +6246,12 @@ func saveBlockedPortHistory() {
 		}
 		return records[i].Day < records[j].Day
 	})
+	if blockedPortStoreIsSQLite() {
+		if err := sqliteReplaceBlockedPortDaily(records); err != nil {
+			log.Printf("[HISTORY] failed to save blocked port history (sqlite): %v", err)
+		}
+		return
+	}
 	if err := writeJSONFileAtomic(dataFilePath(blockedPortHistoryFileName), records); err != nil {
 		log.Printf("[HISTORY] failed to save blocked port history: %v", err)
 	}

@@ -182,6 +182,7 @@ Runtime state is stored in a shared data directory:
   "data_dir": "/path/to/shared/state",
   "history_days": 365,
   "blocked_port_daily_enabled": true,
+  "blocked_port_store_backend": "json",
   "blocked_ma_window": 12,
   "blocked_anomaly_pct": 50,
   "blocked_anomaly_baseline": "daily",
@@ -218,6 +219,7 @@ Runtime state is stored in a shared data directory:
 | `data_dir` | Shared state directory | `$HOME/.illumio-monitoring-dashboard` | Override via env `ILLUMIO_DASH_DATA_DIR` |
 | `history_days` | Retention days for daily history files | `365` | Range `1..3650` |
 | `blocked_port_daily_enabled` | Enable daily blocked `port/proto` aggregation | `true` | Controls blocked target drilldown blocked-ports table and daily port history collection |
+| `blocked_port_store_backend` | Blocked port history backend | `json` | `json` or `sqlite`; when `sqlite`, data is stored in `metrics.db` in the shared data directory |
 | `blocked_ma_window` | Global 5m moving-average window points | `12` | Range `2..288` |
 | `blocked_anomaly_pct` | Global blocked anomaly threshold percent | `50` | Range `1..10000` |
 | `blocked_anomaly_baseline` | Baseline source for blocked anomaly detection | `5m` | `5m` compares latest 5m to 5m MA; `daily` compares latest 5m to N-day baseline |
@@ -370,7 +372,7 @@ Use `/settings` to manage webhook alerting:
   - metrics: `ven_warning`, `ven_error`, `mode_idle`, `mode_visibility_only`, `mode_selective`, `mode_full`, `mode_unmanaged`, `tampering`
   - for `metric=blocked_target`, optional flags:
     - `include_ports=1`: include persisted daily blocked port/proto aggregates
-    - `include_live_ports=1`: include today-so-far live blocked port snapshot (heavier query)
+    - `include_live_ports=1`: accepted for compatibility; ignored (drilldown uses persisted history only)
 - `GET /api/export/drilldown.csv?metric=<metric>[&target=<target>]`:
   - Export drilldown list + trend points (`24h (5m)` and `Daily` when available) to CSV
 - `GET /api/config/targets`:
@@ -466,7 +468,10 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
   - If a blocked query appears to hit max results cap, target warning indicates possible truncation.
   - Rolling buckets are persisted in `rolling_state.json` (schema-versioned) for restart continuity.
   - Daily blocked totals are stored in `blocked_daily_history.json` using one record per target per completed day in configured timezone (or server local time by default).
-  - Daily blocked port/proto totals are stored in `blocked_port_daily_history.json` as compact aggregated records per target/day.
+  - Daily blocked port/proto totals are stored as compact aggregated records per target/day.
+  - Port store backend can be set to:
+    - `json`: `blocked_port_daily_history.json`
+    - `sqlite`: `metrics.db` (includes daily and rolling 5m blocked port/proto snapshots)
   - VEN daily maxima are stored in `ven_daily_history.json`.
   - On startup, legacy local state files are auto-migrated into the shared data directory if destination files are absent.
   - Retention is pruned based on `history_days`.
@@ -496,6 +501,7 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 - `config.json`: runtime configuration
 - `blocked_daily_history.json`: persisted daily blocked totals per target
 - `blocked_port_daily_history.json`: persisted daily blocked totals per target per `port/proto`
+- `metrics.db`: optional SQLite storage for blocked port/proto daily + 5m rolling snapshots when `blocked_port_store_backend=sqlite`
 - `ven_daily_history.json`: persisted daily VEN warning/error max values
 - `anomaly_history.jsonl`: persisted anomaly transition events (triggered/resolved) for blocked targets, VEN warning/error, and tampering
 
