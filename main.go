@@ -3992,40 +3992,80 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 		return
 	}
 
-	changed := false
-	for _, target := range missingCounts {
-		qRes, err := getBlockedCountForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
-		if err != nil {
-			log.Printf("[HISTORY] daily blocked snapshot failed for %s (%s): %v", target.Name, dayKey, err)
-			continue
-		}
-		if qRes.Warning != "" {
-			log.Printf("[HISTORY] daily blocked snapshot warning for %s (%s): %s", target.Name, dayKey, qRes.Warning)
-		}
-		historyMu.Lock()
-		if blockedDaily[dayKey] == nil {
-			blockedDaily[dayKey] = map[string]int{}
-		}
-		blockedDaily[dayKey][target.Name] = qRes.Count
-		historyMu.Unlock()
-		changed = true
+	missingCountByName := make(map[string]bool, len(missingCounts))
+	missingPortByName := make(map[string]bool, len(missingPorts))
+	for _, t := range missingCounts {
+		missingCountByName[t.Name] = true
 	}
-	for _, target := range missingPorts {
-		portCounts, err := getBlockedPortCountsForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
-		if err != nil {
-			log.Printf("[HISTORY] daily blocked port snapshot failed for %s (%s): %v", target.Name, dayKey, err)
+	for _, t := range missingPorts {
+		missingPortByName[t.Name] = true
+	}
+	changed := false
+	for _, target := range targets {
+		needCount := missingCountByName[target.Name]
+		needPorts := missingPortByName[target.Name]
+		if !needCount && !needPorts {
 			continue
 		}
-		historyMu.Lock()
-		if blockedPortsDaily[dayKey] == nil {
-			blockedPortsDaily[dayKey] = map[string]map[string]int{}
+		if needCount && needPorts {
+			qRes, portCounts, err := getBlockedCountAndPortCountsForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
+			if err != nil {
+				log.Printf("[HISTORY] daily blocked combined snapshot failed for %s (%s): %v", target.Name, dayKey, err)
+				continue
+			}
+			if qRes.Warning != "" {
+				log.Printf("[HISTORY] daily blocked combined snapshot warning for %s (%s): %s", target.Name, dayKey, qRes.Warning)
+			}
+			historyMu.Lock()
+			if blockedDaily[dayKey] == nil {
+				blockedDaily[dayKey] = map[string]int{}
+			}
+			blockedDaily[dayKey][target.Name] = qRes.Count
+			if blockedPortsDaily[dayKey] == nil {
+				blockedPortsDaily[dayKey] = map[string]map[string]int{}
+			}
+			if portCounts == nil {
+				portCounts = map[string]int{}
+			}
+			blockedPortsDaily[dayKey][target.Name] = portCounts
+			historyMu.Unlock()
+			changed = true
+			continue
 		}
-		if portCounts == nil {
-			portCounts = map[string]int{}
+		if needCount {
+			qRes, err := getBlockedCountForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
+			if err != nil {
+				log.Printf("[HISTORY] daily blocked snapshot failed for %s (%s): %v", target.Name, dayKey, err)
+				continue
+			}
+			if qRes.Warning != "" {
+				log.Printf("[HISTORY] daily blocked snapshot warning for %s (%s): %s", target.Name, dayKey, qRes.Warning)
+			}
+			historyMu.Lock()
+			if blockedDaily[dayKey] == nil {
+				blockedDaily[dayKey] = map[string]int{}
+			}
+			blockedDaily[dayKey][target.Name] = qRes.Count
+			historyMu.Unlock()
+			changed = true
 		}
-		blockedPortsDaily[dayKey][target.Name] = portCounts
-		historyMu.Unlock()
-		changed = true
+		if needPorts {
+			portCounts, err := getBlockedPortCountsForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
+			if err != nil {
+				log.Printf("[HISTORY] daily blocked port snapshot failed for %s (%s): %v", target.Name, dayKey, err)
+				continue
+			}
+			historyMu.Lock()
+			if blockedPortsDaily[dayKey] == nil {
+				blockedPortsDaily[dayKey] = map[string]map[string]int{}
+			}
+			if portCounts == nil {
+				portCounts = map[string]int{}
+			}
+			blockedPortsDaily[dayKey][target.Name] = portCounts
+			historyMu.Unlock()
+			changed = true
+		}
 	}
 	pruneBlockedHistory(nowUTC, historyDays)
 	if changed {
@@ -4092,6 +4132,40 @@ func getBlockedCountForTargetWindow(baseURL string, target TrafficTarget, startU
 		return combined, nil
 	}
 	return runBothDirections(labelHRefs, target.Name)
+}
+
+func getBlockedCountAndPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, error) {
+	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
+	if err != nil {
+		return trafficQueryResult{}, nil, err
+	}
+	srcRes, srcPorts, err := performAsyncTrafficQueryWindowCountAndPorts(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_src", startUTC, endUTC, true)
+	if err != nil {
+		return trafficQueryResult{}, nil, err
+	}
+	dstRes, dstPorts, err := performAsyncTrafficQueryWindowCountAndPorts(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_dst", startUTC, endUTC, false)
+	if err != nil {
+		return trafficQueryResult{}, nil, err
+	}
+	combined := trafficQueryResult{
+		Count:     srcRes.Count + dstRes.Count,
+		Truncated: srcRes.Truncated || dstRes.Truncated,
+	}
+	if combined.Truncated {
+		combined.Warning = fmt.Sprintf("result may be truncated at max_results=%d (source and/or destination leg reached cap)", trafficQueryMaxResults)
+	}
+	ports := make(map[string]int)
+	for k, v := range srcPorts {
+		if v > 0 {
+			ports[k] += v
+		}
+	}
+	for k, v := range dstPorts {
+		if v > 0 {
+			ports[k] += v
+		}
+	}
+	return combined, ports, nil
 }
 
 func collectBlockedTargetPaced(
@@ -4667,6 +4741,101 @@ func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []strin
 		time.Sleep(2 * time.Second)
 	}
 	return nil, fmt.Errorf("async job timed out")
+}
+
+func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, error) {
+	if len(labelHRefs) == 0 {
+		return trafficQueryResult{}, nil, errors.New("cannot run blocked traffic query with empty label list")
+	}
+	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
+	seen := make(map[string]struct{}, len(labelHRefs))
+	for _, h := range labelHRefs {
+		if h == "" {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
+	}
+	if len(includeList) == 0 {
+		return trafficQueryResult{}, nil, errors.New("resolved labels are empty after normalization")
+	}
+	includeAny := make([]interface{}, 0, len(includeList))
+	for _, item := range includeList {
+		includeAny = append(includeAny, []interface{}{item})
+	}
+	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
+	for _, h := range sourceExcludeHRefs {
+		if strings.TrimSpace(h) == "" {
+			continue
+		}
+		sourceExcludes = append(sourceExcludes, map[string]interface{}{"label": map[string]string{"href": h}})
+	}
+	sources := map[string]interface{}{"include": []interface{}{}, "exclude": []interface{}{}}
+	destinations := map[string]interface{}{"include": []interface{}{}, "exclude": []interface{}{}}
+	if asSource {
+		sources["include"] = includeAny
+	} else {
+		destinations["include"] = includeAny
+	}
+	if len(sourceExcludes) > 0 {
+		ex := make([]interface{}, 0, len(sourceExcludes))
+		for _, e := range sourceExcludes {
+			ex = append(ex, e)
+		}
+		sources["exclude"] = ex
+	}
+	payload := map[string]interface{}{
+		"query_name":   fmt.Sprintf("Dash_%s_%d", queryName, time.Now().Unix()),
+		"sources":      sources,
+		"destinations": destinations,
+		"services": map[string]interface{}{
+			"include": []interface{}{},
+			"exclude": []interface{}{},
+		},
+		"policy_decisions": []string{"blocked"},
+		"start_date":       startUTC.Format(pceTimeFormat),
+		"end_date":         endUTC.Format(pceTimeFormat),
+		"max_results":      trafficQueryMaxResults,
+	}
+	var job map[string]interface{}
+	if err := apiCall(baseURL+"/traffic_flows/async_queries", "POST", payload, &job); err != nil {
+		return trafficQueryResult{}, nil, err
+	}
+	jobHref, _ := job["href"].(string)
+	if jobHref == "" {
+		return trafficQueryResult{}, nil, errors.New("async query did not return job href")
+	}
+	jobURL := resolveHrefToURL(jobHref)
+	for i := 0; i < 60; i++ {
+		var status map[string]interface{}
+		if err := apiCall(jobURL, "GET", nil, &status); err != nil {
+			return trafficQueryResult{}, nil, err
+		}
+		s, _ := status["status"].(string)
+		switch s {
+		case "completed":
+			rows, err := getAsyncQueryResultRows(jobURL)
+			if err != nil {
+				return trafficQueryResult{}, nil, err
+			}
+			count := len(rows)
+			res := trafficQueryResult{
+				Count:     count,
+				Truncated: count >= trafficQueryMaxResults,
+			}
+			if res.Truncated {
+				res.Warning = fmt.Sprintf("result may be truncated at max_results=%d", trafficQueryMaxResults)
+			}
+			return res, aggregatePortCounts(rows), nil
+		case "failed":
+			return trafficQueryResult{}, nil, fmt.Errorf("async job failed: %s", statusMessage(status))
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return trafficQueryResult{}, nil, fmt.Errorf("async job timed out")
 }
 
 func getAsyncQueryResultRows(jobURL string) ([]map[string]interface{}, error) {
