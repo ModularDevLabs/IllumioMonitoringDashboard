@@ -422,6 +422,16 @@ Use `/settings` to manage webhook alerting:
 ./scripts/rebuild-binaries.sh
 ```
 
+### Upload binaries to a GitHub release
+
+Binaries are intentionally ignored in git and uploaded as release assets.
+
+```bash
+./scripts/upload-release-assets.sh v1.1.1
+```
+
+This rebuilds Linux/Windows/macOS binaries and uploads them to the specified tag (`--clobber` overwrite behavior).
+
 ### Standard tests
 
 ```bash
