@@ -378,6 +378,7 @@ Use `/settings` to manage webhook alerting:
   - Sends a test webhook event using current config
 - `GET /api/anomalies/history`:
   - Returns persisted anomaly trigger/resolved transitions
+  - Includes blocked target, VEN warning/error, and tampering anomaly transitions
   - Query params: `days` (default `7`), `limit` (default `200`)
 - `GET /api/export/report.csv`:
   - Export current summary, lists, and trend data to CSV (Excel-compatible)
@@ -471,7 +472,7 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 - `blocked_daily_history.json`: persisted daily blocked totals per target
 - `blocked_port_daily_history.json`: persisted daily blocked totals per target per `port/proto`
 - `ven_daily_history.json`: persisted daily VEN warning/error max values
-- `anomaly_history.jsonl`: persisted anomaly transition events (triggered/resolved)
+- `anomaly_history.jsonl`: persisted anomaly transition events (triggered/resolved) for blocked targets, VEN warning/error, and tampering
 
 ## Executive Roadmap
 

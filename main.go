@@ -315,6 +315,7 @@ type alertTargetState struct {
 type persistedAlertState struct {
 	SchemaVersion int                         `json:"schema_version"`
 	Targets       map[string]alertTargetState `json:"targets,omitempty"`
+	Metrics       map[string]alertTargetState `json:"metrics,omitempty"`
 }
 
 type anomalyHistoryEvent struct {
@@ -348,7 +349,7 @@ var (
 	venHistoryMu      sync.Mutex
 	venDaily          = map[string]venDailySnapshot{}
 	alertMu           sync.Mutex
-	alertState        = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}}
+	alertState        = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
 	anomalyHistoryMu  sync.Mutex
 	anomalyHistory    = make([]anomalyHistoryEvent, 0)
 
@@ -1216,10 +1217,16 @@ func handleAnomalyHistory(w http.ResponseWriter, r *http.Request) {
 	anomalyHistoryMu.Unlock()
 
 	activeBlocked := 0
+	activeMetrics := 0
 	alertMu.Lock()
 	for _, st := range alertState.Targets {
 		if st.Active {
 			activeBlocked++
+		}
+	}
+	for _, st := range alertState.Metrics {
+		if st.Active {
+			activeMetrics++
 		}
 	}
 	alertMu.Unlock()
@@ -1228,12 +1235,13 @@ func handleAnomalyHistory(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"events": events,
 		"summary": map[string]interface{}{
-			"period_days":            days,
-			"triggered_24h":          triggered24,
-			"resolved_24h":           resolved24,
-			"triggered_period":       triggeredPeriod,
-			"resolved_period":        resolvedPeriod,
-			"active_blocked_targets": activeBlocked,
+			"period_days":             days,
+			"triggered_24h":           triggered24,
+			"resolved_24h":            resolved24,
+			"triggered_period":        triggeredPeriod,
+			"resolved_period":         resolvedPeriod,
+			"active_blocked_targets":  activeBlocked,
+			"active_metric_anomalies": activeMetrics,
 		},
 	})
 }
@@ -1243,16 +1251,20 @@ func processWebhookAlerts(stats DashboardStats) {
 	baseURL := configuredPublicBaseURL()
 	now := time.Now().UTC()
 	targets := coalesceBlockedAlertTargets(stats.Blocked.Targets)
-	if len(targets) == 0 {
-		return
-	}
 	alertMu.Lock()
 	if alertState.Targets == nil {
 		alertState.Targets = map[string]alertTargetState{}
 	}
+	if alertState.Metrics == nil {
+		alertState.Metrics = map[string]alertTargetState{}
+	}
 	prevByKey := make(map[string]alertTargetState, len(alertState.Targets))
 	for k, v := range alertState.Targets {
 		prevByKey[k] = v
+	}
+	prevMetricByKey := make(map[string]alertTargetState, len(alertState.Metrics))
+	for k, v := range alertState.Metrics {
+		prevMetricByKey[k] = v
 	}
 	alertMu.Unlock()
 
@@ -1262,6 +1274,7 @@ func processWebhookAlerts(stats DashboardStats) {
 		eventType string
 		payload   map[string]interface{}
 		history   anomalyHistoryEvent
+		scope     string
 	}
 	events := make([]ev, 0)
 	for _, t := range targets {
@@ -1306,6 +1319,7 @@ func processWebhookAlerts(stats DashboardStats) {
 					AnomalyCoveragePct:  t.AnomalyCoverage,
 					Reason:              reason,
 				},
+				scope: "target",
 			})
 			continue
 		}
@@ -1351,6 +1365,69 @@ func processWebhookAlerts(stats DashboardStats) {
 					AnomalyCoveragePct:  t.AnomalyCoverage,
 					Reason:              resolveReason,
 				},
+				scope: "target",
+			})
+		}
+	}
+
+	for _, m := range anomalyMetricSnapshots() {
+		prev := prevMetricByKey[m.Key]
+		if m.Eval.Anomalous && !prev.Active {
+			reason := strings.TrimSpace(m.Eval.Reason)
+			if reason == "" {
+				reason = "latest value exceeded configured anomaly threshold"
+			}
+			events = append(events, ev{
+				key:       m.Key,
+				name:      m.Display,
+				eventType: "triggered",
+				history: anomalyHistoryEvent{
+					Timestamp:           now,
+					Event:               m.EventName,
+					State:               "triggered",
+					Metric:              m.Metric,
+					TargetName:          m.Display,
+					TargetKind:          "metric",
+					Latest5m:            m.Eval.Latest,
+					MovingAvg5m:         m.Eval.Baseline,
+					AnomalyThresholdPct: m.ThresholdPct,
+					MAWindowPoints:      m.Window,
+					AnomalySource:       m.Source,
+					AnomalyCoveragePct:  m.Eval.CoveragePct,
+					Reason:              reason,
+				},
+				scope: "metric",
+			})
+			continue
+		}
+		if !m.Eval.Anomalous && prev.Active {
+			resolveReason := "latest value returned within configured threshold over moving average"
+			if strings.EqualFold(strings.TrimSpace(m.Source), "daily") {
+				resolveReason = "latest value returned within configured threshold over daily baseline"
+			}
+			if strings.TrimSpace(m.Eval.Reason) != "" {
+				resolveReason = strings.TrimSpace(m.Eval.Reason)
+			}
+			events = append(events, ev{
+				key:       m.Key,
+				name:      m.Display,
+				eventType: "resolved",
+				history: anomalyHistoryEvent{
+					Timestamp:           now,
+					Event:               m.EventName,
+					State:               "resolved",
+					Metric:              m.Metric,
+					TargetName:          m.Display,
+					TargetKind:          "metric",
+					Latest5m:            m.Eval.Latest,
+					MovingAvg5m:         m.Eval.Baseline,
+					AnomalyThresholdPct: m.ThresholdPct,
+					MAWindowPoints:      m.Window,
+					AnomalySource:       m.Source,
+					AnomalyCoveragePct:  m.Eval.CoveragePct,
+					Reason:              resolveReason,
+				},
+				scope: "metric",
 			})
 		}
 	}
@@ -1358,17 +1435,26 @@ func processWebhookAlerts(stats DashboardStats) {
 	changed := false
 	historyBatch := make([]anomalyHistoryEvent, 0, len(events))
 	for _, e := range events {
-		if webhookEnabled {
+		if webhookEnabled && e.payload != nil {
 			if err := sendWebhookEvent(e.payload); err != nil {
 				log.Printf("[WEBHOOK] %s send failed for %s: %v", e.eventType, e.name, err)
 			}
 		}
 		alertMu.Lock()
-		prev := alertState.Targets[e.key]
+		var prev alertTargetState
+		if e.scope == "metric" {
+			prev = alertState.Metrics[e.key]
+		} else {
+			prev = alertState.Targets[e.key]
+		}
 		prev.Active = e.eventType == "triggered"
 		prev.LastEventUTC = now
 		prev.LastEventType = e.eventType
-		alertState.Targets[e.key] = prev
+		if e.scope == "metric" {
+			alertState.Metrics[e.key] = prev
+		} else {
+			alertState.Targets[e.key] = prev
+		}
 		alertMu.Unlock()
 		changed = true
 		historyBatch = append(historyBatch, e.history)
@@ -1377,6 +1463,95 @@ func processWebhookAlerts(stats DashboardStats) {
 		saveAlertState()
 		appendAnomalyHistoryEvents(historyBatch)
 	}
+}
+
+type anomalyMetricSnapshot struct {
+	Key          string
+	Display      string
+	Metric       string
+	EventName    string
+	Eval         anomalyEvalResult
+	ThresholdPct float64
+	Window       int
+	Source       string
+}
+
+func anomalyMetricSnapshots() []anomalyMetricSnapshot {
+	keepDays := configuredHistoryDays()
+	snaps := make([]anomalyMetricSnapshot, 0, 3)
+
+	venWindow := configuredVENMAWindow()
+	venPct := configuredVENAnomalyPct()
+	venSource := configuredVENAnomalyBaselineSource()
+	venDays := configuredVENAnomalyBaselineDays()
+	venMin := configuredVENAnomalyMinCoveragePct()
+	venWarnEval := blockedAnomalyFromConfig(
+		venTrendSeries("warning"),
+		venDailyTrendSeries("warning", keepDays),
+		venWindow,
+		venPct,
+		venSource,
+		venDays,
+		venMin,
+	)
+	snaps = append(snaps, anomalyMetricSnapshot{
+		Key:          "ven_warning",
+		Display:      "VEN Warnings",
+		Metric:       "ven_warning",
+		EventName:    "ven_warning_anomaly",
+		Eval:         venWarnEval,
+		ThresholdPct: venPct,
+		Window:       venWindow,
+		Source:       venSource,
+	})
+	venErrEval := blockedAnomalyFromConfig(
+		venTrendSeries("error"),
+		venDailyTrendSeries("error", keepDays),
+		venWindow,
+		venPct,
+		venSource,
+		venDays,
+		venMin,
+	)
+	snaps = append(snaps, anomalyMetricSnapshot{
+		Key:          "ven_error",
+		Display:      "VEN Errors",
+		Metric:       "ven_error",
+		EventName:    "ven_error_anomaly",
+		Eval:         venErrEval,
+		ThresholdPct: venPct,
+		Window:       venWindow,
+		Source:       venSource,
+	})
+
+	tamperWindow := configuredTamperingMAWindow()
+	tamperPct := configuredTamperingAnomalyPct()
+	tamperSource := configuredTamperingAnomalyBaselineSource()
+	tamperDays := configuredTamperingAnomalyBaselineDays()
+	tamperMin := configuredTamperingAnomalyMinCoveragePct()
+	if tamperSource == "daily" {
+		tamperPct = configuredTamperingDailyAnomalyPct()
+	}
+	tamperEval := blockedAnomalyFromConfig(
+		tamperingTrendSeries(),
+		tamperingDailyTrendSeries(keepDays),
+		tamperWindow,
+		tamperPct,
+		tamperSource,
+		tamperDays,
+		tamperMin,
+	)
+	snaps = append(snaps, anomalyMetricSnapshot{
+		Key:          "tampering",
+		Display:      "Tampered VENs",
+		Metric:       "tampering",
+		EventName:    "tampering_anomaly",
+		Eval:         tamperEval,
+		ThresholdPct: tamperPct,
+		Window:       tamperWindow,
+		Source:       tamperSource,
+	})
+	return snaps
 }
 
 func coalesceBlockedAlertTargets(targets []BlockedTargetResult) []BlockedTargetResult {
@@ -5110,7 +5285,7 @@ func saveRollingState() {
 func loadAlertState() {
 	alertMu.Lock()
 	defer alertMu.Unlock()
-	alertState = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}}
+	alertState = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
 
 	file, err := os.Open(dataFilePath(alertStateFileName))
 	if err != nil {
@@ -5132,6 +5307,9 @@ func loadAlertState() {
 	}
 	if persisted.Targets == nil {
 		persisted.Targets = map[string]alertTargetState{}
+	}
+	if persisted.Metrics == nil {
+		persisted.Metrics = map[string]alertTargetState{}
 	}
 	alertState = persisted
 }
@@ -5251,12 +5429,19 @@ func saveAlertState() {
 	persisted := persistedAlertState{
 		SchemaVersion: 1,
 		Targets:       make(map[string]alertTargetState, len(alertState.Targets)),
+		Metrics:       make(map[string]alertTargetState, len(alertState.Metrics)),
 	}
 	for k, v := range alertState.Targets {
 		if strings.TrimSpace(k) == "" {
 			continue
 		}
 		persisted.Targets[k] = v
+	}
+	for k, v := range alertState.Metrics {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		persisted.Metrics[k] = v
 	}
 	alertMu.Unlock()
 	if err := writeJSONFileAtomic(dataFilePath(alertStateFileName), persisted); err != nil {
