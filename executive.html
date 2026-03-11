@@ -23,15 +23,41 @@
             --muted: #d6dee7;
             --border: #707883;
         }
-        body { margin: 0; background: var(--bg); color: var(--text); font-family: "Segoe UI", Tahoma, Arial, sans-serif; }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+        }
         .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
-        .head { background: var(--surface); border: 1px solid var(--border); border-left: 5px solid var(--illumio-orange); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+        .head {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-left: 5px solid var(--illumio-orange);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
         .head h1 { margin: 0; font-size: 1.5rem; }
         .muted { color: var(--muted); font-size: 0.88rem; }
         .actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
-        .btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 7px; padding: 6px 10px; text-decoration: none; cursor: pointer; }
+        .btn {
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text);
+            border-radius: 7px;
+            padding: 6px 10px;
+            text-decoration: none;
+            cursor: pointer;
+        }
         .btn.primary { background: var(--illumio-orange); color: #fff; border-color: var(--illumio-orange); }
-        .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+        .panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
         .panel h2 { margin: 0 0 10px; font-size: 1.05rem; }
         .grid { display: grid; gap: 10px; }
         .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
@@ -46,19 +72,54 @@
         .chart-wrap { height: 260px; }
         .list { margin: 0; padding-left: 18px; }
         .list li { margin: 6px 0; }
-        @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+        .board-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+        .board-col { border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+        .board-col h3 { margin: 0 0 8px; font-size: 0.95rem; }
+        .board-col ul { margin: 0; padding-left: 18px; }
+        .board-col li { margin: 5px 0; font-size: 0.9rem; }
+        .board-only { display: none; }
+        body.board-mode .board-only { display: block; }
+        body.board-mode .non-board { display: none; }
+        @media (max-width: 900px) { .split, .board-grid { grid-template-columns: 1fr; } }
+        @media print {
+            body { background: #fff; color: #111; font-size: 12px; }
+            .wrap { max-width: none; padding: 0; }
+            .actions { display: none !important; }
+            .panel, .head, .kpi, .board-col { box-shadow: none; break-inside: avoid; page-break-inside: avoid; }
+            .chart-wrap { height: 180px; }
+        }
     </style>
 </head>
 <body>
 <div class="wrap">
     <div class="head">
-        <h1>Executive Summary</h1>
+        <h1 id="page-title">Executive Summary</h1>
         <div class="muted" id="meta">Loading...</div>
         <div class="actions">
             <button id="btn-theme" type="button" class="btn">Dark Mode</button>
             <button id="btn-refresh" type="button" class="btn primary">Refresh</button>
+            <a class="btn" id="btn-board" href="/executive?board=1">Board PDF View</a>
             <a class="btn" href="/report?live=1">Trend View</a>
             <a class="btn" href="/">Back to Dashboard</a>
+        </div>
+    </div>
+
+    <div class="panel board-only" id="board-panel">
+        <h2>Board Snapshot</h2>
+        <div class="muted">One-page summary: protection value, risk signals, and immediate actions.</div>
+        <div class="board-grid mt-2">
+            <div class="board-col">
+                <h3>Top 3 Wins</h3>
+                <ul id="board-wins"></ul>
+            </div>
+            <div class="board-col">
+                <h3>Top 3 Risks</h3>
+                <ul id="board-risks"></ul>
+            </div>
+            <div class="board-col">
+                <h3>Top 3 Actions</h3>
+                <ul id="board-actions"></ul>
+            </div>
         </div>
     </div>
 
@@ -72,7 +133,7 @@
         <div class="grid kpi-grid" id="risk-kpis"></div>
     </div>
 
-    <div class="split">
+    <div class="split non-board">
         <div class="panel">
             <h2>Blocked Flow Trend (Daily)</h2>
             <div class="muted">Aggregated across all configured blocked traffic targets.</div>
@@ -93,6 +154,17 @@
     let nextRefreshAt = null;
     let timer = null;
     let lastSnapshotTS = null;
+    let boardMode = false;
+
+    function queryBoard() {
+        const p = new URLSearchParams(window.location.search);
+        return p.get('board') === '1';
+    }
+
+    function queryAutoprint() {
+        const p = new URLSearchParams(window.location.search);
+        return p.get('autoprint') === '1';
+    }
 
     function fmt(n) { return Number(n || 0).toLocaleString(); }
     function dateKey(ts) { return new Date(ts).toISOString().slice(0, 10); }
@@ -144,13 +216,27 @@
     }
 
     function renderChart(series) {
-        const ctx = document.getElementById('blocked-daily-chart').getContext('2d');
+        if (boardMode) return;
+        const canvas = document.getElementById('blocked-daily-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
         if (chart) chart.destroy();
         const labels = (series || []).map((p) => new Date(p.timestamp).toLocaleDateString());
         const values = (series || []).map((p) => Number(p.value || 0));
         chart = new Chart(ctx, {
             type: 'line',
-            data: { labels, datasets: [{ label: 'Blocked Flows (Daily)', data: values, borderColor: 'rgb(250, 102, 36)', backgroundColor: 'rgba(250, 102, 36, 0.15)', tension: 0.22, fill: true, pointRadius: 2 }] },
+            data: {
+                labels,
+                datasets: [{
+                    label: 'Blocked Flows (Daily)',
+                    data: values,
+                    borderColor: 'rgb(250, 102, 36)',
+                    backgroundColor: 'rgba(250, 102, 36, 0.15)',
+                    tension: 0.22,
+                    fill: true,
+                    pointRadius: 2
+                }]
+            },
             options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { beginAtZero: true } } }
         });
         UICommon.makeChartZoomable(chart, 'Blocked Flows (Daily)');
@@ -174,6 +260,42 @@
         return out;
     }
 
+    function setList(id, values, fallback) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = '';
+        const rows = (values && values.length) ? values : [fallback];
+        rows.slice(0, 3).forEach((t) => {
+            const li = document.createElement('li');
+            li.textContent = t;
+            el.appendChild(li);
+        });
+    }
+
+    function buildBoardSnapshot(stats, blockedDaily, targets, actions) {
+        const anomalous = (stats.blocked?.targets || []).filter((t) => t.anomalous);
+        const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
+        const sevenDay = sumLastDays(blockedDaily, 7);
+        const bestTarget = [...(stats.blocked?.targets || [])].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
+        const wins = [
+            `Blocked ${fmt(blocked24h)} flows in the last 24h (protection outcome).`,
+            `Blocked ${fmt(sevenDay)} flows across 7d.`,
+            bestTarget ? `Highest protected target: ${bestTarget.name} (${fmt(bestTarget.count)} in 24h).` : 'Protected target activity available once targets return data.'
+        ];
+        const risks = [];
+        if (anomalous.length) risks.push(`${anomalous.length} blocked-target anomaly trigger(s) active.`);
+        const err = (stats.ven_status?.error || []).length;
+        const warn = (stats.ven_status?.warning || []).length;
+        const tampered = (stats.tampering?.workloads || []).length;
+        if (err > 0) risks.push(`${err} VEN error state workload(s).`);
+        if (warn > 0) risks.push(`${warn} VEN warning state workload(s).`);
+        if (tampered > 0) risks.push(`${tampered} tampered VEN/workload indicator(s) in 24h.`);
+        if (targets.blocked_port_daily_enabled === false) risks.push('Blocked-port daily aggregation is disabled.');
+        setList('board-wins', wins, 'No notable protection wins yet in current window.');
+        setList('board-risks', risks, 'No material risk signals detected in current snapshot.');
+        setList('board-actions', actions, 'No immediate actions required.');
+    }
+
     async function load() {
         const stats = await fetch('/api/stats?ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.json());
         const targets = await fetch('/api/config/targets?ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.json());
@@ -189,10 +311,10 @@
 
         const protection = document.getElementById('protection-kpis');
         const risk = document.getElementById('risk-kpis');
-        const actions = document.getElementById('actions-list');
+        const actionsRoot = document.getElementById('actions-list');
         protection.innerHTML = '';
         risk.innerHTML = '';
-        actions.innerHTML = '';
+        if (actionsRoot) actionsRoot.innerHTML = '';
 
         const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
         const sevenDay = sumLastDays(blockedDaily, 7);
@@ -218,12 +340,20 @@
         addKPI(risk, 'Pipeline Confidence', pipelineBad === 0 ? 'Healthy' : `${pipelineBad} failing stage(s)`, 'Collector/API stage status', pipelineBad === 0 ? 'risk-good' : 'risk-warn');
         addKPI(risk, 'Blocked Port Daily', targets.blocked_port_daily_enabled === false ? 'Disabled' : 'Enabled', 'Controls blocked-port daily aggregation', targets.blocked_port_daily_enabled === false ? 'risk-warn' : 'risk-good');
 
-        actionItems(stats, blockedDaily, tamper?.trend_daily || []).forEach((txt) => {
-            const li = document.createElement('li');
-            li.textContent = txt;
-            actions.appendChild(li);
-        });
+        const actions = actionItems(stats, blockedDaily, tamper?.trend_daily || []);
+        if (actionsRoot) {
+            actions.forEach((txt) => {
+                const li = document.createElement('li');
+                li.textContent = txt;
+                actionsRoot.appendChild(li);
+            });
+        }
+        buildBoardSnapshot(stats, blockedDaily, targets, actions);
         renderChart(blockedDaily);
+
+        if (boardMode && queryAutoprint()) {
+            setTimeout(() => window.print(), 250);
+        }
     }
 
     function updateMeta() {
@@ -237,13 +367,29 @@
     }
 
     function boot() {
+        boardMode = queryBoard();
+        if (boardMode) {
+            document.body.classList.add('board-mode');
+            const title = document.getElementById('page-title');
+            if (title) title.innerText = 'Executive Board Summary';
+            const boardBtn = document.getElementById('btn-board');
+            if (boardBtn) {
+                boardBtn.textContent = 'Print Board PDF';
+                boardBtn.href = '/executive?board=1&autoprint=1';
+            }
+        }
+
         UICommon.applyTheme(THEME_KEY, 'btn-theme');
         document.getElementById('btn-theme').addEventListener('click', () => {
             UICommon.setTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark', THEME_KEY, 'btn-theme');
         });
         document.getElementById('btn-refresh').addEventListener('click', () => load().catch(() => {}));
+
         nextRefreshAt = Date.now() + 300000;
-        load().catch((e) => { document.getElementById('meta').textContent = 'Failed to load executive data: ' + e.message; });
+        load().catch((e) => {
+            document.getElementById('meta').textContent = 'Failed to load executive data: ' + e.message;
+        });
+
         if (timer) clearInterval(timer);
         timer = setInterval(updateMeta, 1000);
         setInterval(() => {

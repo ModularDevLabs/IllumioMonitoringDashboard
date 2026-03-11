@@ -383,6 +383,9 @@ Use `/settings` to manage webhook alerting:
     - protection outcomes (blocked value/volume metrics)
     - risk signals (anomalies, VEN warning/error, tampering, pipeline health)
     - action queue with direct operational guidance
+  - Board-ready mode:
+    - `/executive?board=1` for one-page board layout
+    - `/executive?board=1&autoprint=1` to open print dialog automatically
 
 ## Build and Test
 
@@ -453,3 +456,11 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 - `blocked_daily_history.json`: persisted daily blocked totals per target
 - `blocked_port_daily_history.json`: persisted daily blocked totals per target per `port/proto`
 - `ven_daily_history.json`: persisted daily VEN warning/error max values
+
+## Executive Roadmap
+
+Planned additions after board PDF mode:
+- Period selector for executive KPIs (`7d/30d/90d`)
+- SLO badges (freshness, pipeline success rate, partial/fail rate)
+- Anomaly outcomes panel (triggered vs resolved + MTTR)
+- Business-value callouts by protected environment
