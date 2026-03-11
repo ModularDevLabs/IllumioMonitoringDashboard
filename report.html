@@ -206,7 +206,6 @@
     let chartMode = 'both';
     let chartCountByContainer = {};
     let blockedGroupsMeta = [];
-    const ANOMALY_STATE_KEY = 'illumio_anomaly_outcomes_state_v1';
 
     function esc(s) {
         if (s === null || s === undefined) return '';
@@ -431,29 +430,7 @@
         });
     }
 
-    function loadAnomalyOutcomeState() {
-        try {
-            const raw = localStorage.getItem(ANOMALY_STATE_KEY);
-            if (!raw) return { blockedTargets: [], venWarning: false, venError: false, tampering: false };
-            const parsed = JSON.parse(raw);
-            return {
-                blockedTargets: Array.isArray(parsed.blockedTargets) ? parsed.blockedTargets : [],
-                venWarning: !!parsed.venWarning,
-                venError: !!parsed.venError,
-                tampering: !!parsed.tampering
-            };
-        } catch (_) {
-            return { blockedTargets: [], venWarning: false, venError: false, tampering: false };
-        }
-    }
-
-    function saveAnomalyOutcomeState(state) {
-        try {
-            localStorage.setItem(ANOMALY_STATE_KEY, JSON.stringify(state));
-        } catch (_) {}
-    }
-
-    function renderAnomalyOutcomes(stats, warnDD, errDD, tampDD) {
+    function renderAnomalyOutcomes(stats, warnDD, errDD, tampDD, historyResp) {
         const box = document.getElementById('anomaly-outcomes');
         const notes = document.getElementById('anomaly-notes');
         if (!box) return;
@@ -462,43 +439,35 @@
         const activeBlockedTargets = (stats.blocked?.targets || [])
             .filter((t) => t.anomalous)
             .map((t) => t.name || 'unknown');
-        const current = {
-            blockedTargets: activeBlockedTargets,
-            venWarning: !!warnDD?.anomalous,
-            venError: !!errDD?.anomalous,
-            tampering: !!tampDD?.anomalous
-        };
-        const prev = loadAnomalyOutcomeState();
-
-        const prevSet = new Set(prev.blockedTargets || []);
-        const curSet = new Set(current.blockedTargets || []);
-        const blockedTriggered = [...curSet].filter((n) => !prevSet.has(n));
-        const blockedResolved = [...prevSet].filter((n) => !curSet.has(n));
-
-        const metricTriggered = [];
-        const metricResolved = [];
-        if (current.venWarning && !prev.venWarning) metricTriggered.push('VEN Warnings');
-        if (!current.venWarning && prev.venWarning) metricResolved.push('VEN Warnings');
-        if (current.venError && !prev.venError) metricTriggered.push('VEN Errors');
-        if (!current.venError && prev.venError) metricResolved.push('VEN Errors');
-        if (current.tampering && !prev.tampering) metricTriggered.push('Tampered VENs');
-        if (!current.tampering && prev.tampering) metricResolved.push('Tampered VENs');
-
-        const activeMetricCount = [current.venWarning, current.venError, current.tampering].filter(Boolean).length;
+        const summary = historyResp?.summary || {};
+        const events = Array.isArray(historyResp?.events) ? historyResp.events : [];
+        const periodDays = Number(summary.period_days || dayRange || 30);
+        const triggered24 = Number(summary.triggered_24h || 0);
+        const resolved24 = Number(summary.resolved_24h || 0);
+        const triggeredPeriod = Number(summary.triggered_period || 0);
+        const resolvedPeriod = Number(summary.resolved_period || 0);
+        const activeBlockedServer = Number(summary.active_blocked_targets || activeBlockedTargets.length);
+        const activeMetricCount = [!!warnDD?.anomalous, !!errDD?.anomalous, !!tampDD?.anomalous].filter(Boolean).length;
         addSummaryItem(box, 'Active Blocked Target Anomalies', activeBlockedTargets.length);
         addSummaryItem(box, 'Active Metric Anomalies', activeMetricCount);
-        addSummaryItem(box, 'Newly Triggered (This Refresh)', blockedTriggered.length + metricTriggered.length);
-        addSummaryItem(box, 'Newly Resolved (This Refresh)', blockedResolved.length + metricResolved.length);
-        chartCountByContainer['anomaly-outcomes'] = 4;
+        addSummaryItem(box, 'Active Blocked Targets (Server)', activeBlockedServer);
+        addSummaryItem(box, 'Triggered (24h)', triggered24);
+        addSummaryItem(box, 'Resolved (24h)', resolved24);
+        addSummaryItem(box, `Triggered (${periodDays}d)`, triggeredPeriod);
+        addSummaryItem(box, `Resolved (${periodDays}d)`, resolvedPeriod);
+        chartCountByContainer['anomaly-outcomes'] = 7;
 
-        const noteParts = [];
-        if (blockedTriggered.length) noteParts.push(`Triggered targets: ${blockedTriggered.slice(0, 3).join(', ')}${blockedTriggered.length > 3 ? '...' : ''}`);
-        if (blockedResolved.length) noteParts.push(`Resolved targets: ${blockedResolved.slice(0, 3).join(', ')}${blockedResolved.length > 3 ? '...' : ''}`);
-        if (metricTriggered.length) noteParts.push(`Triggered metric trends: ${metricTriggered.join(', ')}`);
-        if (metricResolved.length) noteParts.push(`Resolved metric trends: ${metricResolved.join(', ')}`);
-        if (notes) notes.textContent = noteParts.length ? noteParts.join(' | ') : 'No anomaly state transitions detected in this refresh.';
-
-        saveAnomalyOutcomeState(current);
+        if (notes) {
+            const recent = events.slice(0, 4).map((ev) => {
+                const ts = ev?.timestamp ? new Date(ev.timestamp).toLocaleString() : 'unknown time';
+                const st = String(ev?.state || 'event').toLowerCase();
+                const name = String(ev?.target_name || 'unknown target');
+                return `${ts}: ${st} ${name}`;
+            });
+            notes.textContent = recent.length
+                ? `Recent transitions: ${recent.join(' | ')}`
+                : 'No persisted anomaly transitions found for the selected period.';
+        }
     }
 
     async function fetchJSON(url) {
@@ -572,12 +541,13 @@
         addSummaryItem(summary, `Anomalous Blocked Targets (${blockedAnomalyPct}% over MA)`, anomalousTargets.length);
         (stats.blocked.targets || []).forEach((t) => addSummaryItem(summary, `Blocked ${t.name} (24h)`, t.count || 0));
 
-        const [warnDD, errDD, tampDD] = await Promise.all([
+        const [warnDD, errDD, tampDD, anomalyHistory] = await Promise.all([
             fetchJSON('/api/drilldown?metric=ven_warning'),
             fetchJSON('/api/drilldown?metric=ven_error'),
-            fetchJSON('/api/drilldown?metric=tampering').catch(() => null)
+            fetchJSON('/api/drilldown?metric=tampering').catch(() => null),
+            fetchJSON(`/api/anomalies/history?days=${dayRange}&limit=200`).catch(() => null)
         ]);
-        renderAnomalyOutcomes(stats, warnDD, errDD, tampDD);
+        renderAnomalyOutcomes(stats, warnDD, errDD, tampDD, anomalyHistory);
         renderLineChart(
             'VEN Warnings (24h, 5m)',
             warnDD.trend_24h || warnDD.trend || [],

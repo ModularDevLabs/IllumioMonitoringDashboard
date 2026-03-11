@@ -35,6 +35,7 @@ const blockedPortHistoryFileName = "blocked_port_daily_history.json"
 const venHistoryFileName = "ven_daily_history.json"
 const rollingStateFileName = "rolling_state.json"
 const alertStateFileName = "alert_state.json"
+const anomalyHistoryFileName = "anomaly_history.jsonl"
 const trafficQueryMaxResults = 200000
 const venQueryMaxDuration = 4 * time.Minute
 const tamperingQueryMaxDuration = 4 * time.Minute
@@ -316,6 +317,22 @@ type persistedAlertState struct {
 	Targets       map[string]alertTargetState `json:"targets,omitempty"`
 }
 
+type anomalyHistoryEvent struct {
+	Timestamp           time.Time `json:"timestamp"`
+	Event               string    `json:"event"`
+	State               string    `json:"state"`
+	Metric              string    `json:"metric"`
+	TargetName          string    `json:"target_name,omitempty"`
+	TargetKind          string    `json:"target_kind,omitempty"`
+	Latest5m            int       `json:"latest_5m,omitempty"`
+	MovingAvg5m         float64   `json:"moving_avg_5m,omitempty"`
+	AnomalyThresholdPct float64   `json:"anomaly_threshold_pct,omitempty"`
+	MAWindowPoints      int       `json:"ma_window_points,omitempty"`
+	AnomalySource       string    `json:"anomaly_source,omitempty"`
+	AnomalyCoveragePct  float64   `json:"anomaly_coverage_pct,omitempty"`
+	Reason              string    `json:"reason,omitempty"`
+}
+
 var (
 	config       Config
 	configMutex  sync.RWMutex
@@ -332,6 +349,8 @@ var (
 	venDaily          = map[string]venDailySnapshot{}
 	alertMu           sync.Mutex
 	alertState        = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}}
+	anomalyHistoryMu  sync.Mutex
+	anomalyHistory    = make([]anomalyHistoryEvent, 0)
 
 	httpClient        = &http.Client{Timeout: 60 * time.Second}
 	dashboardTmpl     = template.Must(template.ParseFS(templateFS, "index.html"))
@@ -354,6 +373,7 @@ func main() {
 	loadVENHistory()
 	loadRollingState()
 	loadAlertState()
+	loadAnomalyHistory()
 
 	initPendingStats()
 	go backgroundCollector()
@@ -377,6 +397,7 @@ func main() {
 	http.HandleFunc("/api/config/alerts", withRequestTiming("api.config.alerts", handleConfigAlerts))
 	http.HandleFunc("/api/refresh", withRequestTiming("api.refresh", handleRefreshNow))
 	http.HandleFunc("/api/webhook/test", withRequestTiming("api.webhook.test", handleWebhookTest))
+	http.HandleFunc("/api/anomalies/history", withRequestTiming("api.anomalies.history", handleAnomalyHistory))
 
 	listenAddr := configuredBindAddress()
 	publicURL := configuredPublicBaseURL()
@@ -1138,10 +1159,87 @@ func handleWebhookTest(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "message": "webhook test sent"})
 }
 
-func processWebhookAlerts(stats DashboardStats) {
-	if !configuredWebhookEnabled() {
+func handleAnomalyHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	days := 7
+	if raw := strings.TrimSpace(r.URL.Query().Get("days")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			days = v
+		}
+	}
+	if days > maxHistoryDays {
+		days = maxHistoryDays
+	}
+	limit := 200
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+
+	now := time.Now().UTC()
+	cutoffPeriod := now.AddDate(0, 0, -days)
+	cutoff24 := now.Add(-24 * time.Hour)
+	events := make([]anomalyHistoryEvent, 0)
+	triggered24 := 0
+	resolved24 := 0
+	triggeredPeriod := 0
+	resolvedPeriod := 0
+	anomalyHistoryMu.Lock()
+	for i := len(anomalyHistory) - 1; i >= 0; i-- {
+		ev := anomalyHistory[i]
+		if ev.Timestamp.Before(cutoffPeriod) {
+			break
+		}
+		if strings.EqualFold(strings.TrimSpace(ev.State), "triggered") {
+			triggeredPeriod++
+			if !ev.Timestamp.Before(cutoff24) {
+				triggered24++
+			}
+		}
+		if strings.EqualFold(strings.TrimSpace(ev.State), "resolved") {
+			resolvedPeriod++
+			if !ev.Timestamp.Before(cutoff24) {
+				resolved24++
+			}
+		}
+		if len(events) < limit {
+			events = append(events, ev)
+		}
+	}
+	anomalyHistoryMu.Unlock()
+
+	activeBlocked := 0
+	alertMu.Lock()
+	for _, st := range alertState.Targets {
+		if st.Active {
+			activeBlocked++
+		}
+	}
+	alertMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"events": events,
+		"summary": map[string]interface{}{
+			"period_days":            days,
+			"triggered_24h":          triggered24,
+			"resolved_24h":           resolved24,
+			"triggered_period":       triggeredPeriod,
+			"resolved_period":        resolvedPeriod,
+			"active_blocked_targets": activeBlocked,
+		},
+	})
+}
+
+func processWebhookAlerts(stats DashboardStats) {
+	webhookEnabled := configuredWebhookEnabled()
 	baseURL := configuredPublicBaseURL()
 	now := time.Now().UTC()
 	targets := coalesceBlockedAlertTargets(stats.Blocked.Targets)
@@ -1163,6 +1261,7 @@ func processWebhookAlerts(stats DashboardStats) {
 		name      string
 		eventType string
 		payload   map[string]interface{}
+		history   anomalyHistoryEvent
 	}
 	events := make([]ev, 0)
 	for _, t := range targets {
@@ -1172,6 +1271,7 @@ func processWebhookAlerts(stats DashboardStats) {
 		}
 		prev := prevByKey[key]
 		if t.Anomalous && !prev.Active {
+			reason := strings.TrimSpace(t.AnomalyReason)
 			events = append(events, ev{
 				key:       key,
 				name:      t.Name,
@@ -1188,8 +1288,23 @@ func processWebhookAlerts(stats DashboardStats) {
 					"ma_window_points":      t.AnomalyWindow,
 					"anomaly_source":        t.AnomalySource,
 					"anomaly_coverage_pct":  t.AnomalyCoverage,
-					"reason":                t.AnomalyReason,
+					"reason":                reason,
 					"dashboard_url":         fmt.Sprintf("%s/details?metric=blocked_target&target=%s", baseURL, url.QueryEscape(t.Name)),
+				},
+				history: anomalyHistoryEvent{
+					Timestamp:           now,
+					Event:               "blocked_target_anomaly",
+					State:               "triggered",
+					Metric:              "blocked_target",
+					TargetName:          t.Name,
+					TargetKind:          t.Kind,
+					Latest5m:            t.Latest5m,
+					MovingAvg5m:         t.MovingAvg5m,
+					AnomalyThresholdPct: t.AnomalyPct,
+					MAWindowPoints:      t.AnomalyWindow,
+					AnomalySource:       t.AnomalySource,
+					AnomalyCoveragePct:  t.AnomalyCoverage,
+					Reason:              reason,
 				},
 			})
 			continue
@@ -1221,14 +1336,32 @@ func processWebhookAlerts(stats DashboardStats) {
 					"reason":                resolveReason,
 					"dashboard_url":         fmt.Sprintf("%s/details?metric=blocked_target&target=%s", baseURL, url.QueryEscape(t.Name)),
 				},
+				history: anomalyHistoryEvent{
+					Timestamp:           now,
+					Event:               "blocked_target_anomaly",
+					State:               "resolved",
+					Metric:              "blocked_target",
+					TargetName:          t.Name,
+					TargetKind:          t.Kind,
+					Latest5m:            t.Latest5m,
+					MovingAvg5m:         t.MovingAvg5m,
+					AnomalyThresholdPct: t.AnomalyPct,
+					MAWindowPoints:      t.AnomalyWindow,
+					AnomalySource:       t.AnomalySource,
+					AnomalyCoveragePct:  t.AnomalyCoverage,
+					Reason:              resolveReason,
+				},
 			})
 		}
 	}
 
 	changed := false
+	historyBatch := make([]anomalyHistoryEvent, 0, len(events))
 	for _, e := range events {
-		if err := sendWebhookEvent(e.payload); err != nil {
-			log.Printf("[WEBHOOK] %s send failed for %s: %v", e.eventType, e.name, err)
+		if webhookEnabled {
+			if err := sendWebhookEvent(e.payload); err != nil {
+				log.Printf("[WEBHOOK] %s send failed for %s: %v", e.eventType, e.name, err)
+			}
 		}
 		alertMu.Lock()
 		prev := alertState.Targets[e.key]
@@ -1238,9 +1371,11 @@ func processWebhookAlerts(stats DashboardStats) {
 		alertState.Targets[e.key] = prev
 		alertMu.Unlock()
 		changed = true
+		historyBatch = append(historyBatch, e.history)
 	}
 	if changed {
 		saveAlertState()
+		appendAnomalyHistoryEvents(historyBatch)
 	}
 }
 
@@ -4662,7 +4797,7 @@ func migrateLegacyDataFiles() {
 	if strings.TrimSpace(dataDir) == "" || dataDir == "." {
 		return
 	}
-	for _, name := range []string{blockedHistoryFileName, blockedPortHistoryFileName, venHistoryFileName, rollingStateFileName, alertStateFileName} {
+	for _, name := range []string{blockedHistoryFileName, blockedPortHistoryFileName, venHistoryFileName, rollingStateFileName, alertStateFileName, anomalyHistoryFileName} {
 		dst := dataFilePath(name)
 		if _, err := os.Stat(dst); err == nil {
 			continue
@@ -4999,6 +5134,116 @@ func loadAlertState() {
 		persisted.Targets = map[string]alertTargetState{}
 	}
 	alertState = persisted
+}
+
+func loadAnomalyHistory() {
+	anomalyHistoryMu.Lock()
+	defer anomalyHistoryMu.Unlock()
+	anomalyHistory = make([]anomalyHistoryEvent, 0)
+
+	file, err := os.Open(dataFilePath(anomalyHistoryFileName))
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var ev anomalyHistoryEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			continue
+		}
+		if ev.Timestamp.IsZero() {
+			continue
+		}
+		anomalyHistory = append(anomalyHistory, ev)
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("[ANOMALY] failed reading history: %v", err)
+	}
+	pruneAnomalyHistoryLocked(time.Now().UTC(), configuredHistoryDays())
+	if err := saveAnomalyHistoryLocked(); err != nil {
+		log.Printf("[ANOMALY] failed saving pruned history: %v", err)
+	}
+}
+
+func pruneAnomalyHistoryLocked(nowUTC time.Time, keepDays int) {
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	if keepDays > maxHistoryDays {
+		keepDays = maxHistoryDays
+	}
+	cutoff := nowUTC.AddDate(0, 0, -keepDays)
+	keep := anomalyHistory[:0]
+	for _, ev := range anomalyHistory {
+		if ev.Timestamp.Before(cutoff) {
+			continue
+		}
+		keep = append(keep, ev)
+	}
+	anomalyHistory = keep
+	sort.Slice(anomalyHistory, func(i, j int) bool {
+		return anomalyHistory[i].Timestamp.Before(anomalyHistory[j].Timestamp)
+	})
+}
+
+func saveAnomalyHistoryLocked() error {
+	path := dataFilePath(anomalyHistoryFileName)
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(f)
+	for _, ev := range anomalyHistory {
+		if ev.Timestamp.IsZero() {
+			continue
+		}
+		if err := enc.Encode(ev); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func appendAnomalyHistoryEvents(events []anomalyHistoryEvent) {
+	if len(events) == 0 {
+		return
+	}
+	keepDays := configuredHistoryDays()
+	nowUTC := time.Now().UTC()
+	anomalyHistoryMu.Lock()
+	for _, ev := range events {
+		if ev.Timestamp.IsZero() {
+			ev.Timestamp = nowUTC
+		}
+		ev.Event = strings.TrimSpace(ev.Event)
+		ev.State = strings.ToLower(strings.TrimSpace(ev.State))
+		ev.Metric = strings.TrimSpace(ev.Metric)
+		ev.TargetName = strings.TrimSpace(ev.TargetName)
+		ev.TargetKind = strings.TrimSpace(ev.TargetKind)
+		ev.Reason = strings.TrimSpace(ev.Reason)
+		anomalyHistory = append(anomalyHistory, ev)
+	}
+	pruneAnomalyHistoryLocked(nowUTC, keepDays)
+	if err := saveAnomalyHistoryLocked(); err != nil {
+		log.Printf("[ANOMALY] failed saving history: %v", err)
+	}
+	anomalyHistoryMu.Unlock()
 }
 
 func saveAlertState() {
