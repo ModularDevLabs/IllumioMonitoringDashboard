@@ -531,8 +531,8 @@
             const statuses = [stats?.workloads?.status, stats?.ven_status?.status, stats?.tampering?.status, stats?.blocked?.status];
             const failed = statuses.filter((s) => !(s && s.success)).length;
             const partial = stats?.blocked?.partial ? 1 : 0;
-            const ts = UICommon.parseTS(stats?.timestamp);
-            const staleSecs = ts ? Math.max(0, Math.floor((Date.now() - ts.getTime()) / 1000)) : 999999;
+            const tsMs = UICommon.parseTS(stats?.timestamp);
+            const staleSecs = tsMs ? Math.max(0, Math.floor((Date.now() - tsMs) / 1000)) : 999999;
             let label = 'LOW';
             let cls = 'confidence-low';
             let title = `failed stages=${failed}, partial stages=${partial}, staleness=${staleSecs}s`;
