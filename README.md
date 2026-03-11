@@ -30,7 +30,8 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Configurable source exclusions (default `LG-SCANNERS`)
   - Async traffic flow query support
   - Pacing/staggering of per-target blocked queries to reduce burst pressure on API rate limits
-  - Daily blocked count + blocked port snapshots reuse shared async query results when both datasets are missing for the same target/day
+  - 5-minute blocked queries can reuse shared async results for both count and port/proto aggregation
+  - Daily blocked history is accumulated from 5-minute deltas (counts and ports), reducing separate daily snapshot query pressure
   - Counts combine blocked source + blocked destination queries per target
   - Uses `max_results: 200000` for blocked traffic queries
   - Partial-success handling (green + warning badge)

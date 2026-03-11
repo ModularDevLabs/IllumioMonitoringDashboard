@@ -340,6 +340,7 @@ type blockedTargetCycleResult struct {
 	Index          int
 	Result         BlockedTargetResult
 	CurrentCount   int
+	CurrentPorts   map[string]int
 	BaselineCount  int
 	NewlyBaselined bool
 	Success        bool
@@ -2884,11 +2885,13 @@ func getIllumioStats() DashboardStats {
 		warningParts = append(warningParts, exclusionWarn)
 	}
 	blockedDeltaStart := blockedDeltaWindowStart(nowUTC)
-	blockedResults, blockedCurrent, blockedBaseline, successCount, pacedWarnings := collectBlockedTargetsWithPacing(
+	portDailyEnabled := configuredBlockedPortDailyEnabled()
+	blockedResults, blockedCurrent, blockedCurrentPorts, blockedBaseline, successCount, pacedWarnings := collectBlockedTargetsWithPacing(
 		baseURL,
 		targets,
 		nowUTC,
 		baseline,
+		portDailyEnabled,
 		blockedDeltaStart,
 		excludedHRefs,
 	)
@@ -3004,7 +3007,7 @@ func getIllumioStats() DashboardStats {
 	} else {
 		stats.Blocked.Status = FetchStatus{Success: true}
 	}
-	collectDailyBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
+	accumulateBlockedHistoryFromCycle(nowUTC, blockedCurrent, blockedCurrentPorts, portDailyEnabled)
 
 	return stats
 }
@@ -3952,6 +3955,58 @@ func normalizeCoveragePct(raw float64, fallback float64) float64 {
 	return v
 }
 
+func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[string]int, blockedPorts map[string]map[string]int, portDailyEnabled bool) {
+	if len(blockedCounts) == 0 && (!portDailyEnabled || len(blockedPorts) == 0) {
+		pruneBlockedHistory(nowUTC, configuredHistoryDays())
+		return
+	}
+	loc := configuredDayLocation()
+	dayKey := localDayStart(nowUTC, loc).Format("2006-01-02")
+	changedCounts := false
+	changedPorts := false
+	historyMu.Lock()
+	if len(blockedCounts) > 0 {
+		if blockedDaily[dayKey] == nil {
+			blockedDaily[dayKey] = map[string]int{}
+		}
+		for target, n := range blockedCounts {
+			if strings.TrimSpace(target) == "" || n <= 0 {
+				continue
+			}
+			blockedDaily[dayKey][target] += n
+			changedCounts = true
+		}
+	}
+	if portDailyEnabled && len(blockedPorts) > 0 {
+		if blockedPortsDaily[dayKey] == nil {
+			blockedPortsDaily[dayKey] = map[string]map[string]int{}
+		}
+		for target, portMap := range blockedPorts {
+			if strings.TrimSpace(target) == "" || len(portMap) == 0 {
+				continue
+			}
+			if blockedPortsDaily[dayKey][target] == nil {
+				blockedPortsDaily[dayKey][target] = map[string]int{}
+			}
+			for portKey, n := range portMap {
+				if strings.TrimSpace(portKey) == "" || n <= 0 {
+					continue
+				}
+				blockedPortsDaily[dayKey][target][portKey] += n
+				changedPorts = true
+			}
+		}
+	}
+	historyMu.Unlock()
+	pruneBlockedHistory(nowUTC, configuredHistoryDays())
+	if changedCounts {
+		saveBlockedHistory()
+	}
+	if changedPorts {
+		saveBlockedPortHistory()
+	}
+}
+
 func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) {
 	if len(targets) == 0 {
 		return
@@ -4174,6 +4229,7 @@ func collectBlockedTargetPaced(
 	target TrafficTarget,
 	nowUTC time.Time,
 	baseline bool,
+	portDailyEnabled bool,
 	blockedDeltaStart time.Time,
 	sourceExcludeHRefs []string,
 ) blockedTargetCycleResult {
@@ -4189,7 +4245,13 @@ func collectBlockedTargetPaced(
 		res.BaselineCount = qRes.Count
 		res.NewlyBaselined = err == nil
 	} else {
-		qRes, err = getBlockedCountForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+		if portDailyEnabled {
+			var portCounts map[string]int
+			qRes, portCounts, err = getBlockedCountAndPortCountsForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+			res.CurrentPorts = portCounts
+		} else {
+			qRes, err = getBlockedCountForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+		}
 		res.CurrentCount = qRes.Count
 	}
 	res.Result.Count = qRes.Count
@@ -4211,11 +4273,12 @@ func collectBlockedTargetsWithPacing(
 	targets []TrafficTarget,
 	nowUTC time.Time,
 	baseline bool,
+	portDailyEnabled bool,
 	blockedDeltaStart time.Time,
 	sourceExcludeHRefs []string,
-) ([]BlockedTargetResult, map[string]int, map[string]int, int, []string) {
+) ([]BlockedTargetResult, map[string]int, map[string]map[string]int, map[string]int, int, []string) {
 	if len(targets) == 0 {
-		return nil, map[string]int{}, map[string]int{}, 0, nil
+		return nil, map[string]int{}, map[string]map[string]int{}, map[string]int{}, 0, nil
 	}
 	workers := blockedTargetWorkerCount
 	if workers < 1 {
@@ -4236,7 +4299,7 @@ func collectBlockedTargetsWithPacing(
 				if delay > 0 {
 					time.Sleep(delay)
 				}
-				out <- collectBlockedTargetPaced(idx, baseURL, targets[idx], nowUTC, baseline, blockedDeltaStart, sourceExcludeHRefs)
+				out <- collectBlockedTargetPaced(idx, baseURL, targets[idx], nowUTC, baseline, portDailyEnabled, blockedDeltaStart, sourceExcludeHRefs)
 			}
 		}()
 	}
@@ -4249,6 +4312,7 @@ func collectBlockedTargetsWithPacing(
 
 	ordered := make([]BlockedTargetResult, len(targets))
 	blockedCurrent := make(map[string]int, len(targets))
+	blockedCurrentPorts := make(map[string]map[string]int, len(targets))
 	blockedBaseline := make(map[string]int)
 	warningParts := make([]string, 0)
 	successCount := 0
@@ -4266,9 +4330,12 @@ func collectBlockedTargetsWithPacing(
 			blockedBaseline[r.Result.Name] = r.BaselineCount
 		} else {
 			blockedCurrent[r.Result.Name] = r.CurrentCount
+			if len(r.CurrentPorts) > 0 {
+				blockedCurrentPorts[r.Result.Name] = r.CurrentPorts
+			}
 		}
 	}
-	return ordered, blockedCurrent, blockedBaseline, successCount, warningParts
+	return ordered, blockedCurrent, blockedCurrentPorts, blockedBaseline, successCount, warningParts
 }
 
 func getBlockedPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (map[string]int, error) {
