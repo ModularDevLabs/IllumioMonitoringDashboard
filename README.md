@@ -352,6 +352,9 @@ Use `/settings` to manage webhook alerting:
 - `GET /api/drilldown?metric=<metric>`:
   - Drilldown list for a metric
   - metrics: `ven_warning`, `ven_error`, `mode_idle`, `mode_visibility_only`, `mode_selective`, `mode_full`, `mode_unmanaged`, `tampering`
+  - for `metric=blocked_target`, optional flags:
+    - `include_ports=1`: include persisted daily blocked port/proto aggregates
+    - `include_live_ports=1`: include today-so-far live blocked port snapshot (heavier query)
 - `GET /api/export/drilldown.csv?metric=<metric>[&target=<target>]`:
   - Export drilldown list + trend points (`24h (5m)` and `Daily` when available) to CSV
 - `GET /api/config/targets`:

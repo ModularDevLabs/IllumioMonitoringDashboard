@@ -449,6 +449,7 @@
             }
             let endpoint = `/api/drilldown?metric=${encodeURIComponent(metric)}`;
             if (target) endpoint += `&target=${encodeURIComponent(target)}`;
+            if (metric === 'blocked_target') endpoint += '&include_ports=1&include_live_ports=1';
             const r = await fetch(endpoint);
             if (!r.ok) {
                 document.getElementById('title').innerText = `Failed to load metric (${r.status})`;

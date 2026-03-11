@@ -450,6 +450,8 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target := strings.TrimSpace(r.URL.Query().Get("target"))
+	includePorts := parseBoolQuery(r.URL.Query().Get("include_ports"))
+	includeLivePorts := parseBoolQuery(r.URL.Query().Get("include_live_ports"))
 
 	statsMutex.RLock()
 	snapshot := currentStats
@@ -570,32 +572,34 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.Trend24h = blockedTrendSeries(target)
 		resp.TrendDaily = blockedDailyTrendSeries(target, configuredHistoryDays())
 		resp.BlockedPortDailyEnabled = configuredBlockedPortDailyEnabled()
-		if resp.BlockedPortDailyEnabled {
+		if resp.BlockedPortDailyEnabled && includePorts {
 			resp.BlockedPortsDaily = blockedPortDailySeries(target, configuredHistoryDays())
-			configMutex.RLock()
-			pceURL := config.PCEURL
-			orgID := config.OrgID
-			configMutex.RUnlock()
-			baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), orgID)
-			excludedHRefs, exclusionWarn := resolveSourceExclusionHRefs(baseURL, configuredSourceExclusions())
-			if exclusionWarn != "" {
-				log.Printf("[DRILLDOWN] source exclusion warning: %s", exclusionWarn)
-			}
-			loc := configuredDayLocation()
-			now := time.Now()
-			todayStart := localDayStart(now, loc)
-			targetCfg, ok := configuredTrafficTargetByName(target)
-			if !ok {
-				targetCfg = TrafficTarget{Name: target, Kind: "auto"}
-			}
-			todayPorts, err := getBlockedPortCountsForTargetWindow(baseURL, targetCfg, todayStart.UTC(), now.UTC(), excludedHRefs)
-			if err != nil {
-				log.Printf("[DRILLDOWN] blocked ports today-so-far query failed for %s: %v", target, err)
-			} else if len(todayPorts) > 0 {
-				resp.BlockedPortsDaily = append(resp.BlockedPortsDaily, BlockedPortDay{
-					Timestamp: now.UTC(),
-					Ports:     portCountMapToSortedSlice(todayPorts),
-				})
+			if includeLivePorts {
+				configMutex.RLock()
+				pceURL := config.PCEURL
+				orgID := config.OrgID
+				configMutex.RUnlock()
+				baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), orgID)
+				excludedHRefs, exclusionWarn := resolveSourceExclusionHRefs(baseURL, configuredSourceExclusions())
+				if exclusionWarn != "" {
+					log.Printf("[DRILLDOWN] source exclusion warning: %s", exclusionWarn)
+				}
+				loc := configuredDayLocation()
+				now := time.Now()
+				todayStart := localDayStart(now, loc)
+				targetCfg, ok := configuredTrafficTargetByName(target)
+				if !ok {
+					targetCfg = TrafficTarget{Name: target, Kind: "auto"}
+				}
+				todayPorts, err := getBlockedPortCountsForTargetWindow(baseURL, targetCfg, todayStart.UTC(), now.UTC(), excludedHRefs)
+				if err != nil {
+					log.Printf("[DRILLDOWN] blocked ports today-so-far query failed for %s: %v", target, err)
+				} else if len(todayPorts) > 0 {
+					resp.BlockedPortsDaily = append(resp.BlockedPortsDaily, BlockedPortDay{
+						Timestamp: now.UTC(),
+						Ports:     portCountMapToSortedSlice(todayPorts),
+					})
+				}
 			}
 		}
 		resp.BlockedMAWindow = window
@@ -1608,6 +1612,15 @@ func enforcementModeFromMetric(metric string) string {
 		return "unmanaged"
 	default:
 		return ""
+	}
+}
+
+func parseBoolQuery(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 
