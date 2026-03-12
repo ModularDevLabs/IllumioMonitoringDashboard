@@ -59,6 +59,7 @@ const maxHistoryDays = 3650
 const slowRequestLogThreshold = 200 * time.Millisecond
 const blockedTargetWorkerCount = 4
 const blockedTargetStartStagger = 150 * time.Millisecond
+const perfSampleWindowSize = 256
 
 type Config struct {
 	PCEURL                   string          `json:"pce_url"`
@@ -98,6 +99,7 @@ type Config struct {
 	WebhookSlackIconEmoji    string          `json:"webhook_slack_icon_emoji,omitempty"`
 	WebhookTeamsTitlePrefix  string          `json:"webhook_teams_title_prefix,omitempty"`
 	BlockedPortStoreBackend  string          `json:"blocked_port_store_backend,omitempty"`
+	DiagnosticsEnabled       bool            `json:"diagnostics_enabled,omitempty"`
 }
 
 type TrafficTarget struct {
@@ -385,6 +387,8 @@ var (
 	executivePageTmpl = template.Must(template.ParseFS(templateFS, "executive.html"))
 	dataDir           string
 	metricsDB         *sql.DB
+	perfMu            sync.Mutex
+	perfByRoute       = map[string][]float64{}
 )
 
 func main() {
@@ -425,6 +429,7 @@ func main() {
 	http.HandleFunc("/api/refresh", withRequestTiming("api.refresh", withTrustedOrigin("api.refresh", handleRefreshNow)))
 	http.HandleFunc("/api/webhook/test", withRequestTiming("api.webhook.test", withTrustedOrigin("api.webhook.test", handleWebhookTest)))
 	http.HandleFunc("/api/anomalies/history", withRequestTiming("api.anomalies.history", handleAnomalyHistory))
+	http.HandleFunc("/api/diagnostics/perf", withRequestTiming("api.diagnostics.perf", handleDiagnosticsPerf))
 
 	listenAddr := configuredBindAddress()
 	publicURL := configuredPublicBaseURL()
@@ -796,6 +801,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		bindAddress := configuredBindAddressLocked()
 		publicBaseURL := configuredPublicBaseURLLocked()
 		blockedPortStoreBackend := configuredBlockedPortStoreBackendLocked()
+		diagnosticsEnabled := configuredDiagnosticsEnabledLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := config.WebhookEnabled && webhookURL != ""
 		webhookProvider := configuredWebhookProviderLocked()
@@ -838,6 +844,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"bind_address":                bindAddress,
 			"public_base_url":             publicBaseURL,
 			"blocked_port_store_backend":  blockedPortStoreBackend,
+			"diagnostics_enabled":         diagnosticsEnabled,
 			"webhook_url":                 webhookURL,
 			"webhook_enabled":             webhookEnabled,
 			"webhook_provider":            webhookProvider,
@@ -873,6 +880,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			BindAddress              *string         `json:"bind_address"`
 			PublicBaseURL            *string         `json:"public_base_url"`
 			BlockedPortStoreBackend  *string         `json:"blocked_port_store_backend"`
+			DiagnosticsEnabled       *bool           `json:"diagnostics_enabled"`
 			WebhookURL               *string         `json:"webhook_url"`
 			WebhookEnabled           *bool           `json:"webhook_enabled"`
 			WebhookProvider          *string         `json:"webhook_provider"`
@@ -966,6 +974,9 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		if req.BlockedPortStoreBackend != nil {
 			config.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(*req.BlockedPortStoreBackend)
 		}
+		if req.DiagnosticsEnabled != nil {
+			config.DiagnosticsEnabled = *req.DiagnosticsEnabled
+		}
 		if req.WebhookURL != nil {
 			config.WebhookURL = strings.TrimSpace(*req.WebhookURL)
 		}
@@ -1011,6 +1022,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		bindAddress := configuredBindAddressLocked()
 		publicBaseURL := configuredPublicBaseURLLocked()
 		blockedPortStoreBackend := configuredBlockedPortStoreBackendLocked()
+		diagnosticsEnabled := configuredDiagnosticsEnabledLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := configuredWebhookEnabledLocked()
 		webhookProvider := configuredWebhookProviderLocked()
@@ -1052,6 +1064,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"bind_address":                bindAddress,
 			"public_base_url":             publicBaseURL,
 			"blocked_port_store_backend":  blockedPortStoreBackend,
+			"diagnostics_enabled":         diagnosticsEnabled,
 			"webhook_url":                 webhookURL,
 			"webhook_enabled":             webhookEnabled,
 			"webhook_provider":            webhookProvider,
@@ -1168,6 +1181,52 @@ func handleWebhookTest(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "message": "webhook test sent"})
+}
+
+func handleDiagnosticsPerf(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !configuredDiagnosticsEnabled() {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	resp := map[string]interface{}{
+		"enabled":   true,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"backend":   configuredBlockedPortStoreBackend(),
+	}
+
+	perfMu.Lock()
+	routePerf := make(map[string]interface{}, len(perfByRoute))
+	for route, samples := range perfByRoute {
+		routePerf[route] = perfSummary(samples)
+	}
+	perfMu.Unlock()
+	resp["routes"] = routePerf
+
+	if strings.EqualFold(configuredBlockedPortStoreBackend(), "sqlite") {
+		dbPath := dataFilePath(metricsDBFileName)
+		sqliteInfo := map[string]interface{}{"path": dbPath}
+		if st, err := os.Stat(dbPath); err == nil {
+			sqliteInfo["size_bytes"] = st.Size()
+		}
+		rowCounts := map[string]int64{}
+		if metricsDB != nil {
+			for _, tbl := range []string{"kv_state", "blocked_ports_daily", "blocked_ports_5m"} {
+				var n int64
+				if err := metricsDB.QueryRow(`SELECT COUNT(1) FROM ` + tbl).Scan(&n); err == nil {
+					rowCounts[tbl] = n
+				}
+			}
+		}
+		sqliteInfo["row_counts"] = rowCounts
+		resp["sqlite"] = sqliteInfo
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func handleAnomalyHistory(w http.ResponseWriter, r *http.Request) {
@@ -1974,6 +2033,7 @@ func withRequestTiming(name string, h http.HandlerFunc) http.HandlerFunc {
 			sw.status = http.StatusOK
 		}
 		dur := time.Since(start)
+		recordPerfSample(name, dur)
 		if dur >= slowRequestLogThreshold || sw.status >= http.StatusBadRequest {
 			route := r.URL.Path
 			if q := strings.TrimSpace(r.URL.RawQuery); q != "" {
@@ -1982,6 +2042,60 @@ func withRequestTiming(name string, h http.HandlerFunc) http.HandlerFunc {
 			log.Printf("[HTTP] route=%s name=%s method=%s status=%d dur=%s bytes=%d", route, name, r.Method, sw.status, dur.Round(time.Millisecond), sw.bytes)
 		}
 	}
+}
+
+func recordPerfSample(name string, dur time.Duration) {
+	ms := float64(dur.Milliseconds())
+	perfMu.Lock()
+	defer perfMu.Unlock()
+	samples := perfByRoute[name]
+	samples = append(samples, ms)
+	if len(samples) > perfSampleWindowSize {
+		samples = samples[len(samples)-perfSampleWindowSize:]
+	}
+	perfByRoute[name] = samples
+}
+
+func perfSummary(samples []float64) map[string]interface{} {
+	if len(samples) == 0 {
+		return map[string]interface{}{
+			"samples": 0,
+		}
+	}
+	cp := append([]float64(nil), samples...)
+	sort.Float64s(cp)
+	sum := 0.0
+	for _, v := range cp {
+		sum += v
+	}
+	pct := func(p float64) float64 {
+		if len(cp) == 1 {
+			return cp[0]
+		}
+		idx := int(math.Ceil((p/100.0)*float64(len(cp)))) - 1
+		if idx < 0 {
+			idx = 0
+		}
+		if idx >= len(cp) {
+			idx = len(cp) - 1
+		}
+		return cp[idx]
+	}
+	return map[string]interface{}{
+		"samples": len(cp),
+		"avg_ms":  roundFloat(sum/float64(len(cp)), 2),
+		"p50_ms":  roundFloat(pct(50), 2),
+		"p95_ms":  roundFloat(pct(95), 2),
+		"max_ms":  roundFloat(cp[len(cp)-1], 2),
+	}
+}
+
+func roundFloat(v float64, precision int) float64 {
+	if precision <= 0 {
+		return math.Round(v)
+	}
+	factor := math.Pow10(precision)
+	return math.Round(v*factor) / factor
 }
 
 func withTrustedOrigin(name string, h http.HandlerFunc) http.HandlerFunc {
@@ -3633,6 +3747,16 @@ func configuredBlockedPortStoreBackend() string {
 
 func configuredBlockedPortStoreBackendLocked() string {
 	return normalizeBlockedPortStoreBackend(config.BlockedPortStoreBackend)
+}
+
+func configuredDiagnosticsEnabled() bool {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredDiagnosticsEnabledLocked()
+}
+
+func configuredDiagnosticsEnabledLocked() bool {
+	return config.DiagnosticsEnabled
 }
 
 func configuredBlockedMAWindow() int {

@@ -9,6 +9,7 @@
   "history_days": 365,
   "blocked_port_daily_enabled": true,
   "blocked_port_store_backend": "sqlite",
+  "diagnostics_enabled": false,
   "blocked_ma_window": 12,
   "blocked_anomaly_pct": 50,
   "blocked_anomaly_baseline": "5m",
