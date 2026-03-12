@@ -195,6 +195,10 @@
                         <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-min-pct">VEN Baseline Min Coverage (%)</label>
                         <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="ven-anomaly-min-pct" value="70">
                     </div>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <button class="btn btn-outline-primary btn-sm" id="btn-save-ven" type="button">Save VEN Settings</button>
+                    </div>
+                    <div class="small mt-2" id="msg-ven"></div>
                 </details>
 
                 <details class="section-toggle">
@@ -231,6 +235,10 @@
                         <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-daily-anomaly-pct" value="50">
                         <div class="small text-muted mt-1">Used when Tampering baseline source is set to Daily.</div>
                     </div>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <button class="btn btn-outline-primary btn-sm" id="btn-save-tampering" type="button">Save Tampering Settings</button>
+                    </div>
+                    <div class="small mt-2" id="msg-tampering"></div>
                 </details>
         </div>
 
@@ -463,20 +471,33 @@
             renderTargetEditor();
         }
 
-        async function saveTrafficSettings() {
-            const payload = buildTrafficDataPayload('msg-traffic');
-            if (!payload) return;
+        async function saveSettingsWithMessage(messageId, successText) {
+            const payload = buildTrafficDataPayload(messageId);
+            if (!payload) return false;
             const r = await fetch('/api/config/targets', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
             if (!r.ok) {
-                showMsg('msg-traffic', `Save failed (${r.status})`, 'danger');
-                return;
+                showMsg(messageId, `Save failed (${r.status})`, 'danger');
+                return false;
             }
-            showMsg('msg-traffic', 'Traffic/data settings saved.', 'success');
+            showMsg(messageId, successText, 'success');
             await loadTrafficSettings();
+            return true;
+        }
+
+        async function saveTrafficSettings() {
+            await saveSettingsWithMessage('msg-traffic', 'Traffic target settings saved.');
+        }
+
+        async function saveVenSettings() {
+            await saveSettingsWithMessage('msg-ven', 'VEN warning/error settings saved.');
+        }
+
+        async function saveTamperingSettings() {
+            await saveSettingsWithMessage('msg-tampering', 'Tampering settings saved.');
         }
 
         function buildTrafficDataPayload(messageId) {
@@ -671,6 +692,8 @@
             renderTargetEditor();
         });
         document.getElementById('btn-save-traffic').addEventListener('click', saveTrafficSettings);
+        document.getElementById('btn-save-ven').addEventListener('click', saveVenSettings);
+        document.getElementById('btn-save-tampering').addEventListener('click', saveTamperingSettings);
         document.getElementById('btn-save-hosting').addEventListener('click', saveHostingSettings);
         document.getElementById('btn-refresh-now').addEventListener('click', refreshNow);
         document.getElementById('btn-save-alerts').addEventListener('click', saveAlertSettings);
