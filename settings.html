@@ -271,6 +271,35 @@
 
         <div class="card p-3 mt-3">
             <details class="section-toggle" open>
+                <summary>API Credentials</summary>
+                <p class="text-muted small mb-3 mt-1">Update PCE URL/API credentials without restarting. New requests use saved values immediately.</p>
+
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-pce-url">PCE URL</label>
+                    <input type="text" class="form-control form-control-sm" id="cred-pce-url" placeholder="https://your-pce.example.com:8443">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-org-id">Org ID</label>
+                    <input type="text" class="form-control form-control-sm" id="cred-org-id" placeholder="1">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-api-key">API Key ID</label>
+                    <input type="text" class="form-control form-control-sm" id="cred-api-key" placeholder="api_key_id">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-api-secret">API Secret</label>
+                    <input type="password" class="form-control form-control-sm" id="cred-api-secret" placeholder="Leave blank to keep current secret">
+                    <div class="small text-muted mt-1" id="cred-secret-status"></div>
+                </div>
+                <div class="d-flex flex-wrap gap-2 mt-2">
+                    <button class="btn btn-outline-primary btn-sm" id="btn-save-credentials" type="button">Save Credentials</button>
+                </div>
+                <div class="small mt-2" id="msg-credentials"></div>
+            </details>
+        </div>
+
+        <div class="card p-3 mt-3">
+            <details class="section-toggle" open>
                 <summary>Alerting Settings</summary>
                 <p class="text-muted small mb-3 mt-1">Configure webhook notifications for anomaly triggered/resolved events.</p>
 
@@ -355,6 +384,10 @@
         let bindAddress = ':18443';
         let publicBaseURL = 'http://localhost:18443';
         let timezone = '';
+        let credPCEURL = '';
+        let credOrgID = '1';
+        let credAPIKey = '';
+        let credAPISecretSet = false;
 
         function showMsg(id, text, type = 'muted') {
             const el = document.getElementById(id);
@@ -650,6 +683,54 @@
             updateProviderSections();
         }
 
+        async function loadCredentialSettings() {
+            const r = await fetch('/api/config/credentials');
+            if (!r.ok) throw new Error(`Load credential settings failed (${r.status})`);
+            const d = await r.json();
+            credPCEURL = String(d.pce_url || '').trim();
+            credOrgID = String(d.org_id || '1').trim() || '1';
+            credAPIKey = String(d.api_key || '').trim();
+            credAPISecretSet = d.api_secret_set === true;
+            document.getElementById('cred-pce-url').value = credPCEURL;
+            document.getElementById('cred-org-id').value = credOrgID;
+            document.getElementById('cred-api-key').value = credAPIKey;
+            document.getElementById('cred-api-secret').value = '';
+            document.getElementById('cred-secret-status').innerText = `Secret set: ${credAPISecretSet ? 'Yes' : 'No'}`;
+        }
+
+        async function saveCredentialSettings() {
+            const pceURL = String(document.getElementById('cred-pce-url').value || '').trim();
+            const orgID = String(document.getElementById('cred-org-id').value || '').trim() || '1';
+            const apiKey = String(document.getElementById('cred-api-key').value || '').trim();
+            const apiSecret = String(document.getElementById('cred-api-secret').value || '').trim();
+            if (!pceURL) {
+                showMsg('msg-credentials', 'PCE URL is required.', 'danger');
+                return;
+            }
+            if (!apiKey) {
+                showMsg('msg-credentials', 'API Key is required.', 'danger');
+                return;
+            }
+            const body = {
+                pce_url: pceURL,
+                org_id: orgID,
+                api_key: apiKey
+            };
+            if (apiSecret) body.api_secret = apiSecret;
+            const r = await fetch('/api/config/credentials', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!r.ok) {
+                const txt = await r.text();
+                showMsg('msg-credentials', `Save failed (${r.status}): ${txt || 'unknown error'}`, 'danger');
+                return;
+            }
+            showMsg('msg-credentials', 'Credentials saved. New API requests will use updated values immediately.', 'success');
+            await loadCredentialSettings();
+        }
+
         async function saveAlertSettings() {
             const body = {
                 webhook_enabled: document.getElementById('webhook-enabled').value === 'true',
@@ -695,13 +776,15 @@
         document.getElementById('btn-save-ven').addEventListener('click', saveVenSettings);
         document.getElementById('btn-save-tampering').addEventListener('click', saveTamperingSettings);
         document.getElementById('btn-save-hosting').addEventListener('click', saveHostingSettings);
+        document.getElementById('btn-save-credentials').addEventListener('click', saveCredentialSettings);
         document.getElementById('btn-refresh-now').addEventListener('click', refreshNow);
         document.getElementById('btn-save-alerts').addEventListener('click', saveAlertSettings);
         document.getElementById('btn-test-webhook').addEventListener('click', testWebhook);
 
-        Promise.all([loadTrafficSettings(), loadAlertSettings()]).catch((e) => {
+        Promise.all([loadTrafficSettings(), loadAlertSettings(), loadCredentialSettings()]).catch((e) => {
             showMsg('msg-traffic', e.message, 'danger');
             showMsg('msg-alerts', e.message, 'danger');
+            showMsg('msg-credentials', e.message, 'danger');
         });
     </script>
 </body>

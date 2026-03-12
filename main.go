@@ -361,11 +361,12 @@ type blockedTargetCycleResult struct {
 }
 
 var (
-	config       Config
-	configMutex  sync.RWMutex
-	currentStats DashboardStats
-	statsMutex   sync.RWMutex
-	isRefreshing atomic.Bool
+	config        Config
+	configMutex   sync.RWMutex
+	configModTime time.Time
+	currentStats  DashboardStats
+	statsMutex    sync.RWMutex
+	isRefreshing  atomic.Bool
 
 	rollingMu         sync.Mutex
 	rollingCache      rollingState
@@ -426,6 +427,7 @@ func main() {
 	http.HandleFunc("/api/export/report.csv", withRequestTiming("api.export.report_csv", handleExportReportCSV))
 	http.HandleFunc("/api/debug/ven-status", withRequestTiming("api.debug.ven_status", handleDebugVENStatus))
 	http.HandleFunc("/api/config/targets", withRequestTiming("api.config.targets", withTrustedOrigin("api.config.targets", handleConfigTargets)))
+	http.HandleFunc("/api/config/credentials", withRequestTiming("api.config.credentials", withTrustedOrigin("api.config.credentials", handleConfigCredentials)))
 	http.HandleFunc("/api/config/alerts", withRequestTiming("api.config.alerts", withTrustedOrigin("api.config.alerts", handleConfigAlerts)))
 	http.HandleFunc("/api/refresh", withRequestTiming("api.refresh", withTrustedOrigin("api.refresh", handleRefreshNow)))
 	http.HandleFunc("/api/webhook/test", withRequestTiming("api.webhook.test", withTrustedOrigin("api.webhook.test", handleWebhookTest)))
@@ -1088,6 +1090,88 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"webhook_slack_icon_emoji":    slackIconEmoji,
 			"webhook_teams_title_prefix":  teamsTitlePrefix,
 			"message":                     "Saved. Click Refresh Now to apply immediately.",
+		})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func handleConfigCredentials(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		configMutex.RLock()
+		pceURL := strings.TrimSpace(config.PCEURL)
+		orgID := strings.TrimSpace(config.OrgID)
+		apiKey := strings.TrimSpace(config.APIKey)
+		secretSet := strings.TrimSpace(config.APISecret) != ""
+		configMutex.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"pce_url":        pceURL,
+			"org_id":         orgID,
+			"api_key":        apiKey,
+			"api_secret_set": secretSet,
+		})
+	case http.MethodPut:
+		var req struct {
+			PCEURL    *string `json:"pce_url"`
+			OrgID     *string `json:"org_id"`
+			APIKey    *string `json:"api_key"`
+			APISecret *string `json:"api_secret"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json body", http.StatusBadRequest)
+			return
+		}
+		configMutex.Lock()
+		if req.PCEURL != nil {
+			clean := strings.TrimSpace(*req.PCEURL)
+			if clean == "" {
+				configMutex.Unlock()
+				http.Error(w, "pce_url cannot be empty", http.StatusBadRequest)
+				return
+			}
+			config.PCEURL = clean
+		}
+		if req.OrgID != nil {
+			clean := strings.TrimSpace(*req.OrgID)
+			if clean == "" {
+				clean = "1"
+			}
+			config.OrgID = clean
+		}
+		if req.APIKey != nil {
+			clean := strings.TrimSpace(*req.APIKey)
+			if clean == "" {
+				configMutex.Unlock()
+				http.Error(w, "api_key cannot be empty", http.StatusBadRequest)
+				return
+			}
+			config.APIKey = clean
+		}
+		if req.APISecret != nil {
+			clean := strings.TrimSpace(*req.APISecret)
+			if clean == "" {
+				configMutex.Unlock()
+				http.Error(w, "api_secret cannot be empty", http.StatusBadRequest)
+				return
+			}
+			config.APISecret = clean
+		}
+		saveConfigLocked()
+		pceURL := strings.TrimSpace(config.PCEURL)
+		orgID := strings.TrimSpace(config.OrgID)
+		apiKey := strings.TrimSpace(config.APIKey)
+		secretSet := strings.TrimSpace(config.APISecret) != ""
+		configMutex.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"saved":          true,
+			"message":        "API credentials saved. New requests will use updated values immediately.",
+			"pce_url":        pceURL,
+			"org_id":         orgID,
+			"api_key":        apiKey,
+			"api_secret_set": secretSet,
 		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -5463,6 +5547,7 @@ func fetchCollectionPage(url string) ([]map[string]interface{}, error) {
 }
 
 func apiCallRaw(url, method string, payload interface{}) ([]byte, error) {
+	reloadConfigIfFileChanged()
 	var body io.Reader
 	if payload != nil {
 		b, err := json.Marshal(payload)
@@ -5521,30 +5606,15 @@ func resolveHrefToURL(href string) string {
 }
 
 func loadConfig() bool {
+	cfg, modTime, ok := loadConfigFile()
+	if !ok {
+		return false
+	}
 	configMutex.Lock()
-	defer configMutex.Unlock()
-
-	file, err := os.Open(configFileName)
-	if err != nil {
-		return false
-	}
-	defer file.Close()
-
-	if err := json.NewDecoder(file).Decode(&config); err != nil {
-		return false
-	}
-	if strings.TrimSpace(config.OrgID) == "" {
-		config.OrgID = "1"
-	}
-	config.Timezone = normalizeTimezone(config.Timezone)
-	config.BindAddress = normalizeBindAddress(config.BindAddress)
-	config.PublicBaseURL = normalizePublicBaseURL(config.PublicBaseURL)
-	config.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(config.BlockedPortStoreBackend)
-	config.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(config.BlockedPortStoreBackend)
-	config.HistoryDays = configuredHistoryDaysLocked()
-	config.TrafficTargets = sanitizeTargets(config.TrafficTargets)
-	config.SourceExclusions = sanitizeTargets(config.SourceExclusions)
-	return config.PCEURL != "" && config.APIKey != "" && config.APISecret != ""
+	config = cfg
+	configModTime = modTime
+	configMutex.Unlock()
+	return true
 }
 
 func saveConfig() {
@@ -5566,6 +5636,78 @@ func saveConfigLocked() {
 	if err := enc.Encode(config); err != nil {
 		log.Printf("failed to write config: %v", err)
 	}
+	if err := file.Sync(); err != nil {
+		log.Printf("failed to fsync config: %v", err)
+	}
+	if st, err := os.Stat(configFileName); err == nil {
+		configModTime = st.ModTime().UTC()
+	} else {
+		configModTime = time.Now().UTC()
+	}
+}
+
+func loadConfigFile() (Config, time.Time, bool) {
+	var cfg Config
+	file, err := os.Open(configFileName)
+	if err != nil {
+		return Config{}, time.Time{}, false
+	}
+	defer file.Close()
+	if err := json.NewDecoder(file).Decode(&cfg); err != nil {
+		return Config{}, time.Time{}, false
+	}
+	if strings.TrimSpace(cfg.OrgID) == "" {
+		cfg.OrgID = "1"
+	}
+	cfg.Timezone = normalizeTimezone(cfg.Timezone)
+	cfg.BindAddress = normalizeBindAddress(cfg.BindAddress)
+	cfg.PublicBaseURL = normalizePublicBaseURL(cfg.PublicBaseURL)
+	cfg.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(cfg.BlockedPortStoreBackend)
+	cfg.HistoryDays = normalizeHistoryDays(cfg.HistoryDays)
+	cfg.TrafficTargets = sanitizeTargets(cfg.TrafficTargets)
+	cfg.SourceExclusions = sanitizeTargets(cfg.SourceExclusions)
+	if strings.TrimSpace(cfg.PCEURL) == "" || strings.TrimSpace(cfg.APIKey) == "" || strings.TrimSpace(cfg.APISecret) == "" {
+		return Config{}, time.Time{}, false
+	}
+	modTime := time.Now().UTC()
+	if st, err := os.Stat(configFileName); err == nil {
+		modTime = st.ModTime().UTC()
+	}
+	return cfg, modTime, true
+}
+
+func normalizeHistoryDays(days int) int {
+	if days <= 0 {
+		return 365
+	}
+	if days > maxHistoryDays {
+		return maxHistoryDays
+	}
+	return days
+}
+
+func reloadConfigIfFileChanged() {
+	st, err := os.Stat(configFileName)
+	if err != nil {
+		return
+	}
+	mod := st.ModTime().UTC()
+	configMutex.RLock()
+	last := configModTime
+	configMutex.RUnlock()
+	if !mod.After(last) {
+		return
+	}
+	cfg, modTime, ok := loadConfigFile()
+	if !ok {
+		log.Printf("[CONFIG] config.json changed on disk but reload skipped due to invalid/incomplete values")
+		return
+	}
+	configMutex.Lock()
+	config = cfg
+	configModTime = modTime
+	configMutex.Unlock()
+	log.Printf("[CONFIG] reloaded config.json from disk")
 }
 
 func initDataDir() {

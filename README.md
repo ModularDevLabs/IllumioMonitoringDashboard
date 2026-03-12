@@ -356,6 +356,14 @@ Use `/settings` to manage network exposure controls:
 - Set optional `Timezone` for daily bucket boundaries and daily chart labels (`America/Chicago`, etc.)
 - Restart service after bind-address changes
 
+### API Credentials
+
+Use `/settings` to rotate API credentials without app downtime:
+- Update `PCE URL`, `Org ID`, `API Key`, and optionally `API Secret`
+- Save credentials to apply on the next outbound API request (no restart required)
+- Secret is write-only in UI; UI only indicates whether a secret is currently set
+- Direct `config.json` edits are also detected and reloaded automatically before outbound API calls
+
 ### Alerting Settings
 
 Use `/settings` to manage webhook alerting:
@@ -394,6 +402,11 @@ Use `/settings` to manage webhook alerting:
   - Read alerting/webhook settings
 - `PUT /api/config/alerts`:
   - Save alerting/webhook settings
+- `GET /api/config/credentials`:
+  - Read current PCE/API credentials (`api_secret_set` is returned, secret value is never returned)
+- `PUT /api/config/credentials`:
+  - Rotate PCE/API credentials at runtime (applies on next outbound API call)
+  - body: `{ "pce_url": "...", "org_id": "1", "api_key": "...", "api_secret": "..." }`
 - `POST /api/webhook/test`:
   - Sends a test webhook event using current config
 - `GET /api/anomalies/history`:
