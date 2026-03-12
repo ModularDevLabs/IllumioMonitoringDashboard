@@ -206,6 +206,11 @@
     let chartMode = 'both';
     let chartCountByContainer = {};
     let blockedGroupsMeta = [];
+    let expansionState = {
+        initialized: false,
+        sections: {},
+        blockedByName: {}
+    };
 
     function esc(s) {
         if (s === null || s === undefined) return '';
@@ -391,6 +396,25 @@
         el.textContent = 'Showing all chart types.';
     }
 
+    function captureExpansionState() {
+        const anomalyDetails = document.getElementById('anomaly-details');
+        const venDetails = document.getElementById('ven-details');
+        const enforcementDetails = document.getElementById('enforcement-details');
+
+        expansionState.sections = {
+            anomaly: !!(anomalyDetails && anomalyDetails.open),
+            ven: !!(venDetails && venDetails.open),
+            enforcement: !!(enforcementDetails && enforcementDetails.open)
+        };
+
+        blockedGroupsMeta.forEach((g) => {
+            const d = document.getElementById(g.detailsId);
+            if (!d) return;
+            expansionState.blockedByName[g.name] = !!d.open;
+        });
+        expansionState.initialized = true;
+    }
+
     function finalizeSectionSummariesAndExpansion() {
         const anomalyCount = chartCountByContainer['anomaly-outcomes'] || 0;
         const venCount = chartCountByContainer['charts-ven'] || 0;
@@ -411,22 +435,45 @@
         const anomalyDetails = document.getElementById('anomaly-details');
         const venDetails = document.getElementById('ven-details');
         const enforcementDetails = document.getElementById('enforcement-details');
-        if (chartMode === 'both') {
-            if (anomalyDetails) anomalyDetails.open = false;
-            if (venDetails) venDetails.open = false;
-            if (enforcementDetails) enforcementDetails.open = false;
+
+        if (!expansionState.initialized) {
+            if (chartMode === 'both') {
+                if (anomalyDetails) anomalyDetails.open = false;
+                if (venDetails) venDetails.open = false;
+                if (enforcementDetails) enforcementDetails.open = false;
+                blockedGroupsMeta.forEach((g) => {
+                    const d = document.getElementById(g.detailsId);
+                    if (d) d.open = false;
+                });
+                return;
+            }
+            if (anomalyDetails) anomalyDetails.open = anomalyCount > 0;
+            if (venDetails) venDetails.open = venCount > 0;
+            if (enforcementDetails) enforcementDetails.open = enforcementCount > 0;
             blockedGroupsMeta.forEach((g) => {
                 const d = document.getElementById(g.detailsId);
-                if (d) d.open = false;
+                if (d) d.open = (chartCountByContainer[g.gridId] || 0) > 0;
             });
             return;
         }
-        if (anomalyDetails) anomalyDetails.open = anomalyCount > 0;
-        if (venDetails) venDetails.open = venCount > 0;
-        if (enforcementDetails) enforcementDetails.open = enforcementCount > 0;
+
+        if (anomalyDetails) {
+            const desired = expansionState.sections.anomaly;
+            anomalyDetails.open = anomalyCount > 0 && desired;
+        }
+        if (venDetails) {
+            const desired = expansionState.sections.ven;
+            venDetails.open = venCount > 0 && desired;
+        }
+        if (enforcementDetails) {
+            const desired = expansionState.sections.enforcement;
+            enforcementDetails.open = enforcementCount > 0 && desired;
+        }
         blockedGroupsMeta.forEach((g) => {
             const d = document.getElementById(g.detailsId);
-            if (d) d.open = (chartCountByContainer[g.gridId] || 0) > 0;
+            if (!d) return;
+            const desired = !!expansionState.blockedByName[g.name];
+            d.open = (chartCountByContainer[g.gridId] || 0) > 0 && desired;
         });
     }
 
@@ -511,6 +558,7 @@
     }
 
     async function load() {
+        captureExpansionState();
         clearRendered();
         updateViewModeHint();
         const [stats, cfg] = await Promise.all([
