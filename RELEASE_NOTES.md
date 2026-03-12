@@ -1,5 +1,23 @@
 # Release Notes
 
+## v1.2.1 - 2026-03-12
+
+Patch release focused on Trend View usability.
+
+### Fixes
+- Trend/Report section expansion state now persists when changing:
+  - `View` mode (`Show: All`, `24h (5m) Only`, `Daily Only`)
+  - `Chart Length` (`7d/30d/90d/180d/365d`)
+- Previously expanded/collapsed groups no longer reset on rerender after mode/range changes.
+- Applies to:
+  - `Anomaly Outcomes`
+  - `VEN Status Trends`
+  - `Enforcement Mode Trends`
+  - per-target blocked traffic trend groups
+
+### Notes
+- If a section has no charts for the selected mode, it remains closed for that render and reuses the saved state when charts are available again.
+
 ## v1.1.1 - 2026-03-11
 
 Patch release focused on security hardening and deployment guidance.
