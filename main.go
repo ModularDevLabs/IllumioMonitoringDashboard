@@ -397,6 +397,7 @@ func main() {
 	} else {
 		fmt.Printf("Loaded configuration for PCE: %s\n", config.PCEURL)
 	}
+	enforceSQLiteBackendConfig()
 	initDataDir()
 	initBlockedPortStore()
 	loadBlockedHistory()
@@ -435,6 +436,20 @@ func main() {
 	publicURL := configuredPublicBaseURL()
 	fmt.Printf("\nDashboard starting. Bind: %s | Public URL: %s\n", listenAddr, publicURL)
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
+}
+
+func enforceSQLiteBackendConfig() {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+	current := normalizeBlockedPortStoreBackend(config.BlockedPortStoreBackend)
+	if current == "sqlite" && strings.TrimSpace(config.BlockedPortStoreBackend) == "sqlite" {
+		return
+	}
+	config.BlockedPortStoreBackend = "sqlite"
+	if _, err := os.Stat(configFileName); err == nil {
+		saveConfigLocked()
+		log.Printf("[CONFIG] forced blocked_port_store_backend=sqlite for sqlite fork")
+	}
 }
 
 func initPendingStats() {
