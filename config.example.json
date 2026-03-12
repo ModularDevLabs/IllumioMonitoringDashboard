@@ -8,7 +8,7 @@
   "public_base_url": "http://localhost:18443",
   "history_days": 365,
   "blocked_port_daily_enabled": true,
-  "blocked_port_store_backend": "json",
+  "blocked_port_store_backend": "sqlite",
   "blocked_ma_window": 12,
   "blocked_anomaly_pct": 50,
   "blocked_anomaly_baseline": "5m",

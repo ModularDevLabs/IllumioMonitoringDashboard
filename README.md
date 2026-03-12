@@ -72,9 +72,9 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Shared UI helpers embedded from `/static/ui-common.js`
 - Durable cross-version state:
   - State files are stored in a shared data directory so new fork/binary versions can reuse history.
-  - Storage backend options:
-    - `json` (default): JSON files
-    - `sqlite`: single `metrics.db` file for history/state
+- Storage backend options:
+    - `sqlite` (default): single `metrics.db` file for history/state
+    - `json`: JSON files
   - SQLite mode supports one-time import from legacy JSON files when DB sections are empty.
 
 ## Binaries
@@ -183,7 +183,7 @@ Runtime state is stored in a shared data directory:
   "data_dir": "/path/to/shared/state",
   "history_days": 365,
   "blocked_port_daily_enabled": true,
-  "blocked_port_store_backend": "json",
+  "blocked_port_store_backend": "sqlite",
   "blocked_ma_window": 12,
   "blocked_anomaly_pct": 50,
   "blocked_anomaly_baseline": "daily",
@@ -220,7 +220,7 @@ Runtime state is stored in a shared data directory:
 | `data_dir` | Shared state directory | `$HOME/.illumio-monitoring-dashboard` | Override via env `ILLUMIO_DASH_DATA_DIR` |
 | `history_days` | Retention days for daily history files | `365` | Range `1..3650` |
 | `blocked_port_daily_enabled` | Enable daily blocked `port/proto` aggregation | `true` | Controls blocked target drilldown blocked-ports table and daily port history collection |
-| `blocked_port_store_backend` | History/state backend | `json` | `json` or `sqlite`; when `sqlite`, persisted history/state is stored in `metrics.db` |
+| `blocked_port_store_backend` | History/state backend | `sqlite` | `sqlite` or `json`; when `sqlite`, persisted history/state is stored in `metrics.db` |
 | `blocked_ma_window` | Global 5m moving-average window points | `12` | Range `2..288` |
 | `blocked_anomaly_pct` | Global blocked anomaly threshold percent | `50` | Range `1..10000` |
 | `blocked_anomaly_baseline` | Baseline source for blocked anomaly detection | `5m` | `5m` compares latest 5m to 5m MA; `daily` compares latest 5m to N-day baseline |
