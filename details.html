@@ -554,7 +554,9 @@
                     ? ` | Anomaly: ${d.anomaly_reason}`
                     : (d.anomalous ? ' | Anomaly: triggered' : '');
                 document.getElementById('count').innerText = `${d.count} workload(s)${anomalyText}`;
-                renderTrend(trendPoints, d.title, { hideList: false, showControls: false });
+                document.getElementById('trend-raw').innerText = '24h (5m)';
+                document.getElementById('trend-sum').innerText = 'Daily';
+                renderTrend(trendPoints, d.title, { hideList: false, showControls: true });
             } else {
                 document.getElementById('trend-controls').classList.add('d-none');
                 trendPoints = d.trend || [];
