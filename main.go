@@ -379,6 +379,9 @@ var (
 	alertState        = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
 	anomalyHistoryMu  sync.Mutex
 	anomalyHistory    = make([]anomalyHistoryEvent, 0)
+	reconcileMu       sync.Mutex
+	reconcileDayKey   string
+	reconcileDoneByT  = map[string]bool{}
 
 	httpClient        = &http.Client{Timeout: 60 * time.Second}
 	dashboardTmpl     = template.Must(template.ParseFS(templateFS, "index.html"))
@@ -3375,6 +3378,7 @@ func getIllumioStats() DashboardStats {
 		stats.Blocked.Status = FetchStatus{Success: true}
 	}
 	accumulateBlockedHistoryFromCycle(nowUTC, blockedCurrent, blockedCurrentPorts, portDailyEnabled)
+	reconcilePreviousDayBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
 
 	return stats
 }
@@ -4526,6 +4530,93 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 	pruneBlockedHistory(nowUTC, historyDays)
 	if changed {
 		saveBlockedHistory()
+		saveBlockedPortHistory()
+	}
+}
+
+func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) {
+	if len(targets) == 0 {
+		return
+	}
+	loc := configuredDayLocation()
+	dayEnd := localDayStart(nowUTC, loc)
+	if dayEnd.IsZero() {
+		return
+	}
+	dayStart := dayEnd.AddDate(0, 0, -1)
+	dayKey := dayStart.Format("2006-01-02")
+	portDailyEnabled := configuredBlockedPortDailyEnabled()
+
+	reconcileMu.Lock()
+	if reconcileDayKey != dayKey {
+		reconcileDayKey = dayKey
+		reconcileDoneByT = map[string]bool{}
+	}
+	pending := make([]TrafficTarget, 0, len(targets))
+	for _, t := range targets {
+		name := strings.TrimSpace(t.Name)
+		if name == "" {
+			continue
+		}
+		if reconcileDoneByT[name] {
+			continue
+		}
+		pending = append(pending, t)
+	}
+	reconcileMu.Unlock()
+	if len(pending) == 0 {
+		return
+	}
+
+	changedCounts := false
+	changedPorts := false
+	for _, target := range pending {
+		var qRes trafficQueryResult
+		var portCounts map[string]int
+		var err error
+		if portDailyEnabled {
+			qRes, portCounts, err = getBlockedCountAndPortCountsForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
+		} else {
+			qRes, err = getBlockedCountForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
+		}
+		if err != nil {
+			log.Printf("[HISTORY] previous-day reconciliation failed for %s (%s): %v", target.Name, dayKey, err)
+			continue
+		}
+		if qRes.Warning != "" {
+			log.Printf("[HISTORY] previous-day reconciliation warning for %s (%s): %s", target.Name, dayKey, qRes.Warning)
+		}
+
+		historyMu.Lock()
+		if blockedDaily[dayKey] == nil {
+			blockedDaily[dayKey] = map[string]int{}
+		}
+		blockedDaily[dayKey][target.Name] = qRes.Count
+		changedCounts = true
+		if portDailyEnabled {
+			if blockedPortsDaily[dayKey] == nil {
+				blockedPortsDaily[dayKey] = map[string]map[string]int{}
+			}
+			if portCounts == nil {
+				portCounts = map[string]int{}
+			}
+			blockedPortsDaily[dayKey][target.Name] = portCounts
+			changedPorts = true
+		}
+		historyMu.Unlock()
+
+		reconcileMu.Lock()
+		if reconcileDayKey == dayKey {
+			reconcileDoneByT[strings.TrimSpace(target.Name)] = true
+		}
+		reconcileMu.Unlock()
+	}
+
+	pruneBlockedHistory(nowUTC, configuredHistoryDays())
+	if changedCounts {
+		saveBlockedHistory()
+	}
+	if changedPorts {
 		saveBlockedPortHistory()
 	}
 }
