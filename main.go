@@ -5289,7 +5289,10 @@ func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []st
 			if err != nil {
 				return trafficQueryResult{}, nil, err
 			}
-			count := len(rows)
+			count, ok := extractResultCount(status)
+			if !ok {
+				count = len(rows)
+			}
 			res := trafficQueryResult{
 				Count:     count,
 				Truncated: count >= trafficQueryMaxResults,
