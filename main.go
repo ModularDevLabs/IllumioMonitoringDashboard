@@ -382,6 +382,7 @@ var (
 	reconcileMu       sync.Mutex
 	reconcileDayKey   string
 	reconcileDoneByT  = map[string]bool{}
+	fullReconcileInProgress atomic.Bool
 
 	httpClient        = &http.Client{Timeout: 60 * time.Second}
 	dashboardTmpl     = template.Must(template.ParseFS(templateFS, "index.html"))
@@ -433,6 +434,7 @@ func main() {
 	http.HandleFunc("/api/config/credentials", withRequestTiming("api.config.credentials", withTrustedOrigin("api.config.credentials", handleConfigCredentials)))
 	http.HandleFunc("/api/config/alerts", withRequestTiming("api.config.alerts", withTrustedOrigin("api.config.alerts", handleConfigAlerts)))
 	http.HandleFunc("/api/refresh", withRequestTiming("api.refresh", withTrustedOrigin("api.refresh", handleRefreshNow)))
+	http.HandleFunc("/api/reconcile/blocked-history", withRequestTiming("api.reconcile.blocked_history", withTrustedOrigin("api.reconcile.blocked_history", handleReconcileBlockedHistory)))
 	http.HandleFunc("/api/webhook/test", withRequestTiming("api.webhook.test", withTrustedOrigin("api.webhook.test", handleWebhookTest)))
 	http.HandleFunc("/api/anomalies/history", withRequestTiming("api.anomalies.history", handleAnomalyHistory))
 	http.HandleFunc("/api/diagnostics/perf", withRequestTiming("api.diagnostics.perf", handleDiagnosticsPerf))
@@ -1259,6 +1261,43 @@ func handleRefreshNow(w http.ResponseWriter, r *http.Request) {
 	go runCollectionCycle()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"started": true})
+}
+
+func handleReconcileBlockedHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !fullReconcileInProgress.CompareAndSwap(false, true) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"started": false,
+			"message": "blocked history reconciliation is already running",
+		})
+		return
+	}
+	go func() {
+		defer fullReconcileInProgress.Store(false)
+		configMutex.RLock()
+		baseURL := strings.TrimSuffix(config.PCEURL, "/api/v2")
+		configMutex.RUnlock()
+		if !strings.HasSuffix(baseURL, "/api/v2") {
+			baseURL += "/api/v2"
+		}
+		targets := configuredTrafficTargets()
+		exclusions := configuredSourceExclusions()
+		excludedHRefs, exclusionWarn := resolveSourceExclusionHRefs(baseURL, exclusions)
+		if exclusionWarn != "" {
+			log.Printf("[HISTORY] full reconcile exclusion warning: %s", exclusionWarn)
+		}
+		days, updated, failed := reconcileAllStoredBlockedHistory(baseURL, targets, time.Now().UTC(), excludedHRefs)
+		log.Printf("[HISTORY] full reconcile complete days=%d updated=%d failed=%d", days, updated, failed)
+	}()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"started": true,
+		"message": "blocked history reconciliation started",
+	})
 }
 
 func handleWebhookTest(w http.ResponseWriter, r *http.Request) {
@@ -4619,6 +4658,97 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 	if changedPorts {
 		saveBlockedPortHistory()
 	}
+}
+
+func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) (int, int, int) {
+	if len(targets) == 0 {
+		return 0, 0, 0
+	}
+	loc := configuredDayLocation()
+	todayKey := localDayStart(nowUTC, loc).Format("2006-01-02")
+	portDailyEnabled := configuredBlockedPortDailyEnabled()
+
+	historyMu.Lock()
+	daySet := make(map[string]struct{}, len(blockedDaily)+len(blockedPortsDaily))
+	for day := range blockedDaily {
+		daySet[day] = struct{}{}
+	}
+	for day := range blockedPortsDaily {
+		daySet[day] = struct{}{}
+	}
+	historyMu.Unlock()
+
+	dayKeys := make([]string, 0, len(daySet))
+	for day := range daySet {
+		if strings.TrimSpace(day) == "" || day == todayKey {
+			continue
+		}
+		dayKeys = append(dayKeys, day)
+	}
+	sort.Strings(dayKeys)
+	if len(dayKeys) == 0 {
+		return 0, 0, 0
+	}
+
+	updated := 0
+	failed := 0
+	changedCounts := false
+	changedPorts := false
+	for _, dayKey := range dayKeys {
+		dayStartLocal, err := time.ParseInLocation("2006-01-02", dayKey, loc)
+		if err != nil {
+			log.Printf("[HISTORY] full reconcile skipping invalid day key %q: %v", dayKey, err)
+			continue
+		}
+		dayEndLocal := dayStartLocal.AddDate(0, 0, 1)
+		for _, target := range targets {
+			if strings.TrimSpace(target.Name) == "" {
+				continue
+			}
+			var qRes trafficQueryResult
+			var portCounts map[string]int
+			if portDailyEnabled {
+				qRes, portCounts, err = getBlockedCountAndPortCountsForTargetWindow(baseURL, target, dayStartLocal.UTC(), dayEndLocal.UTC(), sourceExcludeHRefs)
+			} else {
+				qRes, err = getBlockedCountForTargetWindow(baseURL, target, dayStartLocal.UTC(), dayEndLocal.UTC(), sourceExcludeHRefs)
+			}
+			if err != nil {
+				failed++
+				log.Printf("[HISTORY] full reconcile failed day=%s target=%s: %v", dayKey, target.Name, err)
+				continue
+			}
+			if qRes.Warning != "" {
+				log.Printf("[HISTORY] full reconcile warning day=%s target=%s: %s", dayKey, target.Name, qRes.Warning)
+			}
+			historyMu.Lock()
+			if blockedDaily[dayKey] == nil {
+				blockedDaily[dayKey] = map[string]int{}
+			}
+			blockedDaily[dayKey][target.Name] = qRes.Count
+			changedCounts = true
+			if portDailyEnabled {
+				if blockedPortsDaily[dayKey] == nil {
+					blockedPortsDaily[dayKey] = map[string]map[string]int{}
+				}
+				if portCounts == nil {
+					portCounts = map[string]int{}
+				}
+				blockedPortsDaily[dayKey][target.Name] = portCounts
+				changedPorts = true
+			}
+			historyMu.Unlock()
+			updated++
+		}
+	}
+
+	pruneBlockedHistory(nowUTC, configuredHistoryDays())
+	if changedCounts {
+		saveBlockedHistory()
+	}
+	if changedPorts {
+		saveBlockedPortHistory()
+	}
+	return len(dayKeys), updated, failed
 }
 
 func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
