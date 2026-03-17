@@ -1269,6 +1269,7 @@ func handleReconcileBlockedHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !fullReconcileInProgress.CompareAndSwap(false, true) {
+		log.Printf("[HISTORY] full reconcile request ignored: already in progress")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"started": false,
@@ -1285,6 +1286,7 @@ func handleReconcileBlockedHistory(w http.ResponseWriter, r *http.Request) {
 			baseURL += "/api/v2"
 		}
 		targets := configuredTrafficTargets()
+		log.Printf("[HISTORY] full reconcile start targets=%d", len(targets))
 		exclusions := configuredSourceExclusions()
 		excludedHRefs, exclusionWarn := resolveSourceExclusionHRefs(baseURL, exclusions)
 		if exclusionWarn != "" {
@@ -3901,6 +3903,14 @@ func configuredDiagnosticsEnabledLocked() bool {
 	return config.DiagnosticsEnabled
 }
 
+func verboseBlockedLoggingEnabled() bool {
+	if configuredDiagnosticsEnabled() {
+		return true
+	}
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("ILLUMIO_DASH_VERBOSE_BLOCKED")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
 func configuredBlockedMAWindow() int {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
@@ -4606,6 +4616,9 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 	if len(pending) == 0 {
 		return
 	}
+	if verboseBlockedLoggingEnabled() {
+		log.Printf("[HISTORY] previous-day reconcile start day=%s targets=%d", dayKey, len(pending))
+	}
 
 	changedCounts := false
 	changedPorts := false
@@ -4624,6 +4637,9 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 		}
 		if qRes.Warning != "" {
 			log.Printf("[HISTORY] previous-day reconciliation warning for %s (%s): %s", target.Name, dayKey, qRes.Warning)
+		}
+		if verboseBlockedLoggingEnabled() {
+			log.Printf("[HISTORY] previous-day reconcile day=%s target=%s count=%d truncated=%t", dayKey, target.Name, qRes.Count, qRes.Truncated)
 		}
 
 		historyMu.Lock()
@@ -4658,6 +4674,9 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 	if changedPorts {
 		saveBlockedPortHistory()
 	}
+	if verboseBlockedLoggingEnabled() {
+		log.Printf("[HISTORY] previous-day reconcile complete day=%s changed_counts=%t changed_ports=%t", dayKey, changedCounts, changedPorts)
+	}
 }
 
 func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) (int, int, int) {
@@ -4688,6 +4707,9 @@ func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, n
 	sort.Strings(dayKeys)
 	if len(dayKeys) == 0 {
 		return 0, 0, 0
+	}
+	if verboseBlockedLoggingEnabled() {
+		log.Printf("[HISTORY] full reconcile scope days=%d targets=%d", len(dayKeys), len(targets))
 	}
 
 	updated := 0
@@ -4720,6 +4742,9 @@ func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, n
 			if qRes.Warning != "" {
 				log.Printf("[HISTORY] full reconcile warning day=%s target=%s: %s", dayKey, target.Name, qRes.Warning)
 			}
+			if verboseBlockedLoggingEnabled() {
+				log.Printf("[HISTORY] full reconcile day=%s target=%s count=%d truncated=%t", dayKey, target.Name, qRes.Count, qRes.Truncated)
+			}
 			historyMu.Lock()
 			if blockedDaily[dayKey] == nil {
 				blockedDaily[dayKey] = map[string]int{}
@@ -4747,6 +4772,9 @@ func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, n
 	}
 	if changedPorts {
 		saveBlockedPortHistory()
+	}
+	if verboseBlockedLoggingEnabled() {
+		log.Printf("[HISTORY] full reconcile persisted changed_counts=%t changed_ports=%t", changedCounts, changedPorts)
 	}
 	return len(dayKeys), updated, failed
 }
@@ -4859,14 +4887,21 @@ func collectBlockedTargetPaced(
 		Index:  index,
 		Result: BlockedTargetResult{Name: target.Name, Kind: target.Kind},
 	}
+	verbose := verboseBlockedLoggingEnabled()
 	queryBaseline := baseline || !hasTargetBaseline(target.Name)
 	var qRes trafficQueryResult
 	var err error
 	if queryBaseline {
+		if verbose {
+			log.Printf("[BLOCKED] baseline query target=%s window=%s..%s", target.Name, nowUTC.Add(-24*time.Hour).UTC().Format(time.RFC3339), nowUTC.UTC().Format(time.RFC3339))
+		}
 		qRes, err = getBlockedCountForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
 		res.BaselineCount = qRes.Count
 		res.NewlyBaselined = err == nil
 	} else {
+		if verbose {
+			log.Printf("[BLOCKED] delta query target=%s window=%s..%s include_ports=%t", target.Name, blockedDeltaStart.UTC().Format(time.RFC3339), nowUTC.UTC().Format(time.RFC3339), portDailyEnabled)
+		}
 		if portDailyEnabled {
 			var portCounts map[string]int
 			qRes, portCounts, err = getBlockedCountAndPortCountsForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
@@ -4880,11 +4915,17 @@ func collectBlockedTargetPaced(
 	res.WarningMessage = strings.TrimSpace(qRes.Warning)
 	if err != nil {
 		res.Result.Status = FetchStatus{Success: false, Error: err.Error()}
+		if verbose {
+			log.Printf("[BLOCKED] query failed target=%s err=%v", target.Name, err)
+		}
 		return res
 	}
 	res.Result.Status = FetchStatus{Success: true}
 	if res.WarningMessage != "" {
 		res.Result.Warning = res.WarningMessage
+	}
+	if verbose {
+		log.Printf("[BLOCKED] query result target=%s count=%d baseline=%t truncated=%t warning=%q", target.Name, qRes.Count, queryBaseline, qRes.Truncated, res.WarningMessage)
 	}
 	res.Success = true
 	return res
@@ -5513,6 +5554,13 @@ func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []st
 			count, ok := extractResultCount(status)
 			if !ok {
 				count = len(rows)
+			}
+			if verboseBlockedLoggingEnabled() {
+				source := "result_count"
+				if !ok {
+					source = "rows_fallback"
+				}
+				log.Printf("[BLOCKED] combined query complete query=%s count=%d rows=%d source=%s", queryName, count, len(rows), source)
 			}
 			res := trafficQueryResult{
 				Count:     count,
