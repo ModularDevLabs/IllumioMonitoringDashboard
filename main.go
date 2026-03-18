@@ -59,6 +59,8 @@ const stateKeyAlert = "alert_state_v1"
 const stateKeyAnomalyHistory = "anomaly_history_v1"
 const stateKeyBlockedHistoryReconcile = "blocked_history_reconcile_v1"
 const blockedHistoryReconcileFileName = "blocked_history_reconcile.json"
+const stateKeyTamperingHistoryReconcile = "tampering_history_reconcile_v1"
+const tamperingHistoryReconcileFileName = "tampering_history_reconcile.json"
 
 const pceTimeFormat = "2006-01-02T15:04:05.000Z"
 const maxHistoryDays = 3650
@@ -321,6 +323,14 @@ type blockedHistoryReconcileMarker struct {
 	TargetFingerprint string            `json:"target_fingerprint,omitempty"` // legacy
 }
 
+type tamperingHistoryReconcileMarker struct {
+	SchemaVersion   int               `json:"schema_version"`
+	CompletedByDay  map[string]string `json:"completed_by_day,omitempty"`
+	CompletedAt     time.Time         `json:"completed_at,omitempty"` // legacy
+	DayFingerprint  string            `json:"day_fingerprint,omitempty"`
+	LastCompletedAt time.Time         `json:"last_completed_at,omitempty"`
+}
+
 type blockedHistoryReconcileStatus struct {
 	Running             bool      `json:"running"`
 	LastTriggerReason   string    `json:"last_trigger_reason,omitempty"`
@@ -425,6 +435,7 @@ var (
 	fullReconcileInProgress atomic.Bool
 	reconcileStatusMu       sync.Mutex
 	reconcileStatus         blockedHistoryReconcileStatus
+	tamperingReconcileBusy  atomic.Bool
 
 	httpClient                  = &http.Client{Timeout: 60 * time.Second}
 	tamperingHTTPClient         = &http.Client{Timeout: 60 * time.Second}
@@ -460,6 +471,7 @@ func main() {
 
 	initPendingStats()
 	maybeStartStartupBlockedHistoryReconcile()
+	maybeStartStartupTamperingHistoryReconcile()
 	go backgroundCollector()
 
 	http.HandleFunc("/", withRequestTiming("dashboard", serveDashboard))
@@ -1518,6 +1530,143 @@ func (m blockedHistoryReconcileMarker) LastCompletedAt() time.Time {
 		}
 	}
 	return latest
+}
+
+func maybeStartStartupTamperingHistoryReconcile() {
+	dayKeys := tamperingHistoryDayKeysForReconcile(time.Now().UTC())
+	if len(dayKeys) == 0 {
+		log.Printf("[TAMPER-HISTORY] startup reconcile skipped: no previous day keys present")
+		return
+	}
+	marker, ok := loadTamperingHistoryReconcileMarker()
+	pending := make([]string, 0, len(dayKeys))
+	for _, day := range dayKeys {
+		if ok && marker.HasDay(day) {
+			continue
+		}
+		pending = append(pending, day)
+	}
+	if len(pending) == 0 {
+		log.Printf("[TAMPER-HISTORY] startup reconcile skipped: all %d day markers present", len(dayKeys))
+		return
+	}
+	log.Printf("[TAMPER-HISTORY] startup reconcile pending days=%d/%d", len(pending), len(dayKeys))
+	startTamperingHistoryReconcileAsync("startup", pending)
+}
+
+func startTamperingHistoryReconcileAsync(reason string, dayKeys []string) bool {
+	if !tamperingReconcileBusy.CompareAndSwap(false, true) {
+		log.Printf("[TAMPER-HISTORY] reconcile request ignored: already in progress (reason=%s)", reason)
+		return false
+	}
+	go func() {
+		defer tamperingReconcileBusy.Store(false)
+		configMutex.RLock()
+		pceURL := config.PCEURL
+		orgID := config.OrgID
+		configMutex.RUnlock()
+		baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), strings.TrimSpace(orgID))
+		if len(dayKeys) == 0 {
+			dayKeys = tamperingHistoryDayKeysForReconcile(time.Now().UTC())
+		}
+		updated, failed := reconcileStoredTamperingHistory(baseURL, dayKeys)
+		if failed == 0 && updated > 0 {
+			marker, _ := loadTamperingHistoryReconcileMarker()
+			marker.MarkDaysComplete(dayKeys, time.Now().UTC())
+			if err := saveTamperingHistoryReconcileMarker(marker); err != nil {
+				log.Printf("[TAMPER-HISTORY] failed saving reconcile marker: %v", err)
+			}
+		}
+		log.Printf("[TAMPER-HISTORY] reconcile complete reason=%s days=%d updated=%d failed=%d", reason, len(dayKeys), updated, failed)
+	}()
+	return true
+}
+
+func tamperingHistoryDayKeysForReconcile(nowUTC time.Time) []string {
+	loc := configuredDayLocation()
+	todayKey := localDayStart(nowUTC, loc).Format("2006-01-02")
+	venHistoryMu.Lock()
+	daySet := make(map[string]struct{}, len(venDaily))
+	for day := range venDaily {
+		daySet[day] = struct{}{}
+	}
+	venHistoryMu.Unlock()
+	dayKeys := make([]string, 0, len(daySet))
+	for day := range daySet {
+		day = strings.TrimSpace(day)
+		if day == "" || day == todayKey {
+			continue
+		}
+		dayKeys = append(dayKeys, day)
+	}
+	sort.Strings(dayKeys)
+	return dayKeys
+}
+
+func reconcileStoredTamperingHistory(baseURL string, dayKeys []string) (int, int) {
+	if len(dayKeys) == 0 {
+		return 0, 0
+	}
+	loc := configuredDayLocation()
+	updated := 0
+	failed := 0
+	for _, dayKey := range dayKeys {
+		dayStartLocal, err := time.ParseInLocation("2006-01-02", dayKey, loc)
+		if err != nil {
+			log.Printf("[TAMPER-HISTORY] reconcile skipping invalid day key %q: %v", dayKey, err)
+			continue
+		}
+		dayEndLocal := dayStartLocal.AddDate(0, 0, 1)
+		_, workloads, err := getTamperingWindow(baseURL, dayStartLocal.UTC(), dayEndLocal.UTC(), true)
+		if err != nil {
+			failed++
+			log.Printf("[TAMPER-HISTORY] reconcile failed day=%s: %v", dayKey, err)
+			continue
+		}
+		venHistoryMu.Lock()
+		snap := venDaily[dayKey]
+		snap.TamperingMax = len(workloads)
+		venDaily[dayKey] = snap
+		venHistoryMu.Unlock()
+		updated++
+		log.Printf("[TAMPER-HISTORY] reconciled day=%s workloads=%d", dayKey, len(workloads))
+	}
+	if updated > 0 {
+		saveVENHistory()
+	}
+	return updated, failed
+}
+
+func (m tamperingHistoryReconcileMarker) HasDay(day string) bool {
+	day = strings.TrimSpace(day)
+	if day == "" || len(m.CompletedByDay) == 0 {
+		return false
+	}
+	_, ok := m.CompletedByDay[day]
+	return ok
+}
+
+func (m *tamperingHistoryReconcileMarker) MarkDaysComplete(dayKeys []string, at time.Time) {
+	if m.SchemaVersion <= 0 {
+		m.SchemaVersion = 1
+	}
+	if m.CompletedByDay == nil {
+		m.CompletedByDay = map[string]string{}
+	}
+	ts := at.UTC().Format(time.RFC3339)
+	clean := make([]string, 0, len(dayKeys))
+	for _, day := range dayKeys {
+		day = strings.TrimSpace(day)
+		if day == "" {
+			continue
+		}
+		m.CompletedByDay[day] = ts
+		clean = append(clean, day)
+	}
+	sort.Strings(clean)
+	sum := sha256.Sum256([]byte(strings.Join(clean, "|")))
+	m.DayFingerprint = hex.EncodeToString(sum[:])
+	m.LastCompletedAt = at.UTC()
 }
 
 func handleWebhookTest(w http.ResponseWriter, r *http.Request) {
@@ -4080,8 +4229,16 @@ func getTamperingWindow(baseURL string, startUTC, endUTC time.Time, baseline boo
 		return 0, nil, err
 	}
 
+	eventDedup := map[string]struct{}{}
 	dedup := map[string]struct{}{}
 	for _, evt := range events {
+		eventSig := tamperingEventSignature(evt)
+		if strings.TrimSpace(eventSig) != "" {
+			if _, seen := eventDedup[eventSig]; seen {
+				continue
+			}
+			eventDedup[eventSig] = struct{}{}
+		}
 		if name := extractEventWorkloadName(evt); name != "" {
 			dedup[name] = struct{}{}
 		}
@@ -4091,6 +4248,9 @@ func getTamperingWindow(baseURL string, startUTC, endUTC time.Time, baseline boo
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	if len(eventDedup) > 0 {
+		return len(eventDedup), names, err
+	}
 	return len(events), names, err
 }
 
@@ -6986,7 +7146,7 @@ func migrateLegacyDataFiles() {
 	if strings.TrimSpace(dataDir) == "" || dataDir == "." {
 		return
 	}
-	for _, name := range []string{blockedHistoryFileName, blockedPortHistoryFileName, venHistoryFileName, rollingStateFileName, alertStateFileName, anomalyHistoryFileName} {
+	for _, name := range []string{blockedHistoryFileName, blockedPortHistoryFileName, venHistoryFileName, rollingStateFileName, alertStateFileName, anomalyHistoryFileName, blockedHistoryReconcileFileName, tamperingHistoryReconcileFileName} {
 		dst := dataFilePath(name)
 		if _, err := os.Stat(dst); err == nil {
 			continue
@@ -7264,6 +7424,55 @@ func saveBlockedHistoryReconcileMarker(marker blockedHistoryReconcileMarker) err
 		return sqliteKVSetJSON(stateKeyBlockedHistoryReconcile, marker)
 	}
 	return writeJSONFileAtomic(dataFilePath(blockedHistoryReconcileFileName), marker)
+}
+
+func loadTamperingHistoryReconcileMarker() (tamperingHistoryReconcileMarker, bool) {
+	normalize := func(marker tamperingHistoryReconcileMarker) (tamperingHistoryReconcileMarker, bool) {
+		if marker.SchemaVersion <= 0 {
+			marker.SchemaVersion = 1
+		}
+		if marker.CompletedByDay == nil {
+			marker.CompletedByDay = map[string]string{}
+		}
+		return marker, true
+	}
+	if blockedPortStoreIsSQLite() {
+		var marker tamperingHistoryReconcileMarker
+		ok, err := sqliteKVGetJSON(stateKeyTamperingHistoryReconcile, &marker)
+		if err != nil {
+			log.Printf("[TAMPER-HISTORY] failed loading reconcile marker from sqlite: %v", err)
+			return tamperingHistoryReconcileMarker{}, false
+		}
+		if !ok {
+			return tamperingHistoryReconcileMarker{}, false
+		}
+		return normalize(marker)
+	}
+	path := dataFilePath(tamperingHistoryReconcileFileName)
+	file, err := os.Open(path)
+	if err != nil {
+		return tamperingHistoryReconcileMarker{}, false
+	}
+	defer file.Close()
+	var marker tamperingHistoryReconcileMarker
+	if err := json.NewDecoder(file).Decode(&marker); err != nil {
+		log.Printf("[TAMPER-HISTORY] failed decoding reconcile marker: %v", err)
+		return tamperingHistoryReconcileMarker{}, false
+	}
+	return normalize(marker)
+}
+
+func saveTamperingHistoryReconcileMarker(marker tamperingHistoryReconcileMarker) error {
+	if marker.SchemaVersion <= 0 {
+		marker.SchemaVersion = 1
+	}
+	if marker.CompletedByDay == nil {
+		marker.CompletedByDay = map[string]string{}
+	}
+	if blockedPortStoreIsSQLite() {
+		return sqliteKVSetJSON(stateKeyTamperingHistoryReconcile, marker)
+	}
+	return writeJSONFileAtomic(dataFilePath(tamperingHistoryReconcileFileName), marker)
 }
 
 func migrateLegacyJSONStateToSQLite() {

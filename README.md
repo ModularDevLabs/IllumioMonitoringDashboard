@@ -23,6 +23,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Unmanaged workload count
 - Tampering monitoring:
   - Unique tampered VEN/workload names with `agent.tampering` events (last 24h)
+  - Event counts in 5m/24h windows are deduped by stable event signature before trend aggregation
   - Deduped names for drilldown
   - Tampering trend charts include moving-average overlays and anomaly detection (24h/5m series)
 - Blocked traffic analytics:
@@ -513,6 +514,9 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
     - previously reconciled targets are skipped using persisted per-target markers
     - when target set changes, startup reconcile runs only for newly added/changed targets
     - manual full reconcile is available from Settings and `POST /api/reconcile/blocked-history`
+  - Tampering-history reconcile behavior:
+    - startup auto-check reconciles stored prior-day tampering snapshots missing completion marker
+    - previously reconciled tampering day keys are skipped using persisted day markers
 - HTTP basic auth is used for PCE API calls
 - `config.json` is written with file mode `0600`
 - For async traffic queries, result count is read from job status and falls back to results download endpoints if needed
