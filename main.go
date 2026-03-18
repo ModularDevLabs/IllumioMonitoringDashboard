@@ -6,8 +6,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"embed"
-	"encoding/hex"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -247,6 +247,9 @@ type rollingState struct {
 	BaselineBlocked     map[string]targetBaseline
 
 	Buckets []rollingBucket
+
+	// In-memory only: per-target flow signatures seen within the active 24h rolling horizon.
+	BlockedFlowLastSeen map[string]map[string]time.Time
 }
 
 type persistedTargetBaseline struct {
@@ -290,6 +293,11 @@ type trafficQueryResult struct {
 	Warning   string
 }
 
+type blockedFlowSample struct {
+	Signature       string
+	LastDetectedUTC time.Time
+}
+
 type dailyBlockedRecord struct {
 	Day    string `json:"day"`
 	Target string `json:"target"`
@@ -304,10 +312,10 @@ type dailyBlockedPortRecord struct {
 }
 
 type blockedHistoryReconcileMarker struct {
-	SchemaVersion      int               `json:"schema_version"`
-	CompletedByTarget  map[string]string `json:"completed_by_target,omitempty"`
-	CompletedAt        time.Time         `json:"completed_at,omitempty"`        // legacy
-	TargetFingerprint  string            `json:"target_fingerprint,omitempty"`  // legacy
+	SchemaVersion     int               `json:"schema_version"`
+	CompletedByTarget map[string]string `json:"completed_by_target,omitempty"`
+	CompletedAt       time.Time         `json:"completed_at,omitempty"`       // legacy
+	TargetFingerprint string            `json:"target_fingerprint,omitempty"` // legacy
 }
 
 type blockedHistoryReconcileStatus struct {
@@ -379,8 +387,10 @@ type anomalyHistoryEvent struct {
 type blockedTargetCycleResult struct {
 	Index          int
 	Result         BlockedTargetResult
+	RawCount       int
 	CurrentCount   int
 	CurrentPorts   map[string]int
+	CurrentSamples []blockedFlowSample
 	BaselineCount  int
 	NewlyBaselined bool
 	Success        bool
@@ -395,23 +405,23 @@ var (
 	statsMutex    sync.RWMutex
 	isRefreshing  atomic.Bool
 
-	rollingMu         sync.Mutex
-	rollingCache      rollingState
-	historyMu         sync.Mutex
-	blockedDaily      = map[string]map[string]int{}
-	blockedPortsDaily = map[string]map[string]map[string]int{}
-	venHistoryMu      sync.Mutex
-	venDaily          = map[string]venDailySnapshot{}
-	alertMu           sync.Mutex
-	alertState        = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
-	anomalyHistoryMu  sync.Mutex
-	anomalyHistory    = make([]anomalyHistoryEvent, 0)
-	reconcileMu       sync.Mutex
-	reconcileDayKey   string
-	reconcileDoneByT  = map[string]bool{}
+	rollingMu               sync.Mutex
+	rollingCache            rollingState
+	historyMu               sync.Mutex
+	blockedDaily            = map[string]map[string]int{}
+	blockedPortsDaily       = map[string]map[string]map[string]int{}
+	venHistoryMu            sync.Mutex
+	venDaily                = map[string]venDailySnapshot{}
+	alertMu                 sync.Mutex
+	alertState              = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
+	anomalyHistoryMu        sync.Mutex
+	anomalyHistory          = make([]anomalyHistoryEvent, 0)
+	reconcileMu             sync.Mutex
+	reconcileDayKey         string
+	reconcileDoneByT        = map[string]bool{}
 	fullReconcileInProgress atomic.Bool
-	reconcileStatusMu sync.Mutex
-	reconcileStatus   blockedHistoryReconcileStatus
+	reconcileStatusMu       sync.Mutex
+	reconcileStatus         blockedHistoryReconcileStatus
 
 	httpClient        = &http.Client{Timeout: 60 * time.Second}
 	dashboardTmpl     = template.Must(template.ParseFS(templateFS, "index.html"))
@@ -3651,6 +3661,73 @@ func hasTargetBaseline(targetName string) bool {
 	return ok
 }
 
+func applyBlockedFlowSamples(targetName string, nowUTC time.Time, samples []blockedFlowSample) (int, int) {
+	rollingMu.Lock()
+	defer rollingMu.Unlock()
+	return applyBlockedFlowSamplesLocked(targetName, nowUTC, samples)
+}
+
+func applyBlockedFlowSamplesLocked(targetName string, nowUTC time.Time, samples []blockedFlowSample) (int, int) {
+	targetName = strings.TrimSpace(targetName)
+	if targetName == "" {
+		return 0, 0
+	}
+	if rollingCache.BlockedFlowLastSeen == nil {
+		rollingCache.BlockedFlowLastSeen = map[string]map[string]time.Time{}
+	}
+	targetSeen, ok := rollingCache.BlockedFlowLastSeen[targetName]
+	if !ok {
+		targetSeen = map[string]time.Time{}
+		rollingCache.BlockedFlowLastSeen[targetName] = targetSeen
+	}
+	cutoff := nowUTC.Add(-24 * time.Hour)
+	for sig, ts := range targetSeen {
+		if !ts.After(cutoff) {
+			delete(targetSeen, sig)
+		}
+	}
+	newUnique := 0
+	for _, sample := range samples {
+		sig := strings.TrimSpace(sample.Signature)
+		if sig == "" {
+			continue
+		}
+		ts := sample.LastDetectedUTC.UTC()
+		if ts.IsZero() || ts.After(nowUTC) {
+			ts = nowUTC
+		}
+		if !ts.After(cutoff) {
+			continue
+		}
+		prev, exists := targetSeen[sig]
+		if !exists {
+			targetSeen[sig] = ts
+			newUnique++
+			continue
+		}
+		if ts.After(prev) {
+			targetSeen[sig] = ts
+		}
+	}
+	return newUnique, len(targetSeen)
+}
+
+func blockedRollingUniqueCountLocked(targetName string, cutoff time.Time) (int, bool) {
+	if rollingCache.BlockedFlowLastSeen == nil {
+		return 0, false
+	}
+	targetSeen, ok := rollingCache.BlockedFlowLastSeen[strings.TrimSpace(targetName)]
+	if !ok {
+		return 0, false
+	}
+	for sig, ts := range targetSeen {
+		if !ts.After(cutoff) {
+			delete(targetSeen, sig)
+		}
+	}
+	return len(targetSeen), true
+}
+
 func updateRollingAndBuildView(
 	nowUTC time.Time,
 	baseline bool,
@@ -3679,6 +3756,7 @@ func updateRollingAndBuildView(
 			BaselineWorkloads:   map[string]struct{}{},
 			BaselineBlocked:     map[string]targetBaseline{},
 			Buckets:             []rollingBucket{},
+			BlockedFlowLastSeen: map[string]map[string]time.Time{},
 		}
 		if tamperingOK {
 			rollingCache.BaselineTampering = tamperingCount
@@ -3794,7 +3872,11 @@ func updateRollingAndBuildView(
 			blockedWarmupMinutes[name] = mins
 			blockedRollingTotals[name] = baselineEntry.Count
 		} else {
-			blockedRollingTotals[name] = rolling24
+			if uniqueCount, ok := blockedRollingUniqueCountLocked(name, cutoff); ok {
+				blockedRollingTotals[name] = uniqueCount
+			} else {
+				blockedRollingTotals[name] = rolling24
+			}
 		}
 	}
 
@@ -5031,17 +5113,22 @@ func getBlockedCountForTargetWindow(baseURL string, target TrafficTarget, startU
 }
 
 func getBlockedCountAndPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, error) {
+	res, ports, _, err := getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, startUTC, endUTC, sourceExcludeHRefs)
+	return res, ports, err
+}
+
+func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, []blockedFlowSample, error) {
 	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
 	if err != nil {
-		return trafficQueryResult{}, nil, err
+		return trafficQueryResult{}, nil, nil, err
 	}
-	srcRes, srcPorts, err := performAsyncTrafficQueryWindowCountAndPorts(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_src", startUTC, endUTC, true)
+	srcRes, srcPorts, srcSamples, err := performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_src", startUTC, endUTC, true)
 	if err != nil {
-		return trafficQueryResult{}, nil, err
+		return trafficQueryResult{}, nil, nil, err
 	}
-	dstRes, dstPorts, err := performAsyncTrafficQueryWindowCountAndPorts(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_dst", startUTC, endUTC, false)
+	dstRes, dstPorts, dstSamples, err := performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_dst", startUTC, endUTC, false)
 	if err != nil {
-		return trafficQueryResult{}, nil, err
+		return trafficQueryResult{}, nil, nil, err
 	}
 	combined := trafficQueryResult{
 		Count:     srcRes.Count + dstRes.Count,
@@ -5061,7 +5148,10 @@ func getBlockedCountAndPortCountsForTargetWindow(baseURL string, target TrafficT
 			ports[k] += v
 		}
 	}
-	return combined, ports, nil
+	samples := make([]blockedFlowSample, 0, len(srcSamples)+len(dstSamples))
+	samples = append(samples, srcSamples...)
+	samples = append(samples, dstSamples...)
+	return combined, ports, samples, nil
 }
 
 func collectBlockedTargetPaced(
@@ -5093,14 +5183,13 @@ func collectBlockedTargetPaced(
 		if verbose {
 			log.Printf("[BLOCKED] delta query target=%s window=%s..%s include_ports=%t", target.Name, blockedDeltaStart.UTC().Format(time.RFC3339), nowUTC.UTC().Format(time.RFC3339), portDailyEnabled)
 		}
-		if portDailyEnabled {
-			var portCounts map[string]int
-			qRes, portCounts, err = getBlockedCountAndPortCountsForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
-			res.CurrentPorts = portCounts
-		} else {
-			qRes, err = getBlockedCountForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
-		}
-		res.CurrentCount = qRes.Count
+		var portCounts map[string]int
+		var samples []blockedFlowSample
+		qRes, portCounts, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+		res.CurrentPorts = portCounts
+		res.CurrentSamples = samples
+		res.RawCount = qRes.Count
+		res.CurrentCount, _ = applyBlockedFlowSamples(target.Name, nowUTC, samples)
 	}
 	res.Result.Count = qRes.Count
 	res.WarningMessage = strings.TrimSpace(qRes.Warning)
@@ -5116,7 +5205,11 @@ func collectBlockedTargetPaced(
 		res.Result.Warning = res.WarningMessage
 	}
 	if verbose {
-		log.Printf("[BLOCKED] query result target=%s count=%d baseline=%t truncated=%t warning=%q", target.Name, qRes.Count, queryBaseline, qRes.Truncated, res.WarningMessage)
+		if queryBaseline {
+			log.Printf("[BLOCKED] query result target=%s count=%d baseline=%t truncated=%t warning=%q", target.Name, qRes.Count, queryBaseline, qRes.Truncated, res.WarningMessage)
+		} else {
+			log.Printf("[BLOCKED] query result target=%s raw=%d deduped_new=%d samples=%d baseline=%t truncated=%t warning=%q", target.Name, qRes.Count, res.CurrentCount, len(res.CurrentSamples), queryBaseline, qRes.Truncated, res.WarningMessage)
+		}
 	}
 	res.Success = true
 	return res
@@ -5665,8 +5758,13 @@ func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []strin
 }
 
 func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, error) {
+	res, ports, _, err := performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
+	return res, ports, err
+}
+
+func performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, []blockedFlowSample, error) {
 	if len(labelHRefs) == 0 {
-		return trafficQueryResult{}, nil, errors.New("cannot run blocked traffic query with empty label list")
+		return trafficQueryResult{}, nil, nil, errors.New("cannot run blocked traffic query with empty label list")
 	}
 	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
 	seen := make(map[string]struct{}, len(labelHRefs))
@@ -5681,7 +5779,7 @@ func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []st
 		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
 	}
 	if len(includeList) == 0 {
-		return trafficQueryResult{}, nil, errors.New("resolved labels are empty after normalization")
+		return trafficQueryResult{}, nil, nil, errors.New("resolved labels are empty after normalization")
 	}
 	includeAny := make([]interface{}, 0, len(includeList))
 	for _, item := range includeList {
@@ -5723,24 +5821,24 @@ func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []st
 	}
 	var job map[string]interface{}
 	if err := apiCall(baseURL+"/traffic_flows/async_queries", "POST", payload, &job); err != nil {
-		return trafficQueryResult{}, nil, err
+		return trafficQueryResult{}, nil, nil, err
 	}
 	jobHref, _ := job["href"].(string)
 	if jobHref == "" {
-		return trafficQueryResult{}, nil, errors.New("async query did not return job href")
+		return trafficQueryResult{}, nil, nil, errors.New("async query did not return job href")
 	}
 	jobURL := resolveHrefToURL(jobHref)
 	for i := 0; i < 60; i++ {
 		var status map[string]interface{}
 		if err := apiCall(jobURL, "GET", nil, &status); err != nil {
-			return trafficQueryResult{}, nil, err
+			return trafficQueryResult{}, nil, nil, err
 		}
 		s, _ := status["status"].(string)
 		switch s {
 		case "completed":
 			rows, err := getAsyncQueryResultRows(jobURL)
 			if err != nil {
-				return trafficQueryResult{}, nil, err
+				return trafficQueryResult{}, nil, nil, err
 			}
 			count, ok := extractResultCount(status)
 			if !ok {
@@ -5760,13 +5858,14 @@ func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []st
 			if res.Truncated {
 				res.Warning = fmt.Sprintf("result may be truncated at max_results=%d", trafficQueryMaxResults)
 			}
-			return res, aggregatePortCounts(rows), nil
+			samples := extractBlockedFlowSamples(rows, queryName, endUTC)
+			return res, aggregatePortCounts(rows), samples, nil
 		case "failed":
-			return trafficQueryResult{}, nil, fmt.Errorf("async job failed: %s", statusMessage(status))
+			return trafficQueryResult{}, nil, nil, fmt.Errorf("async job failed: %s", statusMessage(status))
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return trafficQueryResult{}, nil, fmt.Errorf("async job timed out")
+	return trafficQueryResult{}, nil, nil, fmt.Errorf("async job timed out")
 }
 
 func getAsyncQueryResultRows(jobURL string) ([]map[string]interface{}, error) {
@@ -5828,6 +5927,174 @@ func aggregatePortCounts(rows []map[string]interface{}) map[string]int {
 		out[key] += n
 	}
 	return out
+}
+
+func extractBlockedFlowSamples(rows []map[string]interface{}, leg string, fallbackUTC time.Time) []blockedFlowSample {
+	out := make([]blockedFlowSample, 0, len(rows))
+	for _, row := range rows {
+		sig := blockedFlowSignature(row, leg)
+		if sig == "" {
+			continue
+		}
+		out = append(out, blockedFlowSample{
+			Signature:       sig,
+			LastDetectedUTC: blockedFlowLastDetectedUTC(row, fallbackUTC),
+		})
+	}
+	return out
+}
+
+func blockedFlowSignature(row map[string]interface{}, leg string) string {
+	sanitized := sanitizeFlowRowForSignature(row)
+	if len(sanitized) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(sanitized)
+	if err != nil || len(raw) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return leg + "|" + hex.EncodeToString(sum[:])
+}
+
+func sanitizeFlowRowForSignature(row map[string]interface{}) map[string]interface{} {
+	volatile := map[string]struct{}{
+		"timestamp":            {},
+		"event_timestamp":      {},
+		"start_time":           {},
+		"end_time":             {},
+		"first_detected":       {},
+		"last_detected":        {},
+		"first_detection_time": {},
+		"last_detection_time":  {},
+		"first_seen":           {},
+		"last_seen":            {},
+		"num_connections":      {},
+	}
+	out := make(map[string]interface{}, len(row))
+	for k, v := range row {
+		key := strings.TrimSpace(strings.ToLower(k))
+		if key == "" {
+			continue
+		}
+		if _, drop := volatile[key]; drop {
+			continue
+		}
+		if cleaned, ok := sanitizeFlowValueForSignature(v); ok {
+			out[key] = cleaned
+		}
+	}
+	return out
+}
+
+func sanitizeFlowValueForSignature(v interface{}) (interface{}, bool) {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(t))
+		for k, child := range t {
+			key := strings.TrimSpace(strings.ToLower(k))
+			if key == "" {
+				continue
+			}
+			if cleaned, ok := sanitizeFlowValueForSignature(child); ok {
+				out[key] = cleaned
+			}
+		}
+		return out, len(out) > 0
+	case []interface{}:
+		out := make([]interface{}, 0, len(t))
+		for _, child := range t {
+			if cleaned, ok := sanitizeFlowValueForSignature(child); ok {
+				out = append(out, cleaned)
+			}
+		}
+		return out, len(out) > 0
+	case string:
+		s := strings.TrimSpace(t)
+		return s, s != ""
+	case bool:
+		return t, true
+	case float64, int, int64, json.Number:
+		return t, true
+	default:
+		return nil, false
+	}
+}
+
+func blockedFlowLastDetectedUTC(row map[string]interface{}, fallbackUTC time.Time) time.Time {
+	keys := []string{
+		"last_detected",
+		"last_detection_time",
+		"last_seen",
+		"last_seen_at",
+		"event_timestamp",
+		"timestamp",
+		"end_time",
+	}
+	for _, k := range keys {
+		if t, ok := timeFromAny(row[k]); ok {
+			return t.UTC()
+		}
+	}
+	if ts := findTimestampString(row); ts != "" {
+		if t, err := parseFlexibleTime(ts); err == nil {
+			return t.UTC()
+		}
+	}
+	return fallbackUTC.UTC()
+}
+
+func timeFromAny(v interface{}) (time.Time, bool) {
+	switch t := v.(type) {
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return time.Time{}, false
+		}
+		if parsed, err := parseFlexibleTime(s); err == nil {
+			return parsed.UTC(), true
+		}
+	case float64:
+		return unixFloatToTime(t)
+	case int:
+		return unixIntToTime(int64(t))
+	case int64:
+		return unixIntToTime(t)
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			return unixIntToTime(i)
+		}
+		if f, err := t.Float64(); err == nil {
+			return unixFloatToTime(f)
+		}
+	case map[string]interface{}:
+		for _, key := range []string{"timestamp", "time", "value"} {
+			if parsed, ok := timeFromAny(t[key]); ok {
+				return parsed, true
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
+func unixIntToTime(v int64) (time.Time, bool) {
+	if v <= 0 {
+		return time.Time{}, false
+	}
+	if v > 1_000_000_000_000 {
+		return time.UnixMilli(v).UTC(), true
+	}
+	return time.Unix(v, 0).UTC(), true
+}
+
+func unixFloatToTime(v float64) (time.Time, bool) {
+	if v <= 0 {
+		return time.Time{}, false
+	}
+	if v > 1_000_000_000_000 {
+		return time.UnixMilli(int64(v)).UTC(), true
+	}
+	return time.Unix(int64(v), 0).UTC(), true
 }
 
 func intFromAny(v interface{}) int {
@@ -6823,6 +7090,7 @@ func loadRollingState() {
 		BaselineWorkloads:   map[string]struct{}{},
 		BaselineBlocked:     map[string]targetBaseline{},
 		Buckets:             make([]rollingBucket, 0, len(persisted.Buckets)),
+		BlockedFlowLastSeen: map[string]map[string]time.Time{},
 	}
 	for _, n := range persisted.BaselineWorkloads {
 		n = strings.TrimSpace(n)
