@@ -4228,6 +4228,7 @@ func getTamperingWindow(baseURL string, startUTC, endUTC time.Time, baseline boo
 	if len(events) == 0 && err != nil {
 		return 0, nil, err
 	}
+	events = filterTamperingEventsInWindow(events, startUTC, endUTC)
 
 	eventDedup := map[string]struct{}{}
 	dedup := map[string]struct{}{}
@@ -4252,6 +4253,24 @@ func getTamperingWindow(baseURL string, startUTC, endUTC time.Time, baseline boo
 		return len(eventDedup), names, err
 	}
 	return len(events), names, err
+}
+
+func filterTamperingEventsInWindow(events []map[string]interface{}, startUTC, endUTC time.Time) []map[string]interface{} {
+	if len(events) == 0 {
+		return events
+	}
+	filtered := make([]map[string]interface{}, 0, len(events))
+	for _, evt := range events {
+		ts, ok := eventTimestampUTC(evt)
+		if !ok {
+			continue
+		}
+		if ts.Before(startUTC) || ts.After(endUTC) {
+			continue
+		}
+		filtered = append(filtered, evt)
+	}
+	return filtered
 }
 
 func fetchTamperingEventsPaged(baseURL string, startUTC, endUTC time.Time, client *http.Client) ([]map[string]interface{}, error) {
