@@ -4063,7 +4063,19 @@ func getTamperingWindow(baseURL string, startUTC, endUTC time.Time, baseline boo
 	if baseline {
 		client = tamperingBaselineHTTPClient
 	}
-	events, err := fetchTamperingEventsPaged(baseURL, startUTC, endUTC, client)
+	var (
+		events []map[string]interface{}
+		err    error
+	)
+	if baseline {
+		// Startup baseline should mirror a single direct 24h query path first.
+		events, err = fetchTamperingSlice(baseURL, startUTC, endUTC, client)
+		if err != nil {
+			events, err = fetchTamperingEventsPaged(baseURL, startUTC, endUTC, client)
+		}
+	} else {
+		events, err = fetchTamperingEventsPaged(baseURL, startUTC, endUTC, client)
+	}
 	if len(events) == 0 && err != nil {
 		return 0, nil, err
 	}
