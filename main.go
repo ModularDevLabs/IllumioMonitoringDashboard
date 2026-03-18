@@ -1420,10 +1420,7 @@ func startFullBlockedHistoryReconcileAsync(reason string, selectedTargets []Traf
 		fp := blockedHistoryReconcileFingerprint(targets)
 		log.Printf("[HISTORY] full reconcile start reason=%s targets=%d", reason, len(targets))
 		exclusions := configuredSourceExclusions()
-		excludedHRefs, exclusionWarn := resolveSourceExclusionHRefs(baseURL, exclusions)
-		if exclusionWarn != "" {
-			log.Printf("[HISTORY] full reconcile exclusion warning: %s", exclusionWarn)
-		}
+		excludedHRefs := resolveSourceExclusionHRefsBestEffort(baseURL, exclusions)
 		days, updated, failed := reconcileAllStoredBlockedHistory(baseURL, targets, time.Now().UTC(), excludedHRefs)
 		reconcileStatusMu.Lock()
 		reconcileStatus.LastDays = days
@@ -5697,6 +5694,27 @@ func resolveSourceExclusionHRefs(baseURL string, exclusions []TrafficTarget) ([]
 	}
 	sort.Strings(hrefs)
 	return hrefs, strings.Join(warnings, " | ")
+}
+
+func resolveSourceExclusionHRefsBestEffort(baseURL string, exclusions []TrafficTarget) []string {
+	hrefsSet := map[string]struct{}{}
+	for _, ex := range exclusions {
+		res, err := getBlockedCountTargetLabelHRefs(baseURL, ex)
+		if err != nil {
+			continue
+		}
+		for _, h := range res {
+			if strings.TrimSpace(h) != "" {
+				hrefsSet[h] = struct{}{}
+			}
+		}
+	}
+	hrefs := make([]string, 0, len(hrefsSet))
+	for h := range hrefsSet {
+		hrefs = append(hrefs, h)
+	}
+	sort.Strings(hrefs)
+	return hrefs
 }
 
 func getBlockedCountTargetLabelHRefs(baseURL string, target TrafficTarget) ([]string, error) {
