@@ -322,7 +322,9 @@
             borderColor: color,
             backgroundColor: color,
             borderWidth: 2,
-            pointRadius: 1.5,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            pointHitRadius: 8,
             tension: 0.25
         }];
         (overlays || []).forEach((ov) => {
@@ -334,7 +336,9 @@
                 borderColor: ov.color || '#17a2b8',
                 backgroundColor: ov.color || '#17a2b8',
                 borderWidth: 2,
-                pointRadius: 0,
+                pointRadius: 2,
+                pointHoverRadius: 4,
+                pointHitRadius: 7,
                 tension: 0.2,
                 fill: false
             });

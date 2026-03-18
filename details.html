@@ -319,7 +319,9 @@
                 backgroundColor: 'rgba(250, 102, 36, 0.15)',
                 tension: 0.25,
                 fill: true,
-                pointRadius: 2
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                pointHitRadius: 8
             }];
             if (maPoints && maPoints.length > 0) {
                 const maByTS = new Map(maPoints.map((p) => [new Date(p.timestamp).toISOString(), Number(p.value || 0)]));
@@ -333,7 +335,9 @@
                     backgroundColor: 'rgba(23, 162, 184, 0.10)',
                     tension: 0.2,
                     fill: false,
-                    pointRadius: 0,
+                    pointRadius: 2,
+                    pointHoverRadius: 4,
+                    pointHitRadius: 7,
                     borderWidth: 2
                 });
             }
