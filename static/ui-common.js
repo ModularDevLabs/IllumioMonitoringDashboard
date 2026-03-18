@@ -68,7 +68,7 @@
       style.id = styleId;
       style.textContent = [
         '.chart-zoom-overlay{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;padding:16px;}',
-        '.chart-zoom-modal{width:min(1200px,96vw);height:min(760px,92vh);background:var(--panel-bg,var(--surface-1,#fff));border:1px solid var(--border,#d6dde5);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.35);display:flex;flex-direction:column;}',
+        '.chart-zoom-modal{width:min(98vw,1920px);height:min(94vh,1200px);background:var(--panel-bg,var(--surface-1,#fff));border:1px solid var(--border,#d6dde5);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.35);display:flex;flex-direction:column;}',
         '.chart-zoom-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border,#d6dde5);}',
         '.chart-zoom-title{font-size:0.95rem;font-weight:700;color:var(--text,var(--text-1,#111));}',
         '.chart-zoom-close{border:1px solid var(--border,#d6dde5);background:var(--panel-bg,var(--surface-1,#fff));color:var(--text,var(--text-1,#111));border-radius:6px;padding:4px 10px;cursor:pointer;}',
@@ -112,7 +112,35 @@
     if (zoomModalEl) zoomModalEl.style.display = 'none';
   }
 
-  function baseZoomOptions() {
+  function baseZoomOptions(sourceChart) {
+    var xScale = (sourceChart && sourceChart.options && sourceChart.options.scales && sourceChart.options.scales.x) ? sourceChart.options.scales.x : {};
+    var yScale = (sourceChart && sourceChart.options && sourceChart.options.scales && sourceChart.options.scales.y) ? sourceChart.options.scales.y : {};
+    var yTicks = (yScale && yScale.ticks) ? yScale.ticks : {};
+    var yOut = {
+      beginAtZero: !!(yScale && yScale.beginAtZero)
+    };
+    if (Object.prototype.hasOwnProperty.call(yScale || {}, 'min')) yOut.min = yScale.min;
+    if (Object.prototype.hasOwnProperty.call(yScale || {}, 'max')) yOut.max = yScale.max;
+    if (Object.prototype.hasOwnProperty.call(yTicks || {}, 'stepSize')) {
+      yOut.ticks = Object.assign({}, yOut.ticks || {}, { stepSize: yTicks.stepSize });
+    }
+    if (Object.prototype.hasOwnProperty.call(yScale || {}, 'ticks')) {
+      yOut.ticks = Object.assign({}, yTicks);
+    }
+    if (Object.prototype.hasOwnProperty.call(yScale || {}, 'grid')) {
+      yOut.grid = Object.assign({}, yScale.grid);
+    }
+
+    var xOut = {
+      ticks: { maxRotation: 45, minRotation: 0 }
+    };
+    if (Object.prototype.hasOwnProperty.call(xScale || {}, 'ticks')) {
+      xOut.ticks = Object.assign({}, xOut.ticks, xScale.ticks);
+    }
+    if (Object.prototype.hasOwnProperty.call(xScale || {}, 'grid')) {
+      xOut.grid = Object.assign({}, xScale.grid);
+    }
+
     return {
       responsive: true,
       maintainAspectRatio: false,
@@ -121,12 +149,8 @@
         legend: { display: true }
       },
       scales: {
-        x: {
-          ticks: { maxRotation: 45, minRotation: 0 }
-        },
-        y: {
-          beginAtZero: true
-        }
+        x: xOut,
+        y: yOut
       }
     };
   }
@@ -153,7 +177,7 @@
           return Object.assign({}, ds, { data: Array.isArray(ds.data) ? ds.data.slice() : ds.data });
         }) : []
       },
-      options: baseZoomOptions()
+      options: baseZoomOptions(chart)
     };
     zoomChart = new Chart(canvas.getContext('2d'), config);
     modal.style.display = 'flex';
