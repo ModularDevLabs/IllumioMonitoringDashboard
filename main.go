@@ -45,7 +45,7 @@ const metricsDBFileName = "metrics.db"
 const trafficQueryMaxResults = 200000
 const venQueryMaxDuration = 4 * time.Minute
 const tamperingQueryMaxDuration = 4 * time.Minute
-const rollingStateSchemaVersion = 1
+const rollingStateSchemaVersion = 2
 const defaultDataDirName = ".illumio-monitoring-dashboard"
 const defaultBindAddress = ":18443"
 const defaultPublicBaseURL = "http://localhost:18443"
@@ -6117,6 +6117,51 @@ func extractBlockedFlowSamples(rows []map[string]interface{}, leg string, fallba
 }
 
 func blockedFlowSignature(row map[string]interface{}, leg string) string {
+	srcID := firstNonEmptyString(
+		pathString(row, "src", "workload", "href"),
+		pathString(row, "source", "workload", "href"),
+		pathString(row, "src_workload", "href"),
+		pathString(row, "consumer", "workload", "href"),
+		pathString(row, "consumer", "ip"),
+		pathString(row, "src", "ip"),
+		pathString(row, "source_ip"),
+		pathString(row, "src_ip"),
+		pathString(row, "src_fqdn"),
+	)
+	dstID := firstNonEmptyString(
+		pathString(row, "dst", "workload", "href"),
+		pathString(row, "destination", "workload", "href"),
+		pathString(row, "dst_workload", "href"),
+		pathString(row, "provider", "workload", "href"),
+		pathString(row, "provider", "ip"),
+		pathString(row, "dst", "ip"),
+		pathString(row, "destination_ip"),
+		pathString(row, "dst_ip"),
+		pathString(row, "dst_fqdn"),
+	)
+	svcPort := firstNonZeroInt(
+		pathInt(row, "service", "port"),
+		pathInt(row, "service_port"),
+		pathInt(row, "port"),
+	)
+	svcProto := firstNonZeroInt(
+		pathInt(row, "service", "proto"),
+		pathInt(row, "service_proto"),
+		pathInt(row, "proto"),
+	)
+	ruleID := firstNonEmptyString(
+		pathString(row, "policy_rule", "href"),
+		pathString(row, "rule", "href"),
+		pathString(row, "rule_href"),
+	)
+	decision := firstNonEmptyString(
+		pathString(row, "policy_decision"),
+		pathFirstArrayString(row, "policy_decisions"),
+	)
+	if srcID != "" || dstID != "" || svcPort > 0 || svcProto > 0 || ruleID != "" || decision != "" {
+		return fmt.Sprintf("%s|src=%s|dst=%s|svc=%d/%d|rule=%s|dec=%s", leg, srcID, dstID, svcPort, svcProto, ruleID, decision)
+	}
+
 	sanitized := sanitizeFlowRowForSignature(row)
 	if len(sanitized) == 0 {
 		return ""
@@ -6131,17 +6176,31 @@ func blockedFlowSignature(row map[string]interface{}, leg string) string {
 
 func sanitizeFlowRowForSignature(row map[string]interface{}) map[string]interface{} {
 	volatile := map[string]struct{}{
-		"timestamp":            {},
-		"event_timestamp":      {},
-		"start_time":           {},
-		"end_time":             {},
-		"first_detected":       {},
-		"last_detected":        {},
-		"first_detection_time": {},
-		"last_detection_time":  {},
-		"first_seen":           {},
-		"last_seen":            {},
-		"num_connections":      {},
+		"timestamp":             {},
+		"event_timestamp":       {},
+		"created_at":            {},
+		"updated_at":            {},
+		"last_updated":          {},
+		"start_time":            {},
+		"end_time":              {},
+		"first_detected":        {},
+		"last_detected":         {},
+		"first_detection_time":  {},
+		"last_detection_time":   {},
+		"first_seen":            {},
+		"last_seen":             {},
+		"last_seen_at":          {},
+		"num_connections":       {},
+		"num_bytes":             {},
+		"num_packets":           {},
+		"bytes":                 {},
+		"packets":               {},
+		"count":                 {},
+		"stats":                 {},
+		"statistics":            {},
+		"aggregate_num_bytes":   {},
+		"aggregate_num_packets": {},
+		"aggregate_connections": {},
 	}
 	out := make(map[string]interface{}, len(row))
 	for k, v := range row {
@@ -6157,6 +6216,102 @@ func sanitizeFlowRowForSignature(row map[string]interface{}) map[string]interfac
 		}
 	}
 	return out
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func firstNonZeroInt(values ...int) int {
+	for _, v := range values {
+		if v != 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+func pathString(row map[string]interface{}, path ...string) string {
+	v, ok := pathValue(row, path...)
+	if !ok {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t)
+	case json.Number:
+		return strings.TrimSpace(t.String())
+	case float64:
+		return strconv.FormatInt(int64(t), 10)
+	case int:
+		return strconv.Itoa(t)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	default:
+		return ""
+	}
+}
+
+func pathInt(row map[string]interface{}, path ...string) int {
+	v, ok := pathValue(row, path...)
+	if !ok {
+		return 0
+	}
+	return intFromAny(v)
+}
+
+func pathFirstArrayString(row map[string]interface{}, path ...string) string {
+	v, ok := pathValue(row, path...)
+	if !ok {
+		return ""
+	}
+	arr, ok := v.([]interface{})
+	if !ok || len(arr) == 0 {
+		return ""
+	}
+	for _, item := range arr {
+		switch t := item.(type) {
+		case string:
+			s := strings.TrimSpace(t)
+			if s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func pathValue(root map[string]interface{}, path ...string) (interface{}, bool) {
+	var cur interface{} = root
+	for _, segment := range path {
+		m, ok := cur.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		next, ok := m[segment]
+		if !ok {
+			segmentLower := strings.ToLower(segment)
+			found := false
+			for k, v := range m {
+				if strings.ToLower(strings.TrimSpace(k)) == segmentLower {
+					next = v
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, false
+			}
+		}
+		cur = next
+	}
+	return cur, true
 }
 
 func sanitizeFlowValueForSignature(v interface{}) (interface{}, bool) {
