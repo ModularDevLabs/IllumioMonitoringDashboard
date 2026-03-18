@@ -1,5 +1,28 @@
 # Release Notes
 
+## v1.2.4 - 2026-03-18
+
+Stable release focused on tampering-data correctness, reconciliation reliability, and operator controls.
+
+### Tampering Data Correctness
+- Tampering queries now strictly filter events to the requested time window before dedupe/counting.
+- Tampering event counts are deduped by stable event signature before 5m/24h trend aggregation.
+- Added startup tampering-history reconciliation with persisted per-day completion markers for prior stored day keys.
+
+### Tampering Reconciliation Controls
+- Added manual tampering-history reconciliation API:
+  - `POST /api/reconcile/tampering-history`
+- Added tampering reconcile status API:
+  - `GET /api/reconcile/tampering-history/status`
+- Added Settings UI control:
+  - `Reconcile Tampering History` button with status line.
+
+### Tampering Pipeline Stability
+- Added tampering slice pagination safety guards to prevent runaway `skip` loops:
+  - repeated-page signature detection
+  - stagnation detection when pages add no new events
+  - per-slice timeout guard for non-progressing pagination
+
 ## v1.2.2 - 2026-03-18
 
 Stabilization release focused on blocked-traffic correctness, reconciliation controls, and operator usability.
