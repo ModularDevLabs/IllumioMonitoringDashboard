@@ -1421,7 +1421,14 @@ func startFullBlockedHistoryReconcileAsync(reason string, selectedTargets []Traf
 		log.Printf("[HISTORY] full reconcile start reason=%s targets=%d", reason, len(targets))
 		exclusions := configuredSourceExclusions()
 		excludedHRefs := resolveSourceExclusionHRefsBestEffort(baseURL, exclusions)
-		days, updated, failed := reconcileAllStoredBlockedHistory(baseURL, targets, time.Now().UTC(), excludedHRefs)
+		nowUTC := time.Now().UTC()
+		days, updated, failed := reconcileAllStoredBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
+		todayUpdated, todayFailed := reconcileCurrentDayBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
+		updated += todayUpdated
+		failed += todayFailed
+		if len(targets) > 0 {
+			days++
+		}
 		reconcileStatusMu.Lock()
 		reconcileStatus.LastDays = days
 		reconcileStatus.LastUpdated = updated
@@ -5201,6 +5208,82 @@ func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, n
 		log.Printf("[HISTORY] full reconcile persisted changed_counts=%t changed_ports=%t", changedCounts, changedPorts)
 	}
 	return len(dayKeys), updated, failed
+}
+
+func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) (int, int) {
+	if len(targets) == 0 {
+		return 0, 0
+	}
+	loc := configuredDayLocation()
+	dayStart := localDayStart(nowUTC, loc)
+	dayEnd := nowUTC
+	if !dayStart.Before(dayEnd) {
+		return 0, 0
+	}
+	dayKey := dayStart.Format("2006-01-02")
+	portDailyEnabled := configuredBlockedPortDailyEnabled()
+
+	if verboseBlockedLoggingEnabled() {
+		log.Printf("[HISTORY] today reconcile start day=%s targets=%d window=%s..%s", dayKey, len(targets), dayStart.UTC().Format(time.RFC3339), dayEnd.UTC().Format(time.RFC3339))
+	}
+
+	updated := 0
+	failed := 0
+	changedCounts := false
+	changedPorts := false
+	for _, target := range targets {
+		if strings.TrimSpace(target.Name) == "" {
+			continue
+		}
+		var (
+			qRes       trafficQueryResult
+			portCounts map[string]int
+			err        error
+		)
+		if portDailyEnabled {
+			qRes, portCounts, err = getBlockedCountAndPortCountsForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
+		} else {
+			qRes, err = getBlockedCountForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
+		}
+		if err != nil {
+			failed++
+			log.Printf("[HISTORY] today reconcile failed day=%s target=%s: %v", dayKey, target.Name, err)
+			continue
+		}
+		if qRes.Warning != "" {
+			log.Printf("[HISTORY] today reconcile warning day=%s target=%s: %s", dayKey, target.Name, qRes.Warning)
+		}
+		historyMu.Lock()
+		if blockedDaily[dayKey] == nil {
+			blockedDaily[dayKey] = map[string]int{}
+		}
+		blockedDaily[dayKey][target.Name] = qRes.Count
+		changedCounts = true
+		if portDailyEnabled {
+			if blockedPortsDaily[dayKey] == nil {
+				blockedPortsDaily[dayKey] = map[string]map[string]int{}
+			}
+			if portCounts == nil {
+				portCounts = map[string]int{}
+			}
+			blockedPortsDaily[dayKey][target.Name] = portCounts
+			changedPorts = true
+		}
+		historyMu.Unlock()
+		updated++
+	}
+
+	pruneBlockedHistory(nowUTC, configuredHistoryDays())
+	if changedCounts {
+		saveBlockedHistory()
+	}
+	if changedPorts {
+		saveBlockedPortHistory()
+	}
+	if verboseBlockedLoggingEnabled() {
+		log.Printf("[HISTORY] today reconcile complete day=%s updated=%d failed=%d changed_counts=%t changed_ports=%t", dayKey, updated, failed, changedCounts, changedPorts)
+	}
+	return updated, failed
 }
 
 func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
