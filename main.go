@@ -2805,13 +2805,18 @@ func blockedDailyTrendSeries(target string, keepDays int) []TrendPoint {
 	}
 	loc := configuredDayLocation()
 	now := time.Now()
+	nowUTC := now.UTC()
 	cutoff := localDayStart(now, loc).AddDate(0, 0, -keepDays)
+	todayKey := localDayStart(now, loc).Format("2006-01-02")
 	historyMu.Lock()
 	points := make([]TrendPoint, 0, len(blockedDaily))
-	hasToday := false
 	for day, targets := range blockedDaily {
 		d, err := parseDayKeyInLocation(day, loc)
 		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		// Always render "today so far" from live rolling dedupe state, not persisted day totals.
+		if day == todayKey {
 			continue
 		}
 		v, ok := targets[target]
@@ -2822,35 +2827,60 @@ func blockedDailyTrendSeries(target string, keepDays int) []TrendPoint {
 			Timestamp: d.Add(12 * time.Hour).UTC(),
 			Value:     v,
 		})
-		if day == localDayStart(now, loc).Format("2006-01-02") {
-			hasToday = true
-		}
 	}
 	historyMu.Unlock()
 	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
 
-	// Add a live "today so far" point so daily charts continue through the current day.
+	// Add a live "today so far" point so daily charts stay accurate through the current day.
 	todayStartLocal := localDayStart(now, loc)
 	todayStartUTC := todayStartLocal.UTC()
-	if !hasToday {
-		todayCount := 0
-		rollingMu.Lock()
-		for _, b := range rollingCache.Buckets {
-			if !b.EndUTC.After(todayStartUTC) {
-				continue
-			}
-			if v, ok := b.BlockedByTarget[target]; ok {
-				todayCount += v
-			}
-		}
-		rollingMu.Unlock()
-		points = append(points, TrendPoint{
-			Timestamp: now.UTC(),
-			Value:     todayCount,
-		})
-		sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
-	}
+	todayCount := blockedTodaySoFarCount(target, todayStartUTC, nowUTC)
+	points = append(points, TrendPoint{
+		Timestamp: nowUTC,
+		Value:     todayCount,
+	})
+	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
 	return points
+}
+
+func blockedTodaySoFarCount(target string, todayStartUTC, nowUTC time.Time) int {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return 0
+	}
+	if configuredBlockedRollingDedupeBackend() == "sqlite" && metricsDB != nil {
+		var count int
+		err := metricsDB.QueryRow(
+			`SELECT COUNT(1) FROM blocked_flow_seen WHERE target = ? AND last_seen_unix > ? AND last_seen_unix <= ?`,
+			target, todayStartUTC.Unix(), nowUTC.Unix(),
+		).Scan(&count)
+		if err == nil {
+			return count
+		}
+	}
+
+	rollingMu.Lock()
+	defer rollingMu.Unlock()
+	if rollingCache.BlockedFlowLastSeen != nil {
+		if targetSeen, ok := rollingCache.BlockedFlowLastSeen[target]; ok {
+			count := 0
+			for _, ts := range targetSeen {
+				if ts.After(todayStartUTC) && !ts.After(nowUTC) {
+					count++
+				}
+			}
+			return count
+		}
+	}
+	// Fallback: sum live 5m bucket increments since local midnight.
+	count := 0
+	for _, b := range rollingCache.Buckets {
+		if !b.EndUTC.After(todayStartUTC) {
+			continue
+		}
+		count += b.BlockedByTarget[target]
+	}
+	return count
 }
 
 func blockedPortDailySeries(target string, keepDays int) []BlockedPortDay {
