@@ -416,6 +416,7 @@ func main() {
 	loadAnomalyHistory()
 
 	initPendingStats()
+	startFullBlockedHistoryReconcileAsync("startup")
 	go backgroundCollector()
 
 	http.HandleFunc("/", withRequestTiming("dashboard", serveDashboard))
@@ -1281,14 +1282,25 @@ func handleReconcileBlockedHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !fullReconcileInProgress.CompareAndSwap(false, true) {
-		log.Printf("[HISTORY] full reconcile request ignored: already in progress")
+	if !startFullBlockedHistoryReconcileAsync("api") {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"started": false,
 			"message": "blocked history reconciliation is already running",
 		})
 		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"started": true,
+		"message": "blocked history reconciliation started",
+	})
+}
+
+func startFullBlockedHistoryReconcileAsync(reason string) bool {
+	if !fullReconcileInProgress.CompareAndSwap(false, true) {
+		log.Printf("[HISTORY] full reconcile request ignored: already in progress (reason=%s)", reason)
+		return false
 	}
 	go func() {
 		defer fullReconcileInProgress.Store(false)
@@ -1298,20 +1310,16 @@ func handleReconcileBlockedHistory(w http.ResponseWriter, r *http.Request) {
 		configMutex.RUnlock()
 		baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), strings.TrimSpace(orgID))
 		targets := configuredTrafficTargets()
-		log.Printf("[HISTORY] full reconcile start targets=%d", len(targets))
+		log.Printf("[HISTORY] full reconcile start reason=%s targets=%d", reason, len(targets))
 		exclusions := configuredSourceExclusions()
 		excludedHRefs, exclusionWarn := resolveSourceExclusionHRefs(baseURL, exclusions)
 		if exclusionWarn != "" {
 			log.Printf("[HISTORY] full reconcile exclusion warning: %s", exclusionWarn)
 		}
 		days, updated, failed := reconcileAllStoredBlockedHistory(baseURL, targets, time.Now().UTC(), excludedHRefs)
-		log.Printf("[HISTORY] full reconcile complete days=%d updated=%d failed=%d", days, updated, failed)
+		log.Printf("[HISTORY] full reconcile complete reason=%s days=%d updated=%d failed=%d", reason, days, updated, failed)
 	}()
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"started": true,
-		"message": "blocked history reconciliation started",
-	})
+	return true
 }
 
 func handleWebhookTest(w http.ResponseWriter, r *http.Request) {
