@@ -4099,6 +4099,7 @@ func fetchTamperingEventsPaged(baseURL string, startUTC, endUTC time.Time, clien
 	all := make([]map[string]interface{}, 0, pageSize)
 	started := time.Now()
 	lastPageSig := ""
+	hadSuccessfulPage := false
 
 	for page := 0; ; page++ {
 		if time.Since(started) > tamperingQueryMaxDuration {
@@ -4126,7 +4127,12 @@ func fetchTamperingEventsPaged(baseURL string, startUTC, endUTC time.Time, clien
 				break
 			}
 		}
+		hadSuccessfulPage = true
 		if len(batch) == 0 {
+			if page == 0 {
+				// Empty first page is a valid empty result, not an error needing expensive fallback.
+				return all, nil
+			}
 			break
 		}
 
@@ -4161,6 +4167,9 @@ func fetchTamperingEventsPaged(baseURL string, startUTC, endUTC time.Time, clien
 		}
 	}
 	if len(all) == 0 {
+		if hadSuccessfulPage {
+			return all, nil
+		}
 		return fetchTamperingEventsBySlices(baseURL, startUTC, endUTC, time.Hour, client)
 	}
 	return all, nil
@@ -4197,21 +4206,44 @@ func fetchTamperingEventsBySlices(baseURL string, startUTC, endUTC time.Time, st
 }
 
 func fetchTamperingSlice(baseURL string, startUTC, endUTC time.Time, client *http.Client) ([]map[string]interface{}, error) {
-	q := url.Values{}
-	q.Set("event_type", "agent.tampering")
-	q.Set("start_date", startUTC.Format(pceTimeFormat))
-	q.Set("end_date", endUTC.Format(pceTimeFormat))
-	q.Set("max_results", "200000")
-	batch, err := fetchCollectionPageWithClient(client, baseURL+"/events?"+q.Encode())
+	const pageSize = 1000
+	fetchPaged := func(useTimeParams bool) ([]map[string]interface{}, error) {
+		all := make([]map[string]interface{}, 0, pageSize)
+		for page := 0; ; page++ {
+			q := url.Values{}
+			q.Set("event_type", "agent.tampering")
+			if useTimeParams {
+				q.Set("start_time", startUTC.Format(pceTimeFormat))
+				q.Set("end_time", endUTC.Format(pceTimeFormat))
+			} else {
+				q.Set("start_date", startUTC.Format(pceTimeFormat))
+				q.Set("end_date", endUTC.Format(pceTimeFormat))
+			}
+			q.Set("max_results", strconv.Itoa(pageSize))
+			q.Set("skip", strconv.Itoa(page*pageSize))
+			batch, err := fetchCollectionPageWithClient(client, baseURL+"/events?"+q.Encode())
+			if err != nil {
+				if page == 0 {
+					return nil, err
+				}
+				break
+			}
+			if len(batch) == 0 {
+				break
+			}
+			all = append(all, batch...)
+			if len(batch) < pageSize {
+				break
+			}
+		}
+		return all, nil
+	}
+
+	batch, err := fetchPaged(false)
 	if err == nil {
 		return batch, nil
 	}
-	q2 := url.Values{}
-	q2.Set("event_type", "agent.tampering")
-	q2.Set("start_time", startUTC.Format(pceTimeFormat))
-	q2.Set("end_time", endUTC.Format(pceTimeFormat))
-	q2.Set("max_results", "200000")
-	return fetchCollectionPageWithClient(client, baseURL+"/events?"+q2.Encode())
+	return fetchPaged(true)
 }
 
 func tamperingEventSignature(event map[string]interface{}) string {
