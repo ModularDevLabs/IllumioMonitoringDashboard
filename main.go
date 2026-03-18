@@ -304,8 +304,10 @@ type dailyBlockedPortRecord struct {
 }
 
 type blockedHistoryReconcileMarker struct {
-	CompletedAt       time.Time `json:"completed_at"`
-	TargetFingerprint string    `json:"target_fingerprint"`
+	SchemaVersion      int               `json:"schema_version"`
+	CompletedByTarget  map[string]string `json:"completed_by_target,omitempty"`
+	CompletedAt        time.Time         `json:"completed_at,omitempty"`        // legacy
+	TargetFingerprint  string            `json:"target_fingerprint,omitempty"`  // legacy
 }
 
 type blockedHistoryReconcileStatus struct {
@@ -1309,7 +1311,7 @@ func handleReconcileBlockedHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !startFullBlockedHistoryReconcileAsync("api") {
+	if !startFullBlockedHistoryReconcileAsync("api", nil) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"started": false,
@@ -1339,23 +1341,33 @@ func handleReconcileBlockedHistoryStatus(w http.ResponseWriter, r *http.Request)
 
 func maybeStartStartupBlockedHistoryReconcile() {
 	targets := configuredTrafficTargets()
-	fp := blockedHistoryReconcileFingerprint(targets)
 	marker, ok := loadBlockedHistoryReconcileMarker()
-	if ok && strings.TrimSpace(marker.TargetFingerprint) == fp {
+	pending := make([]TrafficTarget, 0, len(targets))
+	for _, t := range targets {
+		if strings.TrimSpace(t.Name) == "" {
+			continue
+		}
+		if ok && marker.HasTarget(targetKeyForReconcile(t)) {
+			continue
+		}
+		pending = append(pending, t)
+	}
+	if len(pending) == 0 {
 		reconcileStatusMu.Lock()
 		reconcileStatus.StartupSkipped = true
 		reconcileStatus.StartupSkipReason = "marker exists for current target set"
-		reconcileStatus.LastCompletedAt = marker.CompletedAt
-		reconcileStatus.LastTargetSignature = marker.TargetFingerprint
+		reconcileStatus.LastCompletedAt = marker.LastCompletedAt()
+		reconcileStatus.LastTargetSignature = blockedHistoryReconcileFingerprint(targets)
 		reconcileStatus.LastMessage = "startup reconcile skipped (already completed)"
 		reconcileStatusMu.Unlock()
-		log.Printf("[HISTORY] startup full reconcile skipped: marker exists for current target set")
+		log.Printf("[HISTORY] startup full reconcile skipped: all %d target markers present", len(targets))
 		return
 	}
-	startFullBlockedHistoryReconcileAsync("startup")
+	log.Printf("[HISTORY] startup full reconcile pending targets=%d/%d", len(pending), len(targets))
+	startFullBlockedHistoryReconcileAsync("startup", pending)
 }
 
-func startFullBlockedHistoryReconcileAsync(reason string) bool {
+func startFullBlockedHistoryReconcileAsync(reason string, selectedTargets []TrafficTarget) bool {
 	if !fullReconcileInProgress.CompareAndSwap(false, true) {
 		log.Printf("[HISTORY] full reconcile request ignored: already in progress (reason=%s)", reason)
 		return false
@@ -1381,7 +1393,10 @@ func startFullBlockedHistoryReconcileAsync(reason string) bool {
 		orgID := config.OrgID
 		configMutex.RUnlock()
 		baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), strings.TrimSpace(orgID))
-		targets := configuredTrafficTargets()
+		targets := selectedTargets
+		if len(targets) == 0 {
+			targets = configuredTrafficTargets()
+		}
 		fp := blockedHistoryReconcileFingerprint(targets)
 		log.Printf("[HISTORY] full reconcile start reason=%s targets=%d", reason, len(targets))
 		exclusions := configuredSourceExclusions()
@@ -1398,15 +1413,13 @@ func startFullBlockedHistoryReconcileAsync(reason string) bool {
 		reconcileStatus.LastMessage = fmt.Sprintf("reconcile complete days=%d updated=%d failed=%d", days, updated, failed)
 		reconcileStatusMu.Unlock()
 		if failed == 0 {
-			marker := blockedHistoryReconcileMarker{
-				CompletedAt:       time.Now().UTC(),
-				TargetFingerprint: fp,
-			}
+			marker, _ := loadBlockedHistoryReconcileMarker()
+			marker.MarkTargetsComplete(targets, time.Now().UTC())
 			if err := saveBlockedHistoryReconcileMarker(marker); err != nil {
 				log.Printf("[HISTORY] failed saving reconcile marker: %v", err)
 			} else {
 				reconcileStatusMu.Lock()
-				reconcileStatus.LastCompletedAt = marker.CompletedAt
+				reconcileStatus.LastCompletedAt = marker.LastCompletedAt()
 				reconcileStatusMu.Unlock()
 			}
 		}
@@ -1418,16 +1431,66 @@ func startFullBlockedHistoryReconcileAsync(reason string) bool {
 func blockedHistoryReconcileFingerprint(targets []TrafficTarget) string {
 	parts := make([]string, 0, len(targets))
 	for _, t := range targets {
-		name := strings.ToLower(strings.TrimSpace(t.Name))
-		if name == "" {
+		key := targetKeyForReconcile(t)
+		if key == "" {
 			continue
 		}
-		kind := strings.ToLower(strings.TrimSpace(t.Kind))
-		parts = append(parts, kind+":"+name)
+		parts = append(parts, key)
 	}
 	sort.Strings(parts)
 	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
 	return hex.EncodeToString(sum[:])
+}
+
+func targetKeyForReconcile(t TrafficTarget) string {
+	name := strings.ToLower(strings.TrimSpace(t.Name))
+	if name == "" {
+		return ""
+	}
+	kind := strings.ToLower(strings.TrimSpace(t.Kind))
+	return kind + ":" + name
+}
+
+func (m blockedHistoryReconcileMarker) HasTarget(key string) bool {
+	if strings.TrimSpace(key) == "" {
+		return false
+	}
+	if len(m.CompletedByTarget) == 0 {
+		return false
+	}
+	_, ok := m.CompletedByTarget[key]
+	return ok
+}
+
+func (m *blockedHistoryReconcileMarker) MarkTargetsComplete(targets []TrafficTarget, at time.Time) {
+	if m.SchemaVersion <= 0 {
+		m.SchemaVersion = 2
+	}
+	if m.CompletedByTarget == nil {
+		m.CompletedByTarget = map[string]string{}
+	}
+	ts := at.UTC().Format(time.RFC3339)
+	for _, t := range targets {
+		key := targetKeyForReconcile(t)
+		if key == "" {
+			continue
+		}
+		m.CompletedByTarget[key] = ts
+	}
+}
+
+func (m blockedHistoryReconcileMarker) LastCompletedAt() time.Time {
+	latest := m.CompletedAt.UTC()
+	for _, v := range m.CompletedByTarget {
+		t, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
+		if err != nil {
+			continue
+		}
+		if t.After(latest) {
+			latest = t
+		}
+	}
+	return latest
 }
 
 func handleWebhookTest(w http.ResponseWriter, r *http.Request) {
@@ -6378,6 +6441,15 @@ func sqliteKVHasKey(key string) (bool, error) {
 }
 
 func loadBlockedHistoryReconcileMarker() (blockedHistoryReconcileMarker, bool) {
+	normalize := func(marker blockedHistoryReconcileMarker) (blockedHistoryReconcileMarker, bool) {
+		if marker.SchemaVersion <= 0 {
+			marker.SchemaVersion = 1
+		}
+		if marker.CompletedByTarget == nil {
+			marker.CompletedByTarget = map[string]string{}
+		}
+		return marker, true
+	}
 	if blockedPortStoreIsSQLite() {
 		var marker blockedHistoryReconcileMarker
 		ok, err := sqliteKVGetJSON(stateKeyBlockedHistoryReconcile, &marker)
@@ -6388,7 +6460,7 @@ func loadBlockedHistoryReconcileMarker() (blockedHistoryReconcileMarker, bool) {
 		if !ok {
 			return blockedHistoryReconcileMarker{}, false
 		}
-		return marker, true
+		return normalize(marker)
 	}
 	path := dataFilePath(blockedHistoryReconcileFileName)
 	file, err := os.Open(path)
@@ -6401,10 +6473,16 @@ func loadBlockedHistoryReconcileMarker() (blockedHistoryReconcileMarker, bool) {
 		log.Printf("[HISTORY] failed decoding reconcile marker: %v", err)
 		return blockedHistoryReconcileMarker{}, false
 	}
-	return marker, true
+	return normalize(marker)
 }
 
 func saveBlockedHistoryReconcileMarker(marker blockedHistoryReconcileMarker) error {
+	if marker.SchemaVersion <= 0 {
+		marker.SchemaVersion = 2
+	}
+	if marker.CompletedByTarget == nil {
+		marker.CompletedByTarget = map[string]string{}
+	}
 	if blockedPortStoreIsSQLite() {
 		return sqliteKVSetJSON(stateKeyBlockedHistoryReconcile, marker)
 	}
