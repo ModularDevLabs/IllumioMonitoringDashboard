@@ -4369,7 +4369,17 @@ func fetchTamperingSlice(baseURL string, startUTC, endUTC time.Time, client *htt
 	const pageSize = 1000
 	fetchPaged := func(useTimeParams bool) ([]map[string]interface{}, error) {
 		all := make([]map[string]interface{}, 0, pageSize)
+		seen := make(map[string]struct{}, pageSize)
+		started := time.Now()
+		lastPageSig := ""
+		stagnantPages := 0
 		for page := 0; ; page++ {
+			if time.Since(started) > tamperingQueryMaxDuration {
+				if len(all) == 0 {
+					return nil, fmt.Errorf("tampering slice timed out after %d pages", page)
+				}
+				return all, fmt.Errorf("partial tampering slice: timed out after %d pages", page)
+			}
 			q := url.Values{}
 			q.Set("event_type", "agent.tampering")
 			if useTimeParams {
@@ -4391,7 +4401,31 @@ func fetchTamperingSlice(baseURL string, startUTC, endUTC time.Time, client *htt
 			if len(batch) == 0 {
 				break
 			}
-			all = append(all, batch...)
+			pageSig := tamperingPageSignature(batch)
+			if page > 0 && pageSig != "" && pageSig == lastPageSig {
+				break
+			}
+			lastPageSig = pageSig
+			added := 0
+			for _, evt := range batch {
+				sig := tamperingEventSignature(evt)
+				if strings.TrimSpace(sig) != "" {
+					if _, ok := seen[sig]; ok {
+						continue
+					}
+					seen[sig] = struct{}{}
+				}
+				all = append(all, evt)
+				added++
+			}
+			if added == 0 {
+				stagnantPages++
+				if stagnantPages >= 3 {
+					break
+				}
+			} else {
+				stagnantPages = 0
+			}
 			if len(batch) < pageSize {
 				break
 			}
