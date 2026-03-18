@@ -60,6 +60,7 @@ const slowRequestLogThreshold = 200 * time.Millisecond
 const blockedTargetWorkerCount = 4
 const blockedTargetStartStagger = 150 * time.Millisecond
 const perfSampleWindowSize = 256
+const defaultLogFileName = "illumiomonitoringdashboard.log"
 
 type Config struct {
 	PCEURL                   string          `json:"pce_url"`
@@ -397,6 +398,8 @@ var (
 )
 
 func main() {
+	initProcessLogging()
+
 	if !loadConfig() {
 		promptConfig()
 	} else {
@@ -443,6 +446,16 @@ func main() {
 	publicURL := configuredPublicBaseURL()
 	fmt.Printf("\nDashboard starting. Bind: %s | Public URL: %s\n", listenAddr, publicURL)
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
+}
+
+func initProcessLogging() {
+	logFile, err := os.OpenFile(defaultLogFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to open %s: %v\n", defaultLogFileName, err)
+		return
+	}
+	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+	log.Printf("[LOG] writing logs to %s (and stdout)", defaultLogFileName)
 }
 
 func enforceSQLiteBackendConfig() {
