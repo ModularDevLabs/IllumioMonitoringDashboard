@@ -114,6 +114,14 @@
                         <div class="small text-muted mt-1">When enabled, stores daily blocked port/proto totals and shows the blocked-ports table in blocked target drilldown.</div>
                     </div>
                     <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-rolling-dedupe-backend">Blocked 24h Rolling Dedupe Backend</label>
+                        <select class="form-select form-select-sm" id="blocked-rolling-dedupe-backend">
+                            <option value="sqlite">SQLite (default)</option>
+                            <option value="memory">In-memory</option>
+                        </select>
+                        <div class="small text-muted mt-1">Controls how 24h unique-flow dedupe state is stored for blocked 5m rolling charts.</div>
+                    </div>
+                    <div class="mb-2">
                         <label class="form-label form-label-sm small text-muted mb-1" for="blocked-ma-window">
                             Blocked 5m Moving Average Window (points)
                             <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
@@ -366,6 +374,7 @@
         let editableTargets = [];
         let historyDays = 365;
         let blockedPortDailyEnabled = true;
+        let blockedRollingDedupeBackend = 'sqlite';
         let blockedMAWindow = 12;
         let blockedAnomalyPct = 50;
         let blockedAnomalyBaseline = '5m';
@@ -454,6 +463,7 @@
             const d = await r.json();
             historyDays = Number(d.history_days || 365);
             blockedPortDailyEnabled = d.blocked_port_daily_enabled !== false;
+            blockedRollingDedupeBackend = String(d.blocked_rolling_dedupe_backend || 'sqlite').trim().toLowerCase() === 'memory' ? 'memory' : 'sqlite';
             blockedMAWindow = Number(d.blocked_ma_window || 12);
             blockedAnomalyPct = Number(d.blocked_anomaly_pct || 50);
             blockedAnomalyBaseline = String(d.blocked_anomaly_baseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
@@ -476,6 +486,7 @@
             timezone = String(d.timezone || '').trim();
             document.getElementById('history-days').value = historyDays;
             document.getElementById('blocked-port-daily-enabled').value = blockedPortDailyEnabled ? 'true' : 'false';
+            document.getElementById('blocked-rolling-dedupe-backend').value = blockedRollingDedupeBackend;
             document.getElementById('blocked-ma-window').value = blockedMAWindow;
             document.getElementById('blocked-anomaly-pct').value = blockedAnomalyPct;
             document.getElementById('blocked-anomaly-baseline').value = blockedAnomalyBaseline;
@@ -559,6 +570,7 @@
             if (!Number.isFinite(parsedDays) || parsedDays < 1) parsedDays = 365;
             if (parsedDays > 3650) parsedDays = 3650;
             const parsedBlockedPortDailyEnabled = String(document.getElementById('blocked-port-daily-enabled').value || (blockedPortDailyEnabled ? 'true' : 'false')) === 'true';
+            const parsedBlockedRollingDedupeBackend = String(document.getElementById('blocked-rolling-dedupe-backend').value || blockedRollingDedupeBackend || 'sqlite').trim().toLowerCase() === 'memory' ? 'memory' : 'sqlite';
             let parsedMAWindow = Number(document.getElementById('blocked-ma-window').value || blockedMAWindow || 12);
             if (!Number.isFinite(parsedMAWindow) || parsedMAWindow < 2) parsedMAWindow = 12;
             if (parsedMAWindow > 288) parsedMAWindow = 288;
@@ -617,6 +629,7 @@
                 traffic_source_exclusions: exclusions,
                 history_days: Math.floor(parsedDays),
                 blocked_port_daily_enabled: parsedBlockedPortDailyEnabled,
+                blocked_rolling_dedupe_backend: parsedBlockedRollingDedupeBackend,
                 blocked_ma_window: Math.floor(parsedMAWindow),
                 blocked_anomaly_pct: Math.floor(parsedAnomalyPct),
                 blocked_anomaly_baseline: parsedBaseline,

@@ -50,6 +50,7 @@ const defaultDataDirName = ".illumio-monitoring-dashboard"
 const defaultBindAddress = ":18443"
 const defaultPublicBaseURL = "http://localhost:18443"
 const defaultBlockedPortStoreBackend = "sqlite"
+const defaultBlockedRollingDedupeBackend = "sqlite"
 const stateKeyBlockedDaily = "blocked_daily_records_v1"
 const stateKeyVENDaily = "ven_daily_records_v1"
 const stateKeyRolling = "rolling_state_v1"
@@ -67,44 +68,45 @@ const perfSampleWindowSize = 256
 const defaultLogFileName = "illumiomonitoringdashboard.log"
 
 type Config struct {
-	PCEURL                   string          `json:"pce_url"`
-	APIKey                   string          `json:"api_key"`
-	APISecret                string          `json:"api_secret"`
-	OrgID                    string          `json:"org_id"`
-	Timezone                 string          `json:"timezone,omitempty"`
-	BindAddress              string          `json:"bind_address,omitempty"`
-	PublicBaseURL            string          `json:"public_base_url,omitempty"`
-	DataDir                  string          `json:"data_dir,omitempty"`
-	TrafficTargets           []TrafficTarget `json:"traffic_targets,omitempty"`
-	SourceExclusions         []TrafficTarget `json:"traffic_source_exclusions,omitempty"`
-	HistoryDays              int             `json:"history_days,omitempty"`
-	BlockedPortDailyEnabled  *bool           `json:"blocked_port_daily_enabled,omitempty"`
-	BlockedMAWindow          int             `json:"blocked_ma_window,omitempty"`
-	BlockedAnomalyPct        float64         `json:"blocked_anomaly_pct,omitempty"`
-	BlockedAnomalyBaseline   string          `json:"blocked_anomaly_baseline,omitempty"`
-	BlockedAnomalyDays       int             `json:"blocked_anomaly_days,omitempty"`
-	BlockedAnomalyMinPct     float64         `json:"blocked_anomaly_min_coverage_pct,omitempty"`
-	DailyMAWindow            int             `json:"daily_ma_window,omitempty"`
-	VENMAWindow              int             `json:"ven_ma_window,omitempty"`
-	VENAnomalyPct            float64         `json:"ven_anomaly_pct,omitempty"`
-	VENAnomalyBaseline       string          `json:"ven_anomaly_baseline,omitempty"`
-	VENAnomalyDays           int             `json:"ven_anomaly_days,omitempty"`
-	VENAnomalyMinPct         float64         `json:"ven_anomaly_min_coverage_pct,omitempty"`
-	TamperingMAWindow        int             `json:"tampering_ma_window,omitempty"`
-	TamperingAnomalyPct      float64         `json:"tampering_anomaly_pct,omitempty"`
-	TamperingAnomalyBaseline string          `json:"tampering_anomaly_baseline,omitempty"`
-	TamperingAnomalyDays     int             `json:"tampering_anomaly_days,omitempty"`
-	TamperingAnomalyMinPct   float64         `json:"tampering_anomaly_min_coverage_pct,omitempty"`
-	TamperingDailyAnomalyPct float64         `json:"tampering_daily_anomaly_pct,omitempty"`
-	WebhookURL               string          `json:"webhook_url,omitempty"`
-	WebhookEnabled           bool            `json:"webhook_enabled,omitempty"`
-	WebhookProvider          string          `json:"webhook_provider,omitempty"`
-	WebhookSlackChannel      string          `json:"webhook_slack_channel,omitempty"`
-	WebhookSlackUsername     string          `json:"webhook_slack_username,omitempty"`
-	WebhookSlackIconEmoji    string          `json:"webhook_slack_icon_emoji,omitempty"`
-	WebhookTeamsTitlePrefix  string          `json:"webhook_teams_title_prefix,omitempty"`
-	BlockedPortStoreBackend  string          `json:"blocked_port_store_backend,omitempty"`
-	DiagnosticsEnabled       bool            `json:"diagnostics_enabled,omitempty"`
+	PCEURL                      string          `json:"pce_url"`
+	APIKey                      string          `json:"api_key"`
+	APISecret                   string          `json:"api_secret"`
+	OrgID                       string          `json:"org_id"`
+	Timezone                    string          `json:"timezone,omitempty"`
+	BindAddress                 string          `json:"bind_address,omitempty"`
+	PublicBaseURL               string          `json:"public_base_url,omitempty"`
+	DataDir                     string          `json:"data_dir,omitempty"`
+	TrafficTargets              []TrafficTarget `json:"traffic_targets,omitempty"`
+	SourceExclusions            []TrafficTarget `json:"traffic_source_exclusions,omitempty"`
+	HistoryDays                 int             `json:"history_days,omitempty"`
+	BlockedPortDailyEnabled     *bool           `json:"blocked_port_daily_enabled,omitempty"`
+	BlockedMAWindow             int             `json:"blocked_ma_window,omitempty"`
+	BlockedAnomalyPct           float64         `json:"blocked_anomaly_pct,omitempty"`
+	BlockedAnomalyBaseline      string          `json:"blocked_anomaly_baseline,omitempty"`
+	BlockedAnomalyDays          int             `json:"blocked_anomaly_days,omitempty"`
+	BlockedAnomalyMinPct        float64         `json:"blocked_anomaly_min_coverage_pct,omitempty"`
+	DailyMAWindow               int             `json:"daily_ma_window,omitempty"`
+	VENMAWindow                 int             `json:"ven_ma_window,omitempty"`
+	VENAnomalyPct               float64         `json:"ven_anomaly_pct,omitempty"`
+	VENAnomalyBaseline          string          `json:"ven_anomaly_baseline,omitempty"`
+	VENAnomalyDays              int             `json:"ven_anomaly_days,omitempty"`
+	VENAnomalyMinPct            float64         `json:"ven_anomaly_min_coverage_pct,omitempty"`
+	TamperingMAWindow           int             `json:"tampering_ma_window,omitempty"`
+	TamperingAnomalyPct         float64         `json:"tampering_anomaly_pct,omitempty"`
+	TamperingAnomalyBaseline    string          `json:"tampering_anomaly_baseline,omitempty"`
+	TamperingAnomalyDays        int             `json:"tampering_anomaly_days,omitempty"`
+	TamperingAnomalyMinPct      float64         `json:"tampering_anomaly_min_coverage_pct,omitempty"`
+	TamperingDailyAnomalyPct    float64         `json:"tampering_daily_anomaly_pct,omitempty"`
+	WebhookURL                  string          `json:"webhook_url,omitempty"`
+	WebhookEnabled              bool            `json:"webhook_enabled,omitempty"`
+	WebhookProvider             string          `json:"webhook_provider,omitempty"`
+	WebhookSlackChannel         string          `json:"webhook_slack_channel,omitempty"`
+	WebhookSlackUsername        string          `json:"webhook_slack_username,omitempty"`
+	WebhookSlackIconEmoji       string          `json:"webhook_slack_icon_emoji,omitempty"`
+	WebhookTeamsTitlePrefix     string          `json:"webhook_teams_title_prefix,omitempty"`
+	BlockedPortStoreBackend     string          `json:"blocked_port_store_backend,omitempty"`
+	BlockedRollingDedupeBackend string          `json:"blocked_rolling_dedupe_backend,omitempty"`
+	DiagnosticsEnabled          bool            `json:"diagnostics_enabled,omitempty"`
 }
 
 type TrafficTarget struct {
@@ -876,6 +878,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		bindAddress := configuredBindAddressLocked()
 		publicBaseURL := configuredPublicBaseURLLocked()
 		blockedPortStoreBackend := configuredBlockedPortStoreBackendLocked()
+		blockedRollingDedupeBackend := configuredBlockedRollingDedupeBackendLocked()
 		diagnosticsEnabled := configuredDiagnosticsEnabledLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := config.WebhookEnabled && webhookURL != ""
@@ -893,76 +896,78 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"traffic_targets":             targets,
-			"traffic_source_exclusions":   exclusions,
-			"history_days":                historyDays,
-			"blocked_port_daily_enabled":  blockedPortDailyEnabled,
-			"blocked_ma_window":           maWindow,
-			"daily_ma_window":             dailyMAWindow,
-			"blocked_anomaly_pct":         anomalyPct,
-			"blocked_anomaly_baseline":    anomalyBaseline,
-			"blocked_anomaly_days":        anomalyDays,
-			"blocked_anomaly_min_pct":     anomalyMinCoverage,
-			"ven_ma_window":               venMAWindow,
-			"ven_anomaly_pct":             venAnomalyPct,
-			"ven_anomaly_baseline":        venAnomalyBaseline,
-			"ven_anomaly_days":            venAnomalyDays,
-			"ven_anomaly_min_pct":         venAnomalyMinCoverage,
-			"tampering_ma_window":         tamperMAWindow,
-			"tampering_anomaly_pct":       tamperAnomalyPct,
-			"tampering_anomaly_baseline":  tamperAnomalyBaseline,
-			"tampering_anomaly_days":      tamperAnomalyDays,
-			"tampering_anomaly_min_pct":   tamperAnomalyMinCoverage,
-			"tampering_daily_anomaly_pct": tamperDailyAnomalyPct,
-			"timezone":                    timezone,
-			"timezone_effective":          effectiveTimezone,
-			"bind_address":                bindAddress,
-			"public_base_url":             publicBaseURL,
-			"blocked_port_store_backend":  blockedPortStoreBackend,
-			"diagnostics_enabled":         diagnosticsEnabled,
-			"webhook_url":                 webhookURL,
-			"webhook_enabled":             webhookEnabled,
-			"webhook_provider":            webhookProvider,
-			"webhook_slack_channel":       slackChannel,
-			"webhook_slack_username":      slackUsername,
-			"webhook_slack_icon_emoji":    slackIconEmoji,
-			"webhook_teams_title_prefix":  teamsTitlePrefix,
+			"traffic_targets":                targets,
+			"traffic_source_exclusions":      exclusions,
+			"history_days":                   historyDays,
+			"blocked_port_daily_enabled":     blockedPortDailyEnabled,
+			"blocked_ma_window":              maWindow,
+			"daily_ma_window":                dailyMAWindow,
+			"blocked_anomaly_pct":            anomalyPct,
+			"blocked_anomaly_baseline":       anomalyBaseline,
+			"blocked_anomaly_days":           anomalyDays,
+			"blocked_anomaly_min_pct":        anomalyMinCoverage,
+			"ven_ma_window":                  venMAWindow,
+			"ven_anomaly_pct":                venAnomalyPct,
+			"ven_anomaly_baseline":           venAnomalyBaseline,
+			"ven_anomaly_days":               venAnomalyDays,
+			"ven_anomaly_min_pct":            venAnomalyMinCoverage,
+			"tampering_ma_window":            tamperMAWindow,
+			"tampering_anomaly_pct":          tamperAnomalyPct,
+			"tampering_anomaly_baseline":     tamperAnomalyBaseline,
+			"tampering_anomaly_days":         tamperAnomalyDays,
+			"tampering_anomaly_min_pct":      tamperAnomalyMinCoverage,
+			"tampering_daily_anomaly_pct":    tamperDailyAnomalyPct,
+			"timezone":                       timezone,
+			"timezone_effective":             effectiveTimezone,
+			"bind_address":                   bindAddress,
+			"public_base_url":                publicBaseURL,
+			"blocked_port_store_backend":     blockedPortStoreBackend,
+			"blocked_rolling_dedupe_backend": blockedRollingDedupeBackend,
+			"diagnostics_enabled":            diagnosticsEnabled,
+			"webhook_url":                    webhookURL,
+			"webhook_enabled":                webhookEnabled,
+			"webhook_provider":               webhookProvider,
+			"webhook_slack_channel":          slackChannel,
+			"webhook_slack_username":         slackUsername,
+			"webhook_slack_icon_emoji":       slackIconEmoji,
+			"webhook_teams_title_prefix":     teamsTitlePrefix,
 		})
 	case http.MethodPut:
 		var req struct {
-			TrafficTargets           []TrafficTarget `json:"traffic_targets"`
-			SourceExclusions         []TrafficTarget `json:"traffic_source_exclusions"`
-			HistoryDays              int             `json:"history_days"`
-			BlockedPortDailyEnabled  *bool           `json:"blocked_port_daily_enabled"`
-			BlockedMAWindow          int             `json:"blocked_ma_window"`
-			DailyMAWindow            int             `json:"daily_ma_window"`
-			BlockedAnomalyPct        float64         `json:"blocked_anomaly_pct"`
-			BlockedAnomalyBaseline   *string         `json:"blocked_anomaly_baseline"`
-			BlockedAnomalyDays       int             `json:"blocked_anomaly_days"`
-			BlockedAnomalyMinPct     float64         `json:"blocked_anomaly_min_pct"`
-			VENMAWindow              int             `json:"ven_ma_window"`
-			VENAnomalyPct            float64         `json:"ven_anomaly_pct"`
-			VENAnomalyBaseline       *string         `json:"ven_anomaly_baseline"`
-			VENAnomalyDays           int             `json:"ven_anomaly_days"`
-			VENAnomalyMinPct         float64         `json:"ven_anomaly_min_pct"`
-			TamperingMAWindow        int             `json:"tampering_ma_window"`
-			TamperingAnomalyPct      float64         `json:"tampering_anomaly_pct"`
-			TamperingAnomalyBaseline *string         `json:"tampering_anomaly_baseline"`
-			TamperingAnomalyDays     int             `json:"tampering_anomaly_days"`
-			TamperingAnomalyMinPct   float64         `json:"tampering_anomaly_min_pct"`
-			TamperingDailyAnomalyPct float64         `json:"tampering_daily_anomaly_pct"`
-			Timezone                 *string         `json:"timezone"`
-			BindAddress              *string         `json:"bind_address"`
-			PublicBaseURL            *string         `json:"public_base_url"`
-			BlockedPortStoreBackend  *string         `json:"blocked_port_store_backend"`
-			DiagnosticsEnabled       *bool           `json:"diagnostics_enabled"`
-			WebhookURL               *string         `json:"webhook_url"`
-			WebhookEnabled           *bool           `json:"webhook_enabled"`
-			WebhookProvider          *string         `json:"webhook_provider"`
-			WebhookSlackChannel      *string         `json:"webhook_slack_channel"`
-			WebhookSlackUsername     *string         `json:"webhook_slack_username"`
-			WebhookSlackIconEmoji    *string         `json:"webhook_slack_icon_emoji"`
-			WebhookTeamsTitlePrefix  *string         `json:"webhook_teams_title_prefix"`
+			TrafficTargets              []TrafficTarget `json:"traffic_targets"`
+			SourceExclusions            []TrafficTarget `json:"traffic_source_exclusions"`
+			HistoryDays                 int             `json:"history_days"`
+			BlockedPortDailyEnabled     *bool           `json:"blocked_port_daily_enabled"`
+			BlockedMAWindow             int             `json:"blocked_ma_window"`
+			DailyMAWindow               int             `json:"daily_ma_window"`
+			BlockedAnomalyPct           float64         `json:"blocked_anomaly_pct"`
+			BlockedAnomalyBaseline      *string         `json:"blocked_anomaly_baseline"`
+			BlockedAnomalyDays          int             `json:"blocked_anomaly_days"`
+			BlockedAnomalyMinPct        float64         `json:"blocked_anomaly_min_pct"`
+			VENMAWindow                 int             `json:"ven_ma_window"`
+			VENAnomalyPct               float64         `json:"ven_anomaly_pct"`
+			VENAnomalyBaseline          *string         `json:"ven_anomaly_baseline"`
+			VENAnomalyDays              int             `json:"ven_anomaly_days"`
+			VENAnomalyMinPct            float64         `json:"ven_anomaly_min_pct"`
+			TamperingMAWindow           int             `json:"tampering_ma_window"`
+			TamperingAnomalyPct         float64         `json:"tampering_anomaly_pct"`
+			TamperingAnomalyBaseline    *string         `json:"tampering_anomaly_baseline"`
+			TamperingAnomalyDays        int             `json:"tampering_anomaly_days"`
+			TamperingAnomalyMinPct      float64         `json:"tampering_anomaly_min_pct"`
+			TamperingDailyAnomalyPct    float64         `json:"tampering_daily_anomaly_pct"`
+			Timezone                    *string         `json:"timezone"`
+			BindAddress                 *string         `json:"bind_address"`
+			PublicBaseURL               *string         `json:"public_base_url"`
+			BlockedPortStoreBackend     *string         `json:"blocked_port_store_backend"`
+			BlockedRollingDedupeBackend *string         `json:"blocked_rolling_dedupe_backend"`
+			DiagnosticsEnabled          *bool           `json:"diagnostics_enabled"`
+			WebhookURL                  *string         `json:"webhook_url"`
+			WebhookEnabled              *bool           `json:"webhook_enabled"`
+			WebhookProvider             *string         `json:"webhook_provider"`
+			WebhookSlackChannel         *string         `json:"webhook_slack_channel"`
+			WebhookSlackUsername        *string         `json:"webhook_slack_username"`
+			WebhookSlackIconEmoji       *string         `json:"webhook_slack_icon_emoji"`
+			WebhookTeamsTitlePrefix     *string         `json:"webhook_teams_title_prefix"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid json body", http.StatusBadRequest)
@@ -1049,6 +1054,9 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		if req.BlockedPortStoreBackend != nil {
 			config.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(*req.BlockedPortStoreBackend)
 		}
+		if req.BlockedRollingDedupeBackend != nil {
+			config.BlockedRollingDedupeBackend = normalizeBlockedRollingDedupeBackend(*req.BlockedRollingDedupeBackend)
+		}
 		if req.DiagnosticsEnabled != nil {
 			config.DiagnosticsEnabled = *req.DiagnosticsEnabled
 		}
@@ -1097,6 +1105,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		bindAddress := configuredBindAddressLocked()
 		publicBaseURL := configuredPublicBaseURLLocked()
 		blockedPortStoreBackend := configuredBlockedPortStoreBackendLocked()
+		blockedRollingDedupeBackend := configuredBlockedRollingDedupeBackendLocked()
 		diagnosticsEnabled := configuredDiagnosticsEnabledLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := configuredWebhookEnabledLocked()
@@ -1112,42 +1121,43 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"saved":                       true,
-			"traffic_targets":             cleaned,
-			"traffic_source_exclusions":   config.SourceExclusions,
-			"history_days":                historyDays,
-			"blocked_port_daily_enabled":  blockedPortDailyEnabled,
-			"blocked_ma_window":           maWindow,
-			"daily_ma_window":             dailyMAWindow,
-			"blocked_anomaly_pct":         anomalyPct,
-			"blocked_anomaly_baseline":    anomalyBaseline,
-			"blocked_anomaly_days":        anomalyDays,
-			"blocked_anomaly_min_pct":     anomalyMinCoverage,
-			"ven_ma_window":               venMAWindow,
-			"ven_anomaly_pct":             venAnomalyPct,
-			"ven_anomaly_baseline":        venAnomalyBaseline,
-			"ven_anomaly_days":            venAnomalyDays,
-			"ven_anomaly_min_pct":         venAnomalyMinCoverage,
-			"tampering_ma_window":         tamperMAWindow,
-			"tampering_anomaly_pct":       tamperAnomalyPct,
-			"tampering_anomaly_baseline":  tamperAnomalyBaseline,
-			"tampering_anomaly_days":      tamperAnomalyDays,
-			"tampering_anomaly_min_pct":   tamperAnomalyMinCoverage,
-			"tampering_daily_anomaly_pct": tamperDailyAnomalyPct,
-			"timezone":                    timezone,
-			"timezone_effective":          effectiveTimezone,
-			"bind_address":                bindAddress,
-			"public_base_url":             publicBaseURL,
-			"blocked_port_store_backend":  blockedPortStoreBackend,
-			"diagnostics_enabled":         diagnosticsEnabled,
-			"webhook_url":                 webhookURL,
-			"webhook_enabled":             webhookEnabled,
-			"webhook_provider":            webhookProvider,
-			"webhook_slack_channel":       slackChannel,
-			"webhook_slack_username":      slackUsername,
-			"webhook_slack_icon_emoji":    slackIconEmoji,
-			"webhook_teams_title_prefix":  teamsTitlePrefix,
-			"message":                     "Saved. Click Refresh Now to apply immediately.",
+			"saved":                          true,
+			"traffic_targets":                cleaned,
+			"traffic_source_exclusions":      config.SourceExclusions,
+			"history_days":                   historyDays,
+			"blocked_port_daily_enabled":     blockedPortDailyEnabled,
+			"blocked_ma_window":              maWindow,
+			"daily_ma_window":                dailyMAWindow,
+			"blocked_anomaly_pct":            anomalyPct,
+			"blocked_anomaly_baseline":       anomalyBaseline,
+			"blocked_anomaly_days":           anomalyDays,
+			"blocked_anomaly_min_pct":        anomalyMinCoverage,
+			"ven_ma_window":                  venMAWindow,
+			"ven_anomaly_pct":                venAnomalyPct,
+			"ven_anomaly_baseline":           venAnomalyBaseline,
+			"ven_anomaly_days":               venAnomalyDays,
+			"ven_anomaly_min_pct":            venAnomalyMinCoverage,
+			"tampering_ma_window":            tamperMAWindow,
+			"tampering_anomaly_pct":          tamperAnomalyPct,
+			"tampering_anomaly_baseline":     tamperAnomalyBaseline,
+			"tampering_anomaly_days":         tamperAnomalyDays,
+			"tampering_anomaly_min_pct":      tamperAnomalyMinCoverage,
+			"tampering_daily_anomaly_pct":    tamperDailyAnomalyPct,
+			"timezone":                       timezone,
+			"timezone_effective":             effectiveTimezone,
+			"bind_address":                   bindAddress,
+			"public_base_url":                publicBaseURL,
+			"blocked_port_store_backend":     blockedPortStoreBackend,
+			"blocked_rolling_dedupe_backend": blockedRollingDedupeBackend,
+			"diagnostics_enabled":            diagnosticsEnabled,
+			"webhook_url":                    webhookURL,
+			"webhook_enabled":                webhookEnabled,
+			"webhook_provider":               webhookProvider,
+			"webhook_slack_channel":          slackChannel,
+			"webhook_slack_username":         slackUsername,
+			"webhook_slack_icon_emoji":       slackIconEmoji,
+			"webhook_teams_title_prefix":     teamsTitlePrefix,
+			"message":                        "Saved. Click Refresh Now to apply immediately.",
 		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1537,9 +1547,10 @@ func handleDiagnosticsPerf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]interface{}{
-		"enabled":   true,
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"backend":   configuredBlockedPortStoreBackend(),
+		"enabled":                true,
+		"timestamp":              time.Now().UTC().Format(time.RFC3339),
+		"backend":                configuredBlockedPortStoreBackend(),
+		"blocked_dedupe_backend": configuredBlockedRollingDedupeBackend(),
 	}
 
 	perfMu.Lock()
@@ -3664,6 +3675,9 @@ func hasTargetBaseline(targetName string) bool {
 func applyBlockedFlowSamples(targetName string, nowUTC time.Time, samples []blockedFlowSample) (int, int) {
 	rollingMu.Lock()
 	defer rollingMu.Unlock()
+	if configuredBlockedRollingDedupeBackend() == "sqlite" {
+		return applyBlockedFlowSamplesSQLite(targetName, nowUTC, samples)
+	}
 	return applyBlockedFlowSamplesLocked(targetName, nowUTC, samples)
 }
 
@@ -3713,6 +3727,13 @@ func applyBlockedFlowSamplesLocked(targetName string, nowUTC time.Time, samples 
 }
 
 func blockedRollingUniqueCountLocked(targetName string, cutoff time.Time) (int, bool) {
+	if configuredBlockedRollingDedupeBackendLocked() == "sqlite" {
+		count, err := sqliteBlockedFlowUniqueCount(targetName, cutoff)
+		if err != nil {
+			return 0, false
+		}
+		return count, true
+	}
 	if rollingCache.BlockedFlowLastSeen == nil {
 		return 0, false
 	}
@@ -3726,6 +3747,117 @@ func blockedRollingUniqueCountLocked(targetName string, cutoff time.Time) (int, 
 		}
 	}
 	return len(targetSeen), true
+}
+
+func resetBlockedFlowDedupeLocked(targets []TrafficTarget) {
+	if configuredBlockedRollingDedupeBackendLocked() == "sqlite" {
+		for _, t := range targets {
+			name := strings.TrimSpace(t.Name)
+			if name == "" || metricsDB == nil {
+				continue
+			}
+			if _, err := metricsDB.Exec(`DELETE FROM blocked_flow_seen WHERE target = ?`, name); err != nil {
+				log.Printf("[BLOCKED] dedupe reset failed target=%s err=%v", name, err)
+			}
+		}
+		return
+	}
+	rollingCache.BlockedFlowLastSeen = map[string]map[string]time.Time{}
+}
+
+func applyBlockedFlowSamplesSQLite(targetName string, nowUTC time.Time, samples []blockedFlowSample) (int, int) {
+	targetName = strings.TrimSpace(targetName)
+	if targetName == "" {
+		return 0, 0
+	}
+	if metricsDB == nil {
+		return applyBlockedFlowSamplesLocked(targetName, nowUTC, samples)
+	}
+	cutoff := nowUTC.Add(-24 * time.Hour).Unix()
+	latestBySig := make(map[string]int64, len(samples))
+	for _, sample := range samples {
+		sig := strings.TrimSpace(sample.Signature)
+		if sig == "" {
+			continue
+		}
+		ts := sample.LastDetectedUTC.UTC()
+		if ts.IsZero() || ts.After(nowUTC) {
+			ts = nowUTC
+		}
+		unixTS := ts.Unix()
+		if unixTS <= cutoff {
+			continue
+		}
+		if prev, ok := latestBySig[sig]; !ok || unixTS > prev {
+			latestBySig[sig] = unixTS
+		}
+	}
+	tx, err := metricsDB.Begin()
+	if err != nil {
+		log.Printf("[BLOCKED] dedupe sqlite begin failed target=%s err=%v", targetName, err)
+		return 0, 0
+	}
+	if _, err := tx.Exec(`DELETE FROM blocked_flow_seen WHERE target = ? AND last_seen_unix <= ?`, targetName, cutoff); err != nil {
+		_ = tx.Rollback()
+		log.Printf("[BLOCKED] dedupe sqlite prune failed target=%s err=%v", targetName, err)
+		return 0, 0
+	}
+	insertStmt, err := tx.Prepare(`INSERT INTO blocked_flow_seen(target, signature, last_seen_unix) VALUES(?,?,?) ON CONFLICT(target, signature) DO NOTHING`)
+	if err != nil {
+		_ = tx.Rollback()
+		log.Printf("[BLOCKED] dedupe sqlite prepare insert failed target=%s err=%v", targetName, err)
+		return 0, 0
+	}
+	updateStmt, err := tx.Prepare(`UPDATE blocked_flow_seen SET last_seen_unix = ? WHERE target = ? AND signature = ? AND last_seen_unix < ?`)
+	if err != nil {
+		_ = insertStmt.Close()
+		_ = tx.Rollback()
+		log.Printf("[BLOCKED] dedupe sqlite prepare update failed target=%s err=%v", targetName, err)
+		return 0, 0
+	}
+	newUnique := 0
+	for sig, unixTS := range latestBySig {
+		res, err := insertStmt.Exec(targetName, sig, unixTS)
+		if err != nil {
+			continue
+		}
+		if rows, err := res.RowsAffected(); err == nil && rows > 0 {
+			newUnique += int(rows)
+		}
+		_, _ = updateStmt.Exec(unixTS, targetName, sig, unixTS)
+	}
+	_ = insertStmt.Close()
+	_ = updateStmt.Close()
+	totalUnique := 0
+	if err := tx.QueryRow(`SELECT COUNT(1) FROM blocked_flow_seen WHERE target = ? AND last_seen_unix > ?`, targetName, cutoff).Scan(&totalUnique); err != nil {
+		_ = tx.Rollback()
+		log.Printf("[BLOCKED] dedupe sqlite count failed target=%s err=%v", targetName, err)
+		return 0, 0
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("[BLOCKED] dedupe sqlite commit failed target=%s err=%v", targetName, err)
+		return 0, 0
+	}
+	return newUnique, totalUnique
+}
+
+func sqliteBlockedFlowUniqueCount(targetName string, cutoff time.Time) (int, error) {
+	targetName = strings.TrimSpace(targetName)
+	if targetName == "" {
+		return 0, nil
+	}
+	if metricsDB == nil {
+		return 0, errors.New("sqlite not initialized")
+	}
+	cutoffUnix := cutoff.UTC().Unix()
+	if _, err := metricsDB.Exec(`DELETE FROM blocked_flow_seen WHERE target = ? AND last_seen_unix <= ?`, targetName, cutoffUnix); err != nil {
+		return 0, err
+	}
+	var count int
+	if err := metricsDB.QueryRow(`SELECT COUNT(1) FROM blocked_flow_seen WHERE target = ? AND last_seen_unix > ?`, targetName, cutoffUnix).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func updateRollingAndBuildView(
@@ -3758,6 +3890,7 @@ func updateRollingAndBuildView(
 			Buckets:             []rollingBucket{},
 			BlockedFlowLastSeen: map[string]map[string]time.Time{},
 		}
+		resetBlockedFlowDedupeLocked(targets)
 		if tamperingOK {
 			rollingCache.BaselineTampering = tamperingCount
 			for _, n := range tamperingNames {
@@ -4166,6 +4299,16 @@ func configuredBlockedPortStoreBackendLocked() string {
 	return normalizeBlockedPortStoreBackend(config.BlockedPortStoreBackend)
 }
 
+func configuredBlockedRollingDedupeBackend() string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredBlockedRollingDedupeBackendLocked()
+}
+
+func configuredBlockedRollingDedupeBackendLocked() string {
+	return normalizeBlockedRollingDedupeBackend(config.BlockedRollingDedupeBackend)
+}
+
 func configuredDiagnosticsEnabled() bool {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
@@ -4490,6 +4633,17 @@ func normalizeBlockedPortStoreBackend(raw string) string {
 		return "sqlite"
 	default:
 		return defaultBlockedPortStoreBackend
+	}
+}
+
+func normalizeBlockedRollingDedupeBackend(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "memory":
+		return "memory"
+	case "sqlite":
+		return "sqlite"
+	default:
+		return defaultBlockedRollingDedupeBackend
 	}
 }
 
@@ -6393,6 +6547,7 @@ func loadConfigFile() (Config, time.Time, bool) {
 	cfg.BindAddress = normalizeBindAddress(cfg.BindAddress)
 	cfg.PublicBaseURL = normalizePublicBaseURL(cfg.PublicBaseURL)
 	cfg.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(cfg.BlockedPortStoreBackend)
+	cfg.BlockedRollingDedupeBackend = normalizeBlockedRollingDedupeBackend(cfg.BlockedRollingDedupeBackend)
 	cfg.HistoryDays = normalizeHistoryDays(cfg.HistoryDays)
 	cfg.TrafficTargets = sanitizeTargets(cfg.TrafficTargets)
 	cfg.SourceExclusions = sanitizeTargets(cfg.SourceExclusions)
@@ -6583,6 +6738,13 @@ func initBlockedPortStore() {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_blocked_ports_5m_target_ts ON blocked_ports_5m(target, ts_unix);`,
 		`CREATE INDEX IF NOT EXISTS idx_blocked_ports_5m_ts ON blocked_ports_5m(ts_unix);`,
+		`CREATE TABLE IF NOT EXISTS blocked_flow_seen (
+			target TEXT NOT NULL,
+			signature TEXT NOT NULL,
+			last_seen_unix INTEGER NOT NULL,
+			PRIMARY KEY(target, signature)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_blocked_flow_seen_target_ts ON blocked_flow_seen(target, last_seen_unix);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
