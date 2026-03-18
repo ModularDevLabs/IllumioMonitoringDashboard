@@ -32,6 +32,11 @@
             line-height: 1.45;
             letter-spacing: 0.01em;
         }
+        .dashboard-shell {
+            width: min(98vw, 1920px);
+            margin: 0 auto;
+            padding: 0 16px;
+        }
         .header {
             background: var(--illumio-orange);
             color: white;
@@ -279,7 +284,7 @@
         </div>
     </div>
 
-    <div class="container mt-4">
+    <div class="dashboard-shell mt-4">
         <div class="row">
             <div class="col-12">
                 <div class="card p-3">
@@ -588,7 +593,8 @@
 
                 renderBlockedTargets(d.blocked.targets || []);
                 document.getElementById('ts').innerText = 'Last Updated: ' + new Date(d.timestamp).toLocaleString();
-                nextRefreshAt = Date.now() + 300000;
+                const snapshotMs = UICommon.parseTS(d.timestamp);
+                nextRefreshAt = snapshotMs > 0 ? (snapshotMs + 300000) : (Date.now() + 300000);
                 lastSnapshotTS = d.timestamp;
                 updateRefreshMeta(lastSnapshotTS);
                 updateCollectionBadge(d.collection);
@@ -596,6 +602,7 @@
             } catch (err) {
                 console.error('Fetch Error:', err);
                 document.getElementById('ts').innerText = 'Fetch failed: ' + err.message;
+                nextRefreshAt = Date.now() + 300000;
             } finally {
                 loadInFlight = false;
                 document.body.classList.remove('refreshing');
@@ -605,7 +612,8 @@
 
         function scheduleNextLoad() {
             if (refreshTimer) clearTimeout(refreshTimer);
-            refreshTimer = setTimeout(load, 300000);
+            const delay = nextRefreshAt ? Math.max(500, nextRefreshAt - Date.now()) : 300000;
+            refreshTimer = setTimeout(load, delay);
         }
 
         initTheme();
