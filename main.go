@@ -45,6 +45,7 @@ const metricsDBFileName = "metrics.db"
 const trafficQueryMaxResults = 200000
 const venQueryMaxDuration = 4 * time.Minute
 const tamperingQueryMaxDuration = 4 * time.Minute
+const tamperingBaselineHTTPTimeout = 180 * time.Second
 const rollingStateSchemaVersion = 2
 const defaultDataDirName = ".illumio-monitoring-dashboard"
 const defaultBindAddress = ":18443"
@@ -425,16 +426,18 @@ var (
 	reconcileStatusMu       sync.Mutex
 	reconcileStatus         blockedHistoryReconcileStatus
 
-	httpClient        = &http.Client{Timeout: 60 * time.Second}
-	dashboardTmpl     = template.Must(template.ParseFS(templateFS, "index.html"))
-	settingsTmpl      = template.Must(template.ParseFS(templateFS, "settings.html"))
-	detailsPageTmpl   = template.Must(template.ParseFS(templateFS, "details.html"))
-	reportPageTmpl    = template.Must(template.ParseFS(templateFS, "report.html"))
-	executivePageTmpl = template.Must(template.ParseFS(templateFS, "executive.html"))
-	dataDir           string
-	metricsDB         *sql.DB
-	perfMu            sync.Mutex
-	perfByRoute       = map[string][]float64{}
+	httpClient                  = &http.Client{Timeout: 60 * time.Second}
+	tamperingHTTPClient         = &http.Client{Timeout: 60 * time.Second}
+	tamperingBaselineHTTPClient = &http.Client{Timeout: tamperingBaselineHTTPTimeout}
+	dashboardTmpl               = template.Must(template.ParseFS(templateFS, "index.html"))
+	settingsTmpl                = template.Must(template.ParseFS(templateFS, "settings.html"))
+	detailsPageTmpl             = template.Must(template.ParseFS(templateFS, "details.html"))
+	reportPageTmpl              = template.Must(template.ParseFS(templateFS, "report.html"))
+	executivePageTmpl           = template.Must(template.ParseFS(templateFS, "executive.html"))
+	dataDir                     string
+	metricsDB                   *sql.DB
+	perfMu                      sync.Mutex
+	perfByRoute                 = map[string][]float64{}
 )
 
 func main() {
@@ -3524,7 +3527,7 @@ func getIllumioStats() DashboardStats {
 	stats.Collection.WindowStart = windowStart
 	stats.Collection.WindowEnd = windowEnd
 	stats.Collection.Mode = "rolling_24h"
-	tamperCount, tamperNames, tErr := getTamperingWindow(baseURL, windowStart, windowEnd)
+	tamperCount, tamperNames, tErr := getTamperingWindow(baseURL, windowStart, windowEnd, baseline)
 	log.Printf("[COLLECTOR] Tampering count=%d workloads=%d err=%v", tamperCount, len(tamperNames), tErr)
 	if tErr != nil && tamperCount == 0 {
 		stats.Tampering.Status = FetchStatus{Success: false, Error: "Events: " + tErr.Error()}
@@ -4055,8 +4058,12 @@ func updateRollingAndBuildView(
 	return totalTampering, w, blockedRollingTotals, blockedBaselineTotals, blockedIncrementalTotals, blockedWarmup, blockedWarmupMinutes
 }
 
-func getTamperingWindow(baseURL string, startUTC, endUTC time.Time) (int, []string, error) {
-	events, err := fetchTamperingEventsPaged(baseURL, startUTC, endUTC)
+func getTamperingWindow(baseURL string, startUTC, endUTC time.Time, baseline bool) (int, []string, error) {
+	client := tamperingHTTPClient
+	if baseline {
+		client = tamperingBaselineHTTPClient
+	}
+	events, err := fetchTamperingEventsPaged(baseURL, startUTC, endUTC, client)
 	if len(events) == 0 && err != nil {
 		return 0, nil, err
 	}
@@ -4075,7 +4082,7 @@ func getTamperingWindow(baseURL string, startUTC, endUTC time.Time) (int, []stri
 	return len(events), names, err
 }
 
-func fetchTamperingEventsPaged(baseURL string, startUTC, endUTC time.Time) ([]map[string]interface{}, error) {
+func fetchTamperingEventsPaged(baseURL string, startUTC, endUTC time.Time, client *http.Client) ([]map[string]interface{}, error) {
 	const pageSize = 1000
 	all := make([]map[string]interface{}, 0, pageSize)
 	started := time.Now()
@@ -4091,7 +4098,7 @@ func fetchTamperingEventsPaged(baseURL string, startUTC, endUTC time.Time) ([]ma
 		q.Set("end_date", endUTC.Format(pceTimeFormat))
 		q.Set("max_results", strconv.Itoa(pageSize))
 		q.Set("skip", strconv.Itoa(page*pageSize))
-		batch, err := fetchCollectionPage(baseURL + "/events?" + q.Encode())
+		batch, err := fetchCollectionPageWithClient(client, baseURL+"/events?"+q.Encode())
 		if err != nil {
 			q2 := url.Values{}
 			q2.Set("event_type", "agent.tampering")
@@ -4099,10 +4106,10 @@ func fetchTamperingEventsPaged(baseURL string, startUTC, endUTC time.Time) ([]ma
 			q2.Set("end_time", endUTC.Format(pceTimeFormat))
 			q2.Set("max_results", strconv.Itoa(pageSize))
 			q2.Set("skip", strconv.Itoa(page*pageSize))
-			batch, err = fetchCollectionPage(baseURL + "/events?" + q2.Encode())
+			batch, err = fetchCollectionPageWithClient(client, baseURL+"/events?"+q2.Encode())
 			if err != nil {
 				if page == 0 {
-					return fetchTamperingEventsBySlices(baseURL, startUTC, endUTC, time.Hour)
+					return fetchTamperingEventsBySlices(baseURL, startUTC, endUTC, time.Hour, client)
 				}
 				break
 			}
@@ -4142,12 +4149,12 @@ func fetchTamperingEventsPaged(baseURL string, startUTC, endUTC time.Time) ([]ma
 		}
 	}
 	if len(all) == 0 {
-		return fetchTamperingEventsBySlices(baseURL, startUTC, endUTC, time.Hour)
+		return fetchTamperingEventsBySlices(baseURL, startUTC, endUTC, time.Hour, client)
 	}
 	return all, nil
 }
 
-func fetchTamperingEventsBySlices(baseURL string, startUTC, endUTC time.Time, step time.Duration) ([]map[string]interface{}, error) {
+func fetchTamperingEventsBySlices(baseURL string, startUTC, endUTC time.Time, step time.Duration, client *http.Client) ([]map[string]interface{}, error) {
 	if step <= 0 {
 		step = time.Hour
 	}
@@ -4158,7 +4165,7 @@ func fetchTamperingEventsBySlices(baseURL string, startUTC, endUTC time.Time, st
 		if next.After(endUTC) {
 			next = endUTC
 		}
-		batch, err := fetchTamperingSlice(baseURL, cur, next)
+		batch, err := fetchTamperingSlice(baseURL, cur, next, client)
 		if err != nil {
 			if len(all) == 0 {
 				return nil, err
@@ -4177,13 +4184,13 @@ func fetchTamperingEventsBySlices(baseURL string, startUTC, endUTC time.Time, st
 	return all, nil
 }
 
-func fetchTamperingSlice(baseURL string, startUTC, endUTC time.Time) ([]map[string]interface{}, error) {
+func fetchTamperingSlice(baseURL string, startUTC, endUTC time.Time, client *http.Client) ([]map[string]interface{}, error) {
 	q := url.Values{}
 	q.Set("event_type", "agent.tampering")
 	q.Set("start_date", startUTC.Format(pceTimeFormat))
 	q.Set("end_date", endUTC.Format(pceTimeFormat))
 	q.Set("max_results", "200000")
-	batch, err := fetchCollectionPage(baseURL + "/events?" + q.Encode())
+	batch, err := fetchCollectionPageWithClient(client, baseURL+"/events?"+q.Encode())
 	if err == nil {
 		return batch, nil
 	}
@@ -4192,7 +4199,7 @@ func fetchTamperingSlice(baseURL string, startUTC, endUTC time.Time) ([]map[stri
 	q2.Set("start_time", startUTC.Format(pceTimeFormat))
 	q2.Set("end_time", endUTC.Format(pceTimeFormat))
 	q2.Set("max_results", "200000")
-	return fetchCollectionPage(baseURL + "/events?" + q2.Encode())
+	return fetchCollectionPageWithClient(client, baseURL+"/events?"+q2.Encode())
 }
 
 func tamperingEventSignature(event map[string]interface{}) string {
@@ -6689,7 +6696,11 @@ func apiCall(url, method string, payload interface{}, target interface{}) error 
 }
 
 func fetchCollectionPage(url string) ([]map[string]interface{}, error) {
-	body, err := apiCallRaw(url, "GET", nil)
+	return fetchCollectionPageWithClient(httpClient, url)
+}
+
+func fetchCollectionPageWithClient(client *http.Client, url string) ([]map[string]interface{}, error) {
+	body, err := apiCallRawWithClient(client, url, "GET", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -6717,6 +6728,10 @@ func fetchCollectionPage(url string) ([]map[string]interface{}, error) {
 }
 
 func apiCallRaw(url, method string, payload interface{}) ([]byte, error) {
+	return apiCallRawWithClient(httpClient, url, method, payload)
+}
+
+func apiCallRawWithClient(client *http.Client, url, method string, payload interface{}) ([]byte, error) {
 	reloadConfigIfFileChanged()
 	var body io.Reader
 	if payload != nil {
@@ -6743,7 +6758,10 @@ func apiCallRaw(url, method string, payload interface{}) ([]byte, error) {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := httpClient.Do(req)
+	if client == nil {
+		client = httpClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
