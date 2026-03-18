@@ -411,6 +411,11 @@ Use `/settings` to manage webhook alerting:
     - start/finish timestamps
     - day/update/failure counts
     - startup-skip reason and completion marker metadata
+- `POST /api/reconcile/tampering-history`:
+  - Trigger asynchronous full tampering-history reconciliation over stored prior day keys
+  - If a reconcile run is already in progress, request is ignored and response indicates current state
+- `GET /api/reconcile/tampering-history/status`:
+  - Returns current tampering reconcile state and last run summary (days/updated/failed, startup-skip reason, completion marker timestamp)
 - `GET /api/config/alerts`:
   - Read alerting/webhook settings
 - `PUT /api/config/alerts`:
@@ -517,6 +522,7 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
   - Tampering-history reconcile behavior:
     - startup auto-check reconciles stored prior-day tampering snapshots missing completion marker
     - previously reconciled tampering day keys are skipped using persisted day markers
+    - manual reconcile is available from Settings and `POST /api/reconcile/tampering-history`
 - HTTP basic auth is used for PCE API calls
 - `config.json` is written with file mode `0600`
 - For async traffic queries, result count is read from job status and falls back to results download endpoints if needed

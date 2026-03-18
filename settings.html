@@ -176,9 +176,11 @@
                         <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic" type="button">Save Traffic/Data</button>
                         <button class="btn btn-outline-success btn-sm" id="btn-refresh-now" type="button">Refresh Now</button>
                         <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-history" type="button">Reconcile Blocked History</button>
+                        <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-tampering-history" type="button">Reconcile Tampering History</button>
                     </div>
                     <div class="small mt-2" id="msg-traffic"></div>
                     <div class="small mt-1 text-muted" id="msg-reconcile-status"></div>
+                    <div class="small mt-1 text-muted" id="msg-tampering-reconcile-status"></div>
                 </details>
 
                 <details class="section-toggle mb-2">
@@ -711,6 +713,27 @@
             document.getElementById('msg-reconcile-status').innerText = msg;
         }
 
+        async function loadTamperingReconcileStatus() {
+            const r = await fetch('/api/reconcile/tampering-history/status');
+            if (!r.ok) throw new Error(`Load tampering reconcile status failed (${r.status})`);
+            const s = await r.json();
+            let msg = '';
+            if (s.running) {
+                msg = `Tampering history reconcile running (started ${formatTS(s.last_started_at) || 'recently'}).`;
+            } else if (s.last_finished_at) {
+                msg = `Tampering reconcile: ${formatTS(s.last_finished_at)} | days=${s.last_days || 0} updated=${s.last_updated || 0} failed=${s.last_failed || 0}.`;
+            } else if (s.startup_skipped) {
+                msg = `Tampering startup reconcile skipped: ${s.startup_skip_reason || 'already completed for stored days'}.`;
+            } else {
+                msg = 'No tampering reconcile run recorded yet.';
+            }
+            const completed = formatTS(s.last_completed_at);
+            if (completed) {
+                msg += ` Completed marker: ${completed}.`;
+            }
+            document.getElementById('msg-tampering-reconcile-status').innerText = msg;
+        }
+
         async function triggerFullReconcile() {
             const r = await fetch('/api/reconcile/blocked-history', { method: 'POST' });
             if (!r.ok) {
@@ -724,6 +747,21 @@
                 showMsg('msg-traffic', d.message || 'Reconcile already running.', 'warning');
             }
             await loadReconcileStatus().catch(() => {});
+        }
+
+        async function triggerTamperingReconcile() {
+            const r = await fetch('/api/reconcile/tampering-history', { method: 'POST' });
+            if (!r.ok) {
+                showMsg('msg-traffic', `Tampering reconcile trigger failed (${r.status})`, 'danger');
+                return;
+            }
+            const d = await r.json().catch(() => ({}));
+            if (d.started) {
+                showMsg('msg-traffic', 'Tampering history reconciliation started.', 'success');
+            } else {
+                showMsg('msg-traffic', d.message || 'Tampering reconcile already running.', 'warning');
+            }
+            await loadTamperingReconcileStatus().catch(() => {});
         }
 
         function updateProviderSections() {
@@ -842,10 +880,11 @@
         document.getElementById('btn-save-credentials').addEventListener('click', saveCredentialSettings);
         document.getElementById('btn-refresh-now').addEventListener('click', refreshNow);
         document.getElementById('btn-reconcile-history').addEventListener('click', triggerFullReconcile);
+        document.getElementById('btn-reconcile-tampering-history').addEventListener('click', triggerTamperingReconcile);
         document.getElementById('btn-save-alerts').addEventListener('click', saveAlertSettings);
         document.getElementById('btn-test-webhook').addEventListener('click', testWebhook);
 
-        Promise.all([loadTrafficSettings(), loadAlertSettings(), loadCredentialSettings(), loadReconcileStatus()]).catch((e) => {
+        Promise.all([loadTrafficSettings(), loadAlertSettings(), loadCredentialSettings(), loadReconcileStatus(), loadTamperingReconcileStatus()]).catch((e) => {
             showMsg('msg-traffic', e.message, 'danger');
             showMsg('msg-alerts', e.message, 'danger');
             showMsg('msg-credentials', e.message, 'danger');

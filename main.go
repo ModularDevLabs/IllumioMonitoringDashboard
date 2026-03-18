@@ -346,6 +346,21 @@ type blockedHistoryReconcileStatus struct {
 	LastTargetSignature string    `json:"last_target_signature,omitempty"`
 }
 
+type tamperingHistoryReconcileStatus struct {
+	Running           bool      `json:"running"`
+	LastTriggerReason string    `json:"last_trigger_reason,omitempty"`
+	LastStartedAt     time.Time `json:"last_started_at,omitempty"`
+	LastFinishedAt    time.Time `json:"last_finished_at,omitempty"`
+	LastDays          int       `json:"last_days,omitempty"`
+	LastUpdated       int       `json:"last_updated,omitempty"`
+	LastFailed        int       `json:"last_failed,omitempty"`
+	LastMessage       string    `json:"last_message,omitempty"`
+	StartupSkipped    bool      `json:"startup_skipped,omitempty"`
+	StartupSkipReason string    `json:"startup_skip_reason,omitempty"`
+	LastCompletedAt   time.Time `json:"last_completed_at,omitempty"`
+	LastDaySignature  string    `json:"last_day_signature,omitempty"`
+}
+
 type venDailySnapshot struct {
 	WarningMax       int `json:"warning_max"`
 	ErrorMax         int `json:"error_max"`
@@ -436,6 +451,7 @@ var (
 	reconcileStatusMu       sync.Mutex
 	reconcileStatus         blockedHistoryReconcileStatus
 	tamperingReconcileBusy  atomic.Bool
+	tamperingReconcileState tamperingHistoryReconcileStatus
 
 	httpClient                  = &http.Client{Timeout: 60 * time.Second}
 	tamperingHTTPClient         = &http.Client{Timeout: 60 * time.Second}
@@ -495,6 +511,8 @@ func main() {
 	http.HandleFunc("/api/refresh", withRequestTiming("api.refresh", withTrustedOrigin("api.refresh", handleRefreshNow)))
 	http.HandleFunc("/api/reconcile/blocked-history", withRequestTiming("api.reconcile.blocked_history", withTrustedOrigin("api.reconcile.blocked_history", handleReconcileBlockedHistory)))
 	http.HandleFunc("/api/reconcile/blocked-history/status", withRequestTiming("api.reconcile.blocked_history_status", handleReconcileBlockedHistoryStatus))
+	http.HandleFunc("/api/reconcile/tampering-history", withRequestTiming("api.reconcile.tampering_history", withTrustedOrigin("api.reconcile.tampering_history", handleReconcileTamperingHistory)))
+	http.HandleFunc("/api/reconcile/tampering-history/status", withRequestTiming("api.reconcile.tampering_history_status", handleReconcileTamperingHistoryStatus))
 	http.HandleFunc("/api/webhook/test", withRequestTiming("api.webhook.test", withTrustedOrigin("api.webhook.test", handleWebhookTest)))
 	http.HandleFunc("/api/anomalies/history", withRequestTiming("api.anomalies.history", handleAnomalyHistory))
 	http.HandleFunc("/api/diagnostics/perf", withRequestTiming("api.diagnostics.perf", handleDiagnosticsPerf))
@@ -1374,6 +1392,39 @@ func handleReconcileBlockedHistoryStatus(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(status)
 }
 
+func handleReconcileTamperingHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !startTamperingHistoryReconcileAsync("api", nil) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"started": false,
+			"message": "tampering history reconciliation is already running",
+		})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"started": true,
+		"message": "tampering history reconciliation started",
+	})
+}
+
+func handleReconcileTamperingHistoryStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	reconcileStatusMu.Lock()
+	status := tamperingReconcileState
+	reconcileStatusMu.Unlock()
+	status.Running = tamperingReconcileBusy.Load()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(status)
+}
+
 func maybeStartStartupBlockedHistoryReconcile() {
 	targets := configuredTrafficTargets()
 	marker, ok := loadBlockedHistoryReconcileMarker()
@@ -1535,6 +1586,11 @@ func (m blockedHistoryReconcileMarker) LastCompletedAt() time.Time {
 func maybeStartStartupTamperingHistoryReconcile() {
 	dayKeys := tamperingHistoryDayKeysForReconcile(time.Now().UTC())
 	if len(dayKeys) == 0 {
+		reconcileStatusMu.Lock()
+		tamperingReconcileState.StartupSkipped = true
+		tamperingReconcileState.StartupSkipReason = "no previous day keys present"
+		tamperingReconcileState.LastMessage = "startup reconcile skipped (no prior-day tampering history)"
+		reconcileStatusMu.Unlock()
 		log.Printf("[TAMPER-HISTORY] startup reconcile skipped: no previous day keys present")
 		return
 	}
@@ -1547,6 +1603,13 @@ func maybeStartStartupTamperingHistoryReconcile() {
 		pending = append(pending, day)
 	}
 	if len(pending) == 0 {
+		reconcileStatusMu.Lock()
+		tamperingReconcileState.StartupSkipped = true
+		tamperingReconcileState.StartupSkipReason = "marker exists for stored day set"
+		tamperingReconcileState.LastCompletedAt = marker.LastCompletedAtValue()
+		tamperingReconcileState.LastDaySignature = marker.DayFingerprint
+		tamperingReconcileState.LastMessage = "startup reconcile skipped (already completed)"
+		reconcileStatusMu.Unlock()
 		log.Printf("[TAMPER-HISTORY] startup reconcile skipped: all %d day markers present", len(dayKeys))
 		return
 	}
@@ -1559,27 +1622,68 @@ func startTamperingHistoryReconcileAsync(reason string, dayKeys []string) bool {
 		log.Printf("[TAMPER-HISTORY] reconcile request ignored: already in progress (reason=%s)", reason)
 		return false
 	}
+	reconcileStatusMu.Lock()
+	tamperingReconcileState.StartupSkipped = false
+	tamperingReconcileState.StartupSkipReason = ""
+	tamperingReconcileState.Running = true
+	tamperingReconcileState.LastTriggerReason = reason
+	tamperingReconcileState.LastStartedAt = time.Now().UTC()
+	tamperingReconcileState.LastMessage = "reconcile running"
+	reconcileStatusMu.Unlock()
 	go func() {
-		defer tamperingReconcileBusy.Store(false)
+		defer func() {
+			tamperingReconcileBusy.Store(false)
+			reconcileStatusMu.Lock()
+			tamperingReconcileState.Running = false
+			tamperingReconcileState.LastFinishedAt = time.Now().UTC()
+			reconcileStatusMu.Unlock()
+		}()
 		configMutex.RLock()
 		pceURL := config.PCEURL
 		orgID := config.OrgID
 		configMutex.RUnlock()
 		baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), strings.TrimSpace(orgID))
-		if len(dayKeys) == 0 {
-			dayKeys = tamperingHistoryDayKeysForReconcile(time.Now().UTC())
+		requested := dayKeys
+		if len(requested) == 0 {
+			requested = tamperingHistoryDayKeysForReconcile(time.Now().UTC())
 		}
-		updated, failed := reconcileStoredTamperingHistory(baseURL, dayKeys)
+		sig := tamperingDayFingerprint(requested)
+		updated, failed := reconcileStoredTamperingHistory(baseURL, requested)
+		reconcileStatusMu.Lock()
+		tamperingReconcileState.LastDays = len(requested)
+		tamperingReconcileState.LastUpdated = updated
+		tamperingReconcileState.LastFailed = failed
+		tamperingReconcileState.LastDaySignature = sig
+		tamperingReconcileState.LastMessage = fmt.Sprintf("reconcile complete days=%d updated=%d failed=%d", len(requested), updated, failed)
+		reconcileStatusMu.Unlock()
 		if failed == 0 && updated > 0 {
 			marker, _ := loadTamperingHistoryReconcileMarker()
-			marker.MarkDaysComplete(dayKeys, time.Now().UTC())
+			marker.MarkDaysComplete(requested, time.Now().UTC())
 			if err := saveTamperingHistoryReconcileMarker(marker); err != nil {
 				log.Printf("[TAMPER-HISTORY] failed saving reconcile marker: %v", err)
+			} else {
+				reconcileStatusMu.Lock()
+				tamperingReconcileState.LastCompletedAt = marker.LastCompletedAtValue()
+				reconcileStatusMu.Unlock()
 			}
 		}
-		log.Printf("[TAMPER-HISTORY] reconcile complete reason=%s days=%d updated=%d failed=%d", reason, len(dayKeys), updated, failed)
+		log.Printf("[TAMPER-HISTORY] reconcile complete reason=%s days=%d updated=%d failed=%d", reason, len(requested), updated, failed)
 	}()
 	return true
+}
+
+func tamperingDayFingerprint(dayKeys []string) string {
+	clean := make([]string, 0, len(dayKeys))
+	for _, day := range dayKeys {
+		day = strings.TrimSpace(day)
+		if day == "" {
+			continue
+		}
+		clean = append(clean, day)
+	}
+	sort.Strings(clean)
+	sum := sha256.Sum256([]byte(strings.Join(clean, "|")))
+	return hex.EncodeToString(sum[:])
 }
 
 func tamperingHistoryDayKeysForReconcile(nowUTC time.Time) []string {
@@ -1667,6 +1771,23 @@ func (m *tamperingHistoryReconcileMarker) MarkDaysComplete(dayKeys []string, at 
 	sum := sha256.Sum256([]byte(strings.Join(clean, "|")))
 	m.DayFingerprint = hex.EncodeToString(sum[:])
 	m.LastCompletedAt = at.UTC()
+}
+
+func (m tamperingHistoryReconcileMarker) LastCompletedAtValue() time.Time {
+	latest := m.LastCompletedAt.UTC()
+	if m.CompletedAt.After(latest) {
+		latest = m.CompletedAt.UTC()
+	}
+	for _, v := range m.CompletedByDay {
+		t, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
+		if err != nil {
+			continue
+		}
+		if t.After(latest) {
+			latest = t
+		}
+	}
+	return latest
 }
 
 func handleWebhookTest(w http.ResponseWriter, r *http.Request) {
