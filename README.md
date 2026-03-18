@@ -400,6 +400,16 @@ Use `/settings` to manage webhook alerting:
   - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
 - `POST /api/refresh`:
   - Trigger immediate collection cycle
+- `POST /api/reconcile/blocked-history`:
+  - Trigger asynchronous full blocked-history reconciliation over stored day keys
+  - If a reconcile run is already in progress, request is ignored and response indicates current state
+- `GET /api/reconcile/blocked-history/status`:
+  - Returns current reconcile state and last run summary:
+    - running flag
+    - trigger reason
+    - start/finish timestamps
+    - day/update/failure counts
+    - startup-skip reason and completion marker metadata
 - `GET /api/config/alerts`:
   - Read alerting/webhook settings
 - `PUT /api/config/alerts`:
@@ -498,9 +508,15 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
     - `metrics.db` (rolling state, blocked/VEN daily history, blocked port daily + 5m snapshots, alert state, anomaly history)
   - On startup, legacy local state files are auto-migrated into the shared data directory if destination files are absent.
   - Retention is pruned based on `history_days`.
+  - Blocked-history reconcile behavior:
+    - startup auto-check performs reconcile for targets missing completion marker
+    - previously reconciled targets are skipped using persisted per-target markers
+    - when target set changes, startup reconcile runs only for newly added/changed targets
+    - manual full reconcile is available from Settings and `POST /api/reconcile/blocked-history`
 - HTTP basic auth is used for PCE API calls
 - `config.json` is written with file mode `0600`
 - For async traffic queries, result count is read from job status and falls back to results download endpoints if needed
+- Runtime logs are written to `illumiomonitoringdashboard.log` in the process working directory (and mirrored to stdout)
 
 ## Troubleshooting
 

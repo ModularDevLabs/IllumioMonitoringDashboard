@@ -1,5 +1,45 @@
 # Release Notes
 
+## v1.2.2 - 2026-03-18
+
+Stabilization release focused on blocked-traffic correctness, reconciliation controls, and operator usability.
+
+### Highlights
+- Improved blocked 24h rolling accuracy by deduplicating repeated 5-minute flow snapshots using flow signatures and last-detected progression.
+- Added configurable dedupe backend for blocked rolling calculations:
+  - `sqlite` (default; lower process memory footprint, restart-safe)
+  - `memory` (in-process)
+- Added blocked-history reconcile controls and visibility:
+  - startup-triggered reconcile with persisted completion marker
+  - incremental startup reconcile when target set changes
+  - manual trigger endpoint and settings UI trigger
+  - reconcile status endpoint
+
+### Blocked Traffic Accuracy And Reconciliation
+- Corrected combined blocked count path to prefer async job `result_count` (with row-count fallback).
+- Added previous-day authoritative blocked reconciliation via 24h target snapshots.
+- Added full historical blocked reconciliation endpoint:
+  - `POST /api/reconcile/blocked-history`
+- Added reconcile status endpoint:
+  - `GET /api/reconcile/blocked-history/status`
+- Full reconcile now uses org-scoped API paths consistently.
+- Full reconcile exclusion resolution is now best-effort (unresolved exclusion labels/groups are skipped without warning spam).
+
+### Runtime/Operations
+- Process logging now writes to `illumiomonitoringdashboard.log` in the runtime directory (and stdout).
+- Added verbose blocked/reconcile diagnostic logging for discrepancy triage.
+- Startup reconcile marker persisted per target identity; already-reconciled targets are skipped on subsequent restarts.
+
+### UI/UX
+- Dashboard layout now uses more available horizontal space on larger screens.
+- Dashboard refresh metadata countdown now remains accurate after page reload (aligned to snapshot cadence).
+- Increased chart point hover targets across drilldown/report/executive views for easier interaction.
+- Preserved trend/report section expand/collapse state across view and range changes (carried forward in stable release).
+
+### Configuration And Docs
+- Added `blocked_rolling_dedupe_backend` configuration and settings UI control.
+- Updated configuration examples/reference and API examples in README for new dedupe backend and reconcile usage.
+
 ## v1.2.1 - 2026-03-12
 
 Patch release focused on Trend View usability.
