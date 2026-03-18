@@ -1280,11 +1280,10 @@ func handleReconcileBlockedHistory(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer fullReconcileInProgress.Store(false)
 		configMutex.RLock()
-		baseURL := strings.TrimSuffix(config.PCEURL, "/api/v2")
+		pceURL := config.PCEURL
+		orgID := config.OrgID
 		configMutex.RUnlock()
-		if !strings.HasSuffix(baseURL, "/api/v2") {
-			baseURL += "/api/v2"
-		}
+		baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), strings.TrimSpace(orgID))
 		targets := configuredTrafficTargets()
 		log.Printf("[HISTORY] full reconcile start targets=%d", len(targets))
 		exclusions := configuredSourceExclusions()
