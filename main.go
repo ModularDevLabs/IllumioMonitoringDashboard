@@ -4315,7 +4315,9 @@ func updateRollingAndBuildView(
 				mins = 24 * 60
 			}
 			blockedWarmupMinutes[name] = mins
-			blockedRollingTotals[name] = baselineEntry.Count
+			// During warmup, display an interpolated current view using baseline plus observed incremental
+			// activity since baseline capture so tiles don't show contradictory 0 current / non-zero recent values.
+			blockedRollingTotals[name] = baselineEntry.Count + incremental
 		} else {
 			if uniqueCount, ok := blockedRollingUniqueCountLocked(name, cutoff); ok {
 				blockedRollingTotals[name] = uniqueCount
