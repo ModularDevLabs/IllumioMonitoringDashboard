@@ -78,18 +78,28 @@
             gap: 8px;
             width: 100%;
         }
+        .settings-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+        .setting-cluster {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface-2);
+            padding: 10px;
+        }
+        .setting-cluster-title {
+            font-size: 0.86rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
         @media (min-width: 1100px) {
-            .section-two-col {
-                display: grid;
+            .settings-grid {
                 grid-template-columns: repeat(2, minmax(320px, 1fr));
-                gap: 10px 14px;
-                align-items: start;
-            }
-            .section-two-col > summary {
-                grid-column: 1 / -1;
-            }
-            .section-two-col > .section-full {
-                grid-column: 1 / -1;
             }
         }
         body[data-theme="dark"] .form-control,
@@ -118,85 +128,93 @@
         <div class="card p-3 mb-3">
             <div class="fw-semibold mb-1">Traffic And Data Settings</div>
             <p class="text-muted small mb-3 mt-1">Manage traffic targets, exclusions, retention, and anomaly defaults.</p>
-                <details class="section-toggle section-two-col mb-2" open>
+                <details class="section-toggle mb-2" open>
                     <summary>Traffic Targets Settings</summary>
-                    <div class="mb-2 mt-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="history-days">Blocked Daily History Retention (days)</label>
-                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="history-days" value="365">
+                    <div class="settings-grid mt-2">
+                        <div class="setting-cluster">
+                            <div class="setting-cluster-title">Retention And Storage</div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="history-days">Blocked Daily History Retention (days)</label>
+                                <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="history-days" value="365">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-port-daily-enabled">Blocked Port Daily Aggregation</label>
+                                <select class="form-select form-select-sm" id="blocked-port-daily-enabled">
+                                    <option value="true">Enabled</option>
+                                    <option value="false">Disabled</option>
+                                </select>
+                                <div class="small text-muted mt-1">When enabled, stores daily blocked port/proto totals and shows the blocked-ports table in blocked target drilldown.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-rolling-dedupe-backend">Blocked 24h Rolling Dedupe Backend</label>
+                                <select class="form-select form-select-sm" id="blocked-rolling-dedupe-backend">
+                                    <option value="sqlite">SQLite (default)</option>
+                                    <option value="memory">In-memory</option>
+                                </select>
+                                <div class="small text-muted mt-1">Controls how 24h unique-flow dedupe state is stored for blocked 5m rolling charts.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-host-metrics-enabled">Blocked Hostname Metrics</label>
+                                <select class="form-select form-select-sm" id="blocked-host-metrics-enabled">
+                                    <option value="false">Disabled</option>
+                                    <option value="true">Enabled</option>
+                                </select>
+                                <div class="small text-muted mt-1">Collect per-host inbound/outbound blocked flow counts from blocked query results.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-host-retention-mode">Blocked Hostname Retention Mode</label>
+                                <select class="form-select form-select-sm" id="blocked-host-retention-mode">
+                                    <option value="rolling_24h_only">Rolling 24h (5m snapshots only)</option>
+                                    <option value="rolling_24h_plus_daily">Rolling 24h + Daily snapshots</option>
+                                </select>
+                                <div class="small text-muted mt-1">Use daily snapshots to retain hostname aggregates for long-range history charts/tables.</div>
+                            </div>
+                        </div>
+                        <div class="setting-cluster">
+                            <div class="setting-cluster-title">Anomaly Defaults</div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-ma-window">
+                                    Blocked 5m Moving Average Window (points)
+                                    <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                                </label>
+                                <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="blocked-ma-window" value="12">
+                                <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-pct">Blocked Anomaly Threshold (%)</label>
+                                <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="blocked-anomaly-pct" value="50">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-baseline">Blocked Anomaly Baseline Source</label>
+                                <select class="form-select form-select-sm" id="blocked-anomaly-baseline">
+                                    <option value="5m">5m Moving Average</option>
+                                    <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
+                                </select>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-days">
+                                    Blocked Daily Baseline Lookback (days)
+                                    <span class="help-tip" title="Used only when baseline source is Daily. The app averages the last N daily totals, then compares the latest 5m blocked value against that daily average and threshold.">?</span>
+                                </label>
+                                <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="blocked-anomaly-days" value="7">
+                                <div class="small text-muted mt-1">Daily baseline only: N is the number of recent daily totals used to build the blocked anomaly baseline.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="daily-ma-window">
+                                    Daily Moving Average Window (points)
+                                    <span class="help-tip" title="Daily points: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d. Used for Daily trend MA overlays and blocked daily-baseline overlays.">?</span>
+                                </label>
+                                <input type="number" min="2" max="3650" step="1" class="form-control form-control-sm" id="daily-ma-window" value="7">
+                                <div class="small text-muted mt-1">Reference: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-min-pct">Blocked Baseline Min Coverage (%)</label>
+                                <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="blocked-anomaly-min-pct" value="70">
+                                <div class="small text-muted mt-1">If baseline is not fully built yet, alerts are suppressed until this coverage threshold is met (for example 70% means 5 of 7 days).</div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-port-daily-enabled">Blocked Port Daily Aggregation</label>
-                        <select class="form-select form-select-sm" id="blocked-port-daily-enabled">
-                            <option value="true">Enabled</option>
-                            <option value="false">Disabled</option>
-                        </select>
-                        <div class="small text-muted mt-1">When enabled, stores daily blocked port/proto totals and shows the blocked-ports table in blocked target drilldown.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-rolling-dedupe-backend">Blocked 24h Rolling Dedupe Backend</label>
-                        <select class="form-select form-select-sm" id="blocked-rolling-dedupe-backend">
-                            <option value="sqlite">SQLite (default)</option>
-                            <option value="memory">In-memory</option>
-                        </select>
-                        <div class="small text-muted mt-1">Controls how 24h unique-flow dedupe state is stored for blocked 5m rolling charts.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-host-metrics-enabled">Blocked Hostname Metrics</label>
-                        <select class="form-select form-select-sm" id="blocked-host-metrics-enabled">
-                            <option value="false">Disabled</option>
-                            <option value="true">Enabled</option>
-                        </select>
-                        <div class="small text-muted mt-1">Collect per-host inbound/outbound blocked flow counts from blocked query results.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-host-retention-mode">Blocked Hostname Retention Mode</label>
-                        <select class="form-select form-select-sm" id="blocked-host-retention-mode">
-                            <option value="rolling_24h_only">Rolling 24h (5m snapshots only)</option>
-                            <option value="rolling_24h_plus_daily">Rolling 24h + Daily snapshots</option>
-                        </select>
-                        <div class="small text-muted mt-1">Use daily snapshots to retain hostname aggregates for long-range history charts/tables.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-ma-window">
-                            Blocked 5m Moving Average Window (points)
-                            <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
-                        </label>
-                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="blocked-ma-window" value="12">
-                        <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-pct">Blocked Anomaly Threshold (%)</label>
-                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="blocked-anomaly-pct" value="50">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-baseline">Blocked Anomaly Baseline Source</label>
-                        <select class="form-select form-select-sm" id="blocked-anomaly-baseline">
-                            <option value="5m">5m Moving Average</option>
-                            <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
-                        </select>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-days">
-                            Blocked Daily Baseline Lookback (days)
-                            <span class="help-tip" title="Used only when baseline source is Daily. The app averages the last N daily totals, then compares the latest 5m blocked value against that daily average and threshold.">?</span>
-                        </label>
-                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="blocked-anomaly-days" value="7">
-                        <div class="small text-muted mt-1">Daily baseline only: N is the number of recent daily totals used to build the blocked anomaly baseline.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="daily-ma-window">
-                            Daily Moving Average Window (points)
-                            <span class="help-tip" title="Daily points: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d. Used for Daily trend MA overlays and blocked daily-baseline overlays.">?</span>
-                        </label>
-                        <input type="number" min="2" max="3650" step="1" class="form-control form-control-sm" id="daily-ma-window" value="7">
-                        <div class="small text-muted mt-1">Reference: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-min-pct">Blocked Baseline Min Coverage (%)</label>
-                        <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="blocked-anomaly-min-pct" value="70">
-                        <div class="small text-muted mt-1">If baseline is not fully built yet, alerts are suppressed until this coverage threshold is met (for example 70% means 5 of 7 days).</div>
-                    </div>
-                    <div class="mb-2 section-full">
+                    <div class="mb-2 mt-2 section-full">
                         <label class="form-label form-label-sm small text-muted mb-1" for="source-exclusions">Traffic Source Exclusions (comma-separated names)</label>
                         <input type="text" class="form-control form-control-sm" id="source-exclusions" placeholder="LG-SCANNERS">
                     </div>
