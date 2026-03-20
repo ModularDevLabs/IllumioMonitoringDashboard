@@ -330,11 +330,13 @@ Click these cards/badges to open detailed lists:
     - all observed blocked `port/proto` values (not top-only)
     - totals are summed from flow `num_connections`
     - aggregation follows selected daily range (`7d/30d/90d/180d/365d`)
+    - includes `Collapse/Expand` toggle to hide/show port table quickly during analysis
   - Blocked target drilldowns include `Blocked Hostnames` table (when enabled):
     - shows `hostname`, `outbound`, `inbound`, `total`
     - `rolling_24h_only`: table uses rolling 24h 5m snapshots
     - `rolling_24h_plus_daily`: table uses retained daily host rollups by selected day range
     - `daily_only`: table uses daily host rollups by selected day range (no rolling 24h host snapshot storage)
+    - host keys prefer workload `hostname` over workload `name` to avoid collisions across similarly named workloads
 
 ### Trend View / Report
 

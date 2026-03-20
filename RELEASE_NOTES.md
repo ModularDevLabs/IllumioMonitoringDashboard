@@ -31,6 +31,12 @@ Experimental feature branch updates (not merged to stable main):
   - when rolling 24h host snapshots are still empty, drilldown now runs a live 24h host fallback query so hostname data is available immediately.
 - Fixed source-exclusion clearing:
   - empty `traffic_source_exclusions` now persists as empty (no automatic `LG-SCANNERS` fallback reinjection).
+- Improved blocked hostname direction fidelity:
+  - host aggregation now prefers workload `hostname` over generic workload `name` to reduce host-key collisions that could skew inbound/outbound totals.
+
+### UI Polish
+- Added `Collapse/Expand` control for `Blocked Ports (Daily Aggregate)` in blocked-target drilldown.
+- Standardized top banner title text across main/supporting pages to reduce visual context switching.
 
 ## v1.2.4 - 2026-03-18
 
