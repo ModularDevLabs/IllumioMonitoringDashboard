@@ -29,6 +29,9 @@
             line-height: 1.45;
             letter-spacing: 0.01em;
         }
+        .dashboard-shell { width: min(98vw, 1920px); margin: 0 auto; padding: 0 16px; }
+        .topbar { background: var(--illumio-orange); color: #fff; padding: 14px 0; margin-bottom: 16px; }
+        .topbar-title { margin: 0; font-size: 1.1rem; font-weight: 700; }
         .wrap { width: min(98vw, 1920px); margin: 0 auto; padding: 16px; }
         .header {
             background: var(--panel-bg);
@@ -132,6 +135,11 @@
     </style>
 </head>
 <body>
+<div class="topbar">
+    <div class="dashboard-shell">
+        <div class="topbar-title">Illumio Monitoring Dashboard</div>
+    </div>
+</div>
 <div class="wrap">
     <div class="header">
         <h1>Illumio Monitoring Dashboard</h1>

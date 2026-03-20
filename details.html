@@ -53,6 +53,21 @@
             margin-bottom: 8px;
         }
         .text-muted { color: var(--muted) !important; }
+        .section-toggle summary {
+            cursor: pointer;
+            list-style: none;
+            font-weight: 600;
+            font-size: 0.95rem;
+            padding: 2px 0;
+        }
+        .section-toggle summary::-webkit-details-marker { display: none; }
+        .section-toggle summary::before {
+            content: "▸";
+            display: inline-block;
+            margin-right: 8px;
+            color: var(--muted);
+        }
+        .section-toggle[open] summary::before { content: "▾"; }
         body[data-theme="dark"] .card,
         body[data-theme="dark"] .card h1,
         body[data-theme="dark"] .card h2,
@@ -125,22 +140,21 @@
                 <canvas id="trend-chart"></canvas>
             </div>
             <div id="blocked-ports-wrap" class="d-none mb-3">
-                <div class="d-flex justify-content-between align-items-center mb-1">
-                    <h6 class="mb-0">Blocked Ports (Daily Aggregate)</h6>
-                    <button id="btn-toggle-blocked-ports" type="button" class="btn btn-sm btn-outline-secondary">Collapse</button>
-                </div>
-                <div class="text-muted small mb-2" id="blocked-ports-meta"></div>
-                <div id="blocked-ports-table-wrap" class="table-responsive">
-                    <table class="table table-sm">
-                        <thead>
-                            <tr>
-                                <th>Port/Proto</th>
-                                <th class="text-end">Total Flows</th>
-                            </tr>
-                        </thead>
-                        <tbody id="blocked-ports-body"></tbody>
-                    </table>
-                </div>
+                <details class="section-toggle" id="blocked-ports-section" open>
+                    <summary>Blocked Ports (Daily Aggregate)</summary>
+                    <div class="text-muted small mb-2 mt-1" id="blocked-ports-meta"></div>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Port/Proto</th>
+                                    <th class="text-end">Total Flows</th>
+                                </tr>
+                            </thead>
+                            <tbody id="blocked-ports-body"></tbody>
+                        </table>
+                    </div>
+                </details>
             </div>
             <div id="blocked-hosts-wrap" class="d-none mb-3">
                 <h6>Blocked Hostnames (Daily Aggregate)</h6>
@@ -184,7 +198,6 @@
         let blockedHostRetentionMode = 'rolling_24h_plus_daily';
         let blockedHostsDaily = [];
         let blockedHosts24h = [];
-        let blockedPortsCollapsed = false;
         const THEME_KEY = 'illumio_theme';
         let dayRange = 30;
         let nextRefreshAt = null;
@@ -409,8 +422,6 @@
 
         function renderBlockedPortsTable() {
             const wrap = document.getElementById('blocked-ports-wrap');
-            const tableWrap = document.getElementById('blocked-ports-table-wrap');
-            const toggleBtn = document.getElementById('btn-toggle-blocked-ports');
             const body = document.getElementById('blocked-ports-body');
             const meta = document.getElementById('blocked-ports-meta');
             if (currentMetric !== 'blocked_target') {
@@ -418,10 +429,6 @@
                 return;
             }
             wrap.classList.remove('d-none');
-            if (tableWrap && toggleBtn) {
-                tableWrap.classList.toggle('d-none', blockedPortsCollapsed);
-                toggleBtn.innerText = blockedPortsCollapsed ? 'Expand' : 'Collapse';
-            }
             if (!blockedPortDailyEnabled) {
                 body.innerHTML = '<tr><td colspan="2" class="text-muted">Blocked port daily aggregation is disabled in settings.</td></tr>';
                 meta.innerText = 'Disabled.';
@@ -727,13 +734,6 @@
 
         initTheme();
         UICommon.applyMetricTooltips();
-        const toggleBlockedPortsBtn = document.getElementById('btn-toggle-blocked-ports');
-        if (toggleBlockedPortsBtn) {
-            toggleBlockedPortsBtn.addEventListener('click', () => {
-                blockedPortsCollapsed = !blockedPortsCollapsed;
-                renderBlockedPortsTable();
-            });
-        }
         if (!statusTimer) {
             statusTimer = setInterval(updateRefreshMeta, 1000);
         }
