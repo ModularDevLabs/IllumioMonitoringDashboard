@@ -270,6 +270,17 @@
             .reduce((a, p) => a + Number(p.value || 0), 0);
     }
 
+    function isAllBlockedTarget(target) {
+        if (!target || typeof target !== 'object') return false;
+        const name = String(target.name || '').trim().toUpperCase();
+        const kind = String(target.kind || '').trim().toLowerCase();
+        return name === 'ALL-BLOCKED-TRAFFIC' || kind === 'all';
+    }
+
+    function filteredBlockedTargets(stats) {
+        return (stats.blocked?.targets || []).filter((t) => !isAllBlockedTarget(t));
+    }
+
     function comparePeriods(series, days) {
         const now = Date.now();
         const currentStart = now - days * 24 * 60 * 60 * 1000;
@@ -341,7 +352,8 @@
 
     function actionItems(stats, blockedSeries, tamperDaily, periodDays) {
         const out = [];
-        const anomalous = (stats.blocked?.targets || []).filter((t) => t.anomalous);
+        const blockedTargets = filteredBlockedTargets(stats);
+        const anomalous = blockedTargets.filter((t) => t.anomalous);
         if (anomalous.length) out.push(`Investigate ${anomalous.length} anomalous blocked target(s): ${anomalous.slice(0, 3).map((t) => t.name).join(', ')}.`);
         const warn = (stats.ven_status?.warning || []).length;
         const err = (stats.ven_status?.error || []).length;
@@ -370,10 +382,11 @@
     }
 
     function buildBoardSnapshot(stats, blockedDaily, targets, actions, periodDays) {
-        const anomalous = (stats.blocked?.targets || []).filter((t) => t.anomalous);
-        const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
+        const blockedTargets = filteredBlockedTargets(stats);
+        const anomalous = blockedTargets.filter((t) => t.anomalous);
+        const blocked24h = blockedTargets.reduce((a, t) => a + Number(t.count || 0), 0);
         const periodTotal = sumLastDays(blockedDaily, periodDays);
-        const bestTarget = [...(stats.blocked?.targets || [])].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
+        const bestTarget = [...blockedTargets].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
         const wins = [
             `Blocked ${fmt(blocked24h)} flows in the last 24h (protection outcome).`,
             `Blocked ${fmt(periodTotal)} flows across ${periodDays}d.`,
@@ -393,18 +406,17 @@
         setList('board-actions', actions, 'No immediate actions required.');
     }
 
-    function renderValueRanking(stats, targetDetails, periodDays) {
+    function renderValueRanking(blockedTargets, targetDetails, periodDays) {
         const body = document.getElementById('value-ranking-body');
         const periodLabel = document.getElementById('rank-period-label');
         if (!body) return;
         if (periodLabel) periodLabel.textContent = `${periodDays}d`;
-        const targets = stats.blocked?.targets || [];
-        if (!targets.length) {
+        if (!blockedTargets.length) {
             body.innerHTML = '<tr><td colspan="6" class="muted">No blocked targets configured or no data returned yet.</td></tr>';
             return;
         }
 
-        const rows = targets.map((t, idx) => {
+        const rows = blockedTargets.map((t, idx) => {
             const d = targetDetails[idx] || {};
             const periodTotal = sumLastDays(d.trend_daily || [], periodDays);
             return {
@@ -450,15 +462,15 @@
 
     function buildNarrativeSummary(stats, blockedDaily, actions, periodDays) {
         const nowText = new Date().toLocaleString();
-        const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
+        const blockedTargets = filteredBlockedTargets(stats);
+        const blocked24h = blockedTargets.reduce((a, t) => a + Number(t.count || 0), 0);
         const blockedPeriod = sumLastDays(blockedDaily, periodDays);
         const blockedDeltaPeriod = comparePeriods(blockedDaily, periodDays);
-        const targets = stats.blocked?.targets || [];
-        const topTargets = [...targets]
+        const topTargets = [...blockedTargets]
             .sort((a, b) => Number(b.count || 0) - Number(a.count || 0))
             .slice(0, 3)
             .map((t) => `${t.name} (${fmt(t.count || 0)} in 24h)`);
-        const anomalous = targets.filter((t) => t.anomalous).length;
+        const anomalous = blockedTargets.filter((t) => t.anomalous).length;
         const venWarn = (stats.ven_status?.warning || []).length;
         const venErr = (stats.ven_status?.error || []).length;
         const tampered = (stats.tampering?.workloads || []).length;
@@ -510,10 +522,13 @@
     async function load() {
         const stats = await fetch('/api/stats?ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.json());
         const targets = await fetch('/api/config/targets?ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.json());
-        const targetDetails = await Promise.all((stats.blocked?.targets || []).map((t) =>
+        const allBlockedTargets = stats.blocked?.targets || [];
+        const targetDetailsAll = await Promise.all(allBlockedTargets.map((t) =>
             fetch(`/api/drilldown?metric=blocked_target&target=${encodeURIComponent(t.name)}&ts=${Date.now()}`, { cache: 'no-store' })
                 .then((r) => r.ok ? r.json() : null).catch(() => null)
         ));
+        const blockedTargets = allBlockedTargets.filter((t) => !isAllBlockedTarget(t));
+        const targetDetails = targetDetailsAll.filter((_, idx) => !isAllBlockedTarget(allBlockedTargets[idx]));
         const blockedDaily = aggregateDailyBlocked(targetDetails.filter(Boolean));
         const tamper = await fetch('/api/drilldown?metric=tampering&ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.ok ? r.json() : null).catch(() => null);
 
@@ -527,18 +542,18 @@
         risk.innerHTML = '';
         if (actionsRoot) actionsRoot.innerHTML = '';
 
-        const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
+        const blocked24h = blockedTargets.reduce((a, t) => a + Number(t.count || 0), 0);
         const periodTotal = sumLastDays(blockedDaily, selectedPeriodDays);
         const thirtyDay = sumLastDays(blockedDaily, 30);
         const blockedDeltaPeriod = comparePeriods(blockedDaily, selectedPeriodDays);
-        const bestTarget = [...(stats.blocked?.targets || [])].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
+        const bestTarget = [...blockedTargets].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
 
         addKPI(protection, 'Blocked Flows (24h)', fmt(blocked24h), 'Protection outcome volume');
         addKPI(protection, `Blocked Flows (${selectedPeriodDays}d)`, fmt(periodTotal), `${blockedDeltaPeriod >= 0 ? '+' : ''}${blockedDeltaPeriod.toFixed(1)}% vs prior ${selectedPeriodDays}d`);
         addKPI(protection, 'Blocked Flows (30d)', fmt(thirtyDay), 'Aggregated daily totals');
         addKPI(protection, 'Most Active Target (24h)', bestTarget ? `${bestTarget.name}: ${fmt(bestTarget.count)}` : 'n/a', 'Highest blocked flow target');
 
-        const anomalous = (stats.blocked?.targets || []).filter((t) => t.anomalous).length;
+        const anomalous = blockedTargets.filter((t) => t.anomalous).length;
         const venWarn = (stats.ven_status?.warning || []).length;
         const venErr = (stats.ven_status?.error || []).length;
         const tampered = (stats.tampering?.workloads || []).length;
@@ -560,7 +575,7 @@
             });
         }
         buildBoardSnapshot(stats, blockedDaily, targets, actions, selectedPeriodDays);
-        renderValueRanking(stats, targetDetails, selectedPeriodDays);
+        renderValueRanking(blockedTargets, targetDetails, selectedPeriodDays);
         renderNarrativeSummary(buildNarrativeSummary(stats, blockedDaily, actions, selectedPeriodDays));
         renderChart(blockedDaily);
 
