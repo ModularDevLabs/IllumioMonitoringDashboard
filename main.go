@@ -6127,7 +6127,17 @@ func collectBlockedTargetPaced(
 		if verbose {
 			log.Printf("[BLOCKED] baseline query target=%s window=%s..%s", target.Name, nowUTC.Add(-24*time.Hour).UTC().Format(time.RFC3339), nowUTC.UTC().Format(time.RFC3339))
 		}
-		qRes, err = getBlockedCountForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+		if configuredBlockedHostMetricsEnabled() || portDailyEnabled {
+			var portCounts map[string]int
+			var hostCounts map[string]hostTrafficCount
+			var samples []blockedFlowSample
+			qRes, portCounts, hostCounts, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+			res.CurrentPorts = portCounts
+			res.CurrentHosts = hostCounts
+			res.CurrentSamples = samples
+		} else {
+			qRes, err = getBlockedCountForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+		}
 		res.BaselineCount = qRes.Count
 		res.NewlyBaselined = err == nil
 	} else {
@@ -6231,12 +6241,12 @@ func collectBlockedTargetsWithPacing(
 			blockedBaseline[r.Result.Name] = r.BaselineCount
 		} else {
 			blockedCurrent[r.Result.Name] = r.CurrentCount
-			if len(r.CurrentPorts) > 0 {
-				blockedCurrentPorts[r.Result.Name] = r.CurrentPorts
-			}
-			if len(r.CurrentHosts) > 0 {
-				blockedCurrentHosts[r.Result.Name] = r.CurrentHosts
-			}
+		}
+		if len(r.CurrentPorts) > 0 {
+			blockedCurrentPorts[r.Result.Name] = r.CurrentPorts
+		}
+		if len(r.CurrentHosts) > 0 {
+			blockedCurrentHosts[r.Result.Name] = r.CurrentHosts
 		}
 	}
 	return ordered, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, blockedBaseline, successCount, warningParts
