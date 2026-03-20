@@ -484,26 +484,27 @@ var (
 	statsMutex    sync.RWMutex
 	isRefreshing  atomic.Bool
 
-	rollingMu               sync.Mutex
-	rollingCache            rollingState
-	historyMu               sync.Mutex
-	blockedDaily            = map[string]map[string]int{}
-	blockedPortsDaily       = map[string]map[string]map[string]int{}
-	blockedHostsDaily       = map[string]map[string]map[string]hostTrafficCount{}
-	venHistoryMu            sync.Mutex
-	venDaily                = map[string]venDailySnapshot{}
-	alertMu                 sync.Mutex
-	alertState              = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
-	anomalyHistoryMu        sync.Mutex
-	anomalyHistory          = make([]anomalyHistoryEvent, 0)
-	reconcileMu             sync.Mutex
-	reconcileDayKey         string
-	reconcileDoneByT        = map[string]bool{}
-	fullReconcileInProgress atomic.Bool
-	reconcileStatusMu       sync.Mutex
-	reconcileStatus         blockedHistoryReconcileStatus
-	tamperingReconcileBusy  atomic.Bool
-	tamperingReconcileState tamperingHistoryReconcileStatus
+	rollingMu                sync.Mutex
+	rollingCache             rollingState
+	historyMu                sync.Mutex
+	blockedDaily             = map[string]map[string]int{}
+	blockedPortsDaily        = map[string]map[string]map[string]int{}
+	blockedHostsDaily        = map[string]map[string]map[string]hostTrafficCount{}
+	venHistoryMu             sync.Mutex
+	venDaily                 = map[string]venDailySnapshot{}
+	alertMu                  sync.Mutex
+	alertState               = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
+	anomalyHistoryMu         sync.Mutex
+	anomalyHistory           = make([]anomalyHistoryEvent, 0)
+	reconcileMu              sync.Mutex
+	reconcileDayKey          string
+	reconcileDoneByT         = map[string]bool{}
+	fullReconcileInProgress  atomic.Bool
+	reconcileStatusMu        sync.Mutex
+	reconcileStatus          blockedHistoryReconcileStatus
+	tamperingReconcileBusy   atomic.Bool
+	tamperingReconcileState  tamperingHistoryReconcileStatus
+	startupHostReseedPending atomic.Bool
 
 	httpClient                  = &http.Client{Timeout: 60 * time.Second}
 	tamperingHTTPClient         = &http.Client{Timeout: 60 * time.Second}
@@ -574,6 +575,7 @@ func main() {
 	loadRollingState()
 	loadAlertState()
 	loadAnomalyHistory()
+	startupHostReseedPending.Store(configuredBlockedHostMetricsEnabled())
 
 	initPendingStats()
 	maybeStartStartupBlockedHistoryReconcile()
@@ -4051,6 +4053,7 @@ func getIllumioStats() DashboardStats {
 	if exclusionWarn != "" {
 		warningParts = append(warningParts, exclusionWarn)
 	}
+	forceHostReseed := startupHostReseedPending.CompareAndSwap(true, false)
 	blockedDeltaStart := blockedDeltaWindowStart(nowUTC)
 	portDailyEnabled := configuredBlockedPortDailyEnabled()
 	blockedResults, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, blockedBaseline, successCount, pacedWarnings := collectBlockedTargetsWithPacing(
@@ -4058,6 +4061,7 @@ func getIllumioStats() DashboardStats {
 		targets,
 		nowUTC,
 		baseline,
+		forceHostReseed,
 		portDailyEnabled,
 		blockedDeltaStart,
 		excludedHRefs,
@@ -6198,6 +6202,7 @@ func collectBlockedTargetPaced(
 	target TrafficTarget,
 	nowUTC time.Time,
 	baseline bool,
+	forceBaseline bool,
 	portDailyEnabled bool,
 	blockedDeltaStart time.Time,
 	sourceExcludeHRefs []string,
@@ -6207,7 +6212,7 @@ func collectBlockedTargetPaced(
 		Result: BlockedTargetResult{Name: target.Name, Kind: target.Kind},
 	}
 	verbose := verboseBlockedLoggingEnabled()
-	queryBaseline := baseline || !hasTargetBaseline(target.Name)
+	queryBaseline := forceBaseline || baseline || !hasTargetBaseline(target.Name)
 	var qRes trafficQueryResult
 	var err error
 	if queryBaseline {
@@ -6277,6 +6282,7 @@ func collectBlockedTargetsWithPacing(
 	targets []TrafficTarget,
 	nowUTC time.Time,
 	baseline bool,
+	forceBaseline bool,
 	portDailyEnabled bool,
 	blockedDeltaStart time.Time,
 	sourceExcludeHRefs []string,
@@ -6303,7 +6309,7 @@ func collectBlockedTargetsWithPacing(
 				if delay > 0 {
 					time.Sleep(delay)
 				}
-				out <- collectBlockedTargetPaced(idx, baseURL, targets[idx], nowUTC, baseline, portDailyEnabled, blockedDeltaStart, sourceExcludeHRefs)
+				out <- collectBlockedTargetPaced(idx, baseURL, targets[idx], nowUTC, baseline, forceBaseline, portDailyEnabled, blockedDeltaStart, sourceExcludeHRefs)
 			}
 		}()
 	}
