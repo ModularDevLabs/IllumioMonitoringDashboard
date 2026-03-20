@@ -466,7 +466,7 @@
                 meta.innerText = 'Disabled.';
                 return;
             }
-            if (blockedHostRetentionMode !== 'rolling_24h_plus_daily') {
+            if (blockedHostRetentionMode === 'rolling_24h_only') {
                 const rows24 = (blockedHosts24h || [])
                     .map((h) => ({
                         hostname: String(h.hostname || '').trim(),
@@ -503,6 +503,9 @@
                 }
                 meta.innerText = 'All blocked hostnames across rolling 24h (5m snapshots).';
                 return;
+            }
+            if (blockedHostRetentionMode === 'daily_only') {
+                meta.innerText = `Daily snapshots only mode: showing last ${dayRange} day(s), including today-so-far.`;
             }
             const cutoff = Date.now() - dayRange * 24 * 60 * 60 * 1000;
             const totals = new Map();
@@ -548,7 +551,15 @@
                     body.appendChild(tr);
                 });
             }
-            meta.innerText = `All blocked hostnames across last ${dayRange} day(s), including today-so-far.`;
+            if (blockedHostRetentionMode !== 'daily_only') {
+                meta.innerText = `All blocked hostnames across last ${dayRange} day(s), including today-so-far.`;
+            }
+        }
+
+        function normalizeBlockedHostRetentionModeClient(raw) {
+            const v = String(raw || '').trim().toLowerCase();
+            if (v === 'rolling_24h_only' || v === 'rolling_24h_plus_daily' || v === 'daily_only') return v;
+            return 'rolling_24h_plus_daily';
         }
 
         function bindTrendControls() {
@@ -617,7 +628,7 @@
                 blockedPortDailyEnabled = d.blocked_port_daily_enabled !== false;
                 blockedPortsDaily = d.blocked_ports_daily || [];
                 blockedHostMetricsEnabled = d.blocked_host_metrics_enabled === true;
-                blockedHostRetentionMode = String(d.blocked_host_retention_mode || 'rolling_24h_plus_daily').toLowerCase() === 'rolling_24h_only' ? 'rolling_24h_only' : 'rolling_24h_plus_daily';
+                blockedHostRetentionMode = normalizeBlockedHostRetentionModeClient(d.blocked_host_retention_mode || 'rolling_24h_plus_daily');
                 blockedHostsDaily = d.blocked_hosts_daily || [];
                 blockedHosts24h = d.blocked_hosts_24h || [];
                 blockedMAWindow = Number(d.blocked_ma_window || blockedMAWindow || 12);

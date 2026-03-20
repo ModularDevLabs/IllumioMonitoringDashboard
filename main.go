@@ -776,10 +776,10 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		if resp.BlockedPortDailyEnabled && includePorts {
 			resp.BlockedPortsDaily = blockedPortDailySeries(target, configuredHistoryDays())
 		}
-		if resp.BlockedHostMetrics && includePorts && resp.BlockedHostRetention == "rolling_24h_plus_daily" {
+		if resp.BlockedHostMetrics && includePorts && (resp.BlockedHostRetention == "rolling_24h_plus_daily" || resp.BlockedHostRetention == "daily_only") {
 			resp.BlockedHostsDaily = blockedHostDailySeries(target, configuredHistoryDays())
 		}
-		if resp.BlockedHostMetrics && includePorts {
+		if resp.BlockedHostMetrics && includePorts && resp.BlockedHostRetention != "daily_only" {
 			resp.BlockedHosts24h = blockedHost24hAggregate(target)
 		}
 		if includeLivePorts {
@@ -5221,6 +5221,8 @@ func normalizeBlockedHostRetentionMode(raw string) string {
 		return "rolling_24h_only"
 	case "rolling_24h_plus_daily":
 		return "rolling_24h_plus_daily"
+	case "daily_only":
+		return "daily_only"
 	default:
 		return defaultBlockedHostRetentionMode
 	}
@@ -5420,9 +5422,15 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 			log.Printf("[STORE] failed persisting blocked 5m port snapshot: %v", err)
 		}
 	}
-	if blockedPortStoreIsSQLite() && hostMetricsEnabled && len(blockedHosts) > 0 {
-		if err := sqliteInsertBlockedHost5m(nowUTC, blockedHosts); err != nil {
-			log.Printf("[STORE] failed persisting blocked 5m host snapshot: %v", err)
+	if blockedPortStoreIsSQLite() && hostMetricsEnabled {
+		if hostRetentionMode == "daily_only" {
+			if err := sqliteClearBlockedHost5m(); err != nil {
+				log.Printf("[STORE] failed clearing blocked 5m host snapshots for daily-only retention: %v", err)
+			}
+		} else if len(blockedHosts) > 0 {
+			if err := sqliteInsertBlockedHost5m(nowUTC, blockedHosts); err != nil {
+				log.Printf("[STORE] failed persisting blocked 5m host snapshot: %v", err)
+			}
 		}
 	}
 	loc := configuredDayLocation()
@@ -5430,7 +5438,7 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 	changedCounts := false
 	changedPorts := false
 	changedHosts := false
-	saveDailyHosts := hostMetricsEnabled && hostRetentionMode == "rolling_24h_plus_daily"
+	saveDailyHosts := hostMetricsEnabled && (hostRetentionMode == "rolling_24h_plus_daily" || hostRetentionMode == "daily_only")
 	historyMu.Lock()
 	if len(blockedCounts) > 0 {
 		if blockedDaily[dayKey] == nil {
@@ -8188,6 +8196,14 @@ func sqliteInsertBlockedHost5m(tsUTC time.Time, blockedHosts map[string]map[stri
 		return err
 	}
 	return tx.Commit()
+}
+
+func sqliteClearBlockedHost5m() error {
+	if metricsDB == nil {
+		return errors.New("sqlite not initialized")
+	}
+	_, err := metricsDB.Exec(`DELETE FROM blocked_hosts_5m`)
+	return err
 }
 
 func sqliteReplaceBlockedHostDaily(records []dailyBlockedHostRecord) error {

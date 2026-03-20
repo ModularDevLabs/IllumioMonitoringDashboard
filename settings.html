@@ -166,8 +166,9 @@
                                 <select class="form-select form-select-sm" id="blocked-host-retention-mode">
                                     <option value="rolling_24h_only">Rolling 24h (5m snapshots only)</option>
                                     <option value="rolling_24h_plus_daily">Rolling 24h + Daily snapshots</option>
+                                    <option value="daily_only">Daily snapshots only</option>
                                 </select>
-                                <div class="small text-muted mt-1">Use daily snapshots to retain hostname aggregates for long-range history charts/tables.</div>
+                                <div class="small text-muted mt-1">Choose 24h-only, 24h+daily, or daily-only hostname retention for blocked host drilldown/history.</div>
                             </div>
                             <div class="d-flex flex-wrap gap-2 mt-2">
                                 <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic-storage" type="button">Save Retention/Storage</button>
@@ -484,6 +485,12 @@
                 .replaceAll("'", '&#39;');
         }
 
+        function normalizeBlockedHostRetentionModeClient(raw) {
+            const v = String(raw || '').trim().toLowerCase();
+            if (v === 'rolling_24h_only' || v === 'rolling_24h_plus_daily' || v === 'daily_only') return v;
+            return 'rolling_24h_plus_daily';
+        }
+
         function renderTargetEditor() {
             const root = document.getElementById('target-editor');
             root.innerHTML = '';
@@ -535,7 +542,7 @@
             blockedPortDailyEnabled = d.blocked_port_daily_enabled !== false;
             blockedRollingDedupeBackend = String(d.blocked_rolling_dedupe_backend || 'sqlite').trim().toLowerCase() === 'memory' ? 'memory' : 'sqlite';
             blockedHostMetricsEnabled = d.blocked_host_metrics_enabled === true;
-            blockedHostRetentionMode = String(d.blocked_host_retention_mode || 'rolling_24h_plus_daily').trim().toLowerCase() === 'rolling_24h_only' ? 'rolling_24h_only' : 'rolling_24h_plus_daily';
+            blockedHostRetentionMode = normalizeBlockedHostRetentionModeClient(d.blocked_host_retention_mode || 'rolling_24h_plus_daily');
             blockedMAWindow = Number(d.blocked_ma_window || 12);
             blockedAnomalyPct = Number(d.blocked_anomaly_pct || 50);
             blockedAnomalyBaseline = String(d.blocked_anomaly_baseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
@@ -689,7 +696,7 @@
                 const parsedBlockedPortDailyEnabled = String(document.getElementById('blocked-port-daily-enabled').value || (blockedPortDailyEnabled ? 'true' : 'false')) === 'true';
                 const parsedBlockedRollingDedupeBackend = String(document.getElementById('blocked-rolling-dedupe-backend').value || blockedRollingDedupeBackend || 'sqlite').trim().toLowerCase() === 'memory' ? 'memory' : 'sqlite';
                 const parsedBlockedHostMetricsEnabled = String(document.getElementById('blocked-host-metrics-enabled').value || (blockedHostMetricsEnabled ? 'true' : 'false')) === 'true';
-                const parsedBlockedHostRetentionMode = String(document.getElementById('blocked-host-retention-mode').value || blockedHostRetentionMode || 'rolling_24h_plus_daily').trim().toLowerCase() === 'rolling_24h_only' ? 'rolling_24h_only' : 'rolling_24h_plus_daily';
+                const parsedBlockedHostRetentionMode = normalizeBlockedHostRetentionModeClient(document.getElementById('blocked-host-retention-mode').value || blockedHostRetentionMode || 'rolling_24h_plus_daily');
                 payload.history_days = Math.floor(parsedDays);
                 payload.blocked_port_daily_enabled = parsedBlockedPortDailyEnabled;
                 payload.blocked_rolling_dedupe_backend = parsedBlockedRollingDedupeBackend;

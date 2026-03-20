@@ -18,6 +18,7 @@ Experimental feature branch updates (not merged to stable main):
   - `blocked_host_retention_mode`:
     - `rolling_24h_only`
     - `rolling_24h_plus_daily`
+    - `daily_only` (new): store only daily host rollups; no 24h 5m host snapshots
 - Added SQLite storage for hostname metrics:
   - `blocked_hosts_5m` (rolling 24h snapshots)
   - `blocked_hosts_daily` (daily retained snapshots when configured)

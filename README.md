@@ -226,7 +226,7 @@ Runtime state is stored in a shared data directory:
 | `blocked_port_store_backend` | History/state backend | `sqlite` | `sqlite` or `json`; when `sqlite`, persisted history/state is stored in `metrics.db` |
 | `blocked_rolling_dedupe_backend` | 24h blocked 5m rolling dedupe backend | `sqlite` | `sqlite` (recommended) or `memory`; controls unique-flow dedupe state used by 24h blocked rolling charts |
 | `blocked_host_metrics_enabled` | Enable blocked hostname inbound/outbound aggregation | `false` | When enabled, stores per-host blocked counts for blocked target drilldown tables |
-| `blocked_host_retention_mode` | Hostname retention mode | `rolling_24h_plus_daily` | `rolling_24h_only` keeps only 24h 5m snapshots; `rolling_24h_plus_daily` also persists daily host rollups |
+| `blocked_host_retention_mode` | Hostname retention mode | `rolling_24h_plus_daily` | `rolling_24h_only` keeps only 24h 5m snapshots; `rolling_24h_plus_daily` keeps 24h + daily host rollups; `daily_only` keeps daily host rollups only |
 | `diagnostics_enabled` | Enable diagnostics endpoint | `false` | When `true`, enables `GET /api/diagnostics/perf` for troubleshooting |
 | `blocked_ma_window` | Global 5m moving-average window points | `12` | Range `2..288` |
 | `blocked_anomaly_pct` | Global blocked anomaly threshold percent | `50` | Range `1..10000` |
@@ -334,6 +334,7 @@ Click these cards/badges to open detailed lists:
     - shows `hostname`, `outbound`, `inbound`, `total`
     - `rolling_24h_only`: table uses rolling 24h 5m snapshots
     - `rolling_24h_plus_daily`: table uses retained daily host rollups by selected day range
+    - `daily_only`: table uses daily host rollups by selected day range (no rolling 24h host snapshot storage)
 
 ### Trend View / Report
 
