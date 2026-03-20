@@ -50,6 +50,7 @@
             font-size: 0.78rem;
             opacity: 0.95;
             margin-left: 8px;
+            color: rgba(255,255,255,0.9);
         }
         .status-actions .btn {
             --bs-btn-padding-y: 0.1rem;
@@ -80,7 +81,7 @@
         .chart-wrap { height: 330px; }
         .trend-controls { gap: 8px; }
         .range-controls { gap: 6px; }
-        .status-meta {
+        .card-meta {
             font-size: 0.8rem;
             color: var(--muted);
             margin-bottom: 8px;
@@ -146,9 +147,11 @@
             <span id="meta" class="status-meta">Loading...</span>
             <span id="actions" class="status-actions ms-2">
                 <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
+                <a href="/settings" class="btn btn-light btn-sm">Settings</a>
+                <a href="/executive" class="btn btn-light btn-sm">Executive View</a>
+                <a href="/trends" class="btn btn-light btn-sm">Trend View</a>
                 <a id="btn-csv" href="#" class="btn btn-light btn-sm">Export CSV</a>
                 <button id="btn-pdf" type="button" class="btn btn-light btn-sm">Export PDF</button>
-                <a href="/trends" class="btn btn-light btn-sm">Trend View</a>
                 <a href="/" class="btn btn-light btn-sm">Back to Dashboard</a>
             </span>
         </div>
@@ -158,7 +161,7 @@
         <div class="card p-3">
             <h5 id="title">Loading...</h5>
             <div class="text-muted mb-3" id="count"></div>
-            <div class="status-meta" id="refresh-meta"></div>
+            <div class="card-meta" id="refresh-meta"></div>
             <div id="trend-controls" class="d-none d-flex trend-controls mb-2">
                 <button id="trend-raw" type="button" class="btn btn-sm btn-outline-primary">24h (5m)</button>
                 <button id="trend-sum" type="button" class="btn btn-sm btn-outline-secondary">Daily</button>
