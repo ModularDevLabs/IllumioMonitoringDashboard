@@ -7056,15 +7056,15 @@ func extractFlowSourceWorkloadIdentity(row map[string]interface{}) flowWorkloadI
 	)
 	key := strings.TrimSpace(href)
 	if key == "" {
-		display = strings.TrimSpace(display)
-		if display == "" {
-			return flowWorkloadIdentity{}
-		}
-		key = "host:" + strings.ToLower(display)
+		return flowWorkloadIdentity{}
+	}
+	display = strings.TrimSpace(display)
+	if display == "" || net.ParseIP(display) != nil {
+		return flowWorkloadIdentity{}
 	}
 	return flowWorkloadIdentity{
 		Key:     key,
-		Display: strings.TrimSpace(display),
+		Display: display,
 	}
 }
 
@@ -7109,15 +7109,15 @@ func extractFlowDestinationWorkloadIdentity(row map[string]interface{}) flowWork
 	)
 	key := strings.TrimSpace(href)
 	if key == "" {
-		display = strings.TrimSpace(display)
-		if display == "" {
-			return flowWorkloadIdentity{}
-		}
-		key = "host:" + strings.ToLower(display)
+		return flowWorkloadIdentity{}
+	}
+	display = strings.TrimSpace(display)
+	if display == "" || net.ParseIP(display) != nil {
+		return flowWorkloadIdentity{}
 	}
 	return flowWorkloadIdentity{
 		Key:     key,
-		Display: strings.TrimSpace(display),
+		Display: display,
 	}
 }
 
