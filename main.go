@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -469,6 +470,8 @@ type blockedTargetCycleResult struct {
 }
 
 var (
+	buildVersion = ""
+
 	config        Config
 	configMutex   sync.RWMutex
 	configModTime time.Time
@@ -510,6 +513,43 @@ var (
 	perfMu                      sync.Mutex
 	perfByRoute                 = map[string][]float64{}
 )
+
+func dashboardVersionLabel() string {
+	if v := strings.TrimSpace(buildVersion); v != "" && v != "dev" {
+		return v
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	var rev string
+	modified := false
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = strings.TrimSpace(s.Value)
+		case "vcs.modified":
+			modified = strings.EqualFold(strings.TrimSpace(s.Value), "true")
+		}
+	}
+	rev = strings.TrimSpace(rev)
+	if rev == "" {
+		return "dev"
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	if modified {
+		return rev + "-dirty"
+	}
+	return rev
+}
+
+func pageTemplateData() map[string]interface{} {
+	return map[string]interface{}{
+		"VersionLabel": dashboardVersionLabel(),
+	}
+}
 
 func main() {
 	initProcessLogging()
@@ -9382,25 +9422,25 @@ func readInput(r *bufio.Reader) string {
 }
 
 func serveDashboard(w http.ResponseWriter, r *http.Request) {
-	if err := dashboardTmpl.Execute(w, nil); err != nil {
+	if err := dashboardTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 func serveSettings(w http.ResponseWriter, r *http.Request) {
-	if err := settingsTmpl.Execute(w, nil); err != nil {
+	if err := settingsTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 func serveDetails(w http.ResponseWriter, r *http.Request) {
-	if err := detailsPageTmpl.Execute(w, nil); err != nil {
+	if err := detailsPageTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 func serveReport(w http.ResponseWriter, r *http.Request) {
-	if err := reportPageTmpl.Execute(w, nil); err != nil {
+	if err := reportPageTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -9410,7 +9450,7 @@ func serveTrends(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveExecutive(w http.ResponseWriter, r *http.Request) {
-	if err := executivePageTmpl.Execute(w, nil); err != nil {
+	if err := executivePageTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, "failed to render executive page", http.StatusInternalServerError)
 	}
 }

@@ -29,6 +29,17 @@
             padding: 0 16px;
         }
         .topbar { background: var(--illumio-orange); color: #fff; padding: 14px 0; margin-bottom: 16px; }
+        .topbar-title { margin: 0; font-size: 1.1rem; font-weight: 700; }
+        .topbar-version {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 2px 7px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.22);
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+            vertical-align: middle;
+        }
         .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; }
         .text-muted { color: var(--muted) !important; }
         .section-toggle summary {
@@ -115,10 +126,11 @@
 </head>
 <body>
     <div class="topbar">
-        <div class="dashboard-shell d-flex justify-content-between align-items-center">
-            <div class="h5 mb-0">Illumio Monitoring Dashboard</div>
+        <div class="dashboard-shell d-flex justify-content-between align-items-center gap-2 flex-wrap">
+            <div class="topbar-title">Illumio Monitoring Dashboard <span class="topbar-version">{{.VersionLabel}}</span></div>
             <div class="d-flex gap-2">
                 <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
+                <a href="/trends" class="btn btn-light btn-sm">Trend View</a>
                 <a href="/" class="btn btn-light btn-sm">Back to Dashboard</a>
             </div>
         </div>

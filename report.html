@@ -32,6 +32,16 @@
         .dashboard-shell { width: min(98vw, 1920px); margin: 0 auto; padding: 0 16px; }
         .topbar { background: var(--illumio-orange); color: #fff; padding: 14px 0; margin-bottom: 16px; }
         .topbar-title { margin: 0; font-size: 1.1rem; font-weight: 700; }
+        .topbar-version {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 2px 7px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.22);
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+            vertical-align: middle;
+        }
         .wrap { width: min(98vw, 1920px); margin: 0 auto; padding: 16px; }
         .header {
             background: var(--panel-bg);
@@ -136,8 +146,13 @@
 </head>
 <body>
 <div class="topbar">
-    <div class="dashboard-shell">
-        <div class="topbar-title">Illumio Monitoring Dashboard</div>
+    <div class="dashboard-shell d-flex justify-content-between align-items-center gap-2 flex-wrap">
+        <div class="topbar-title">Illumio Monitoring Dashboard <span class="topbar-version">{{.VersionLabel}}</span></div>
+        <div class="d-flex gap-2">
+            <a class="btn" href="/">Dashboard</a>
+            <a class="btn" href="/settings">Settings</a>
+            <a class="btn" href="/executive">Executive View</a>
+        </div>
     </div>
 </div>
 <div class="wrap">
