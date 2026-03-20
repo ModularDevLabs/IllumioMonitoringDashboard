@@ -78,6 +78,18 @@
             gap: 8px;
             width: 100%;
         }
+        @media (min-width: 1100px) {
+            .section-two-col > .mb-2 {
+                display: inline-block;
+                width: calc(50% - 8px);
+                vertical-align: top;
+                margin-right: 12px;
+            }
+            .section-two-col > .mb-2.section-full {
+                width: 100%;
+                margin-right: 0;
+            }
+        }
         body[data-theme="dark"] .form-control,
         body[data-theme="dark"] .form-select {
             background: #6d7681;
@@ -104,7 +116,7 @@
         <div class="card p-3 mb-3">
             <div class="fw-semibold mb-1">Traffic And Data Settings</div>
             <p class="text-muted small mb-3 mt-1">Manage traffic targets, exclusions, retention, and anomaly defaults.</p>
-                <details class="section-toggle mb-2" open>
+                <details class="section-toggle section-two-col mb-2" open>
                     <summary>Traffic Targets Settings</summary>
                     <div class="mb-2 mt-2">
                         <label class="form-label form-label-sm small text-muted mb-1" for="history-days">Blocked Daily History Retention (days)</label>
@@ -182,7 +194,7 @@
                         <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="blocked-anomaly-min-pct" value="70">
                         <div class="small text-muted mt-1">If baseline is not fully built yet, alerts are suppressed until this coverage threshold is met (for example 70% means 5 of 7 days).</div>
                     </div>
-                    <div class="mb-2">
+                    <div class="mb-2 section-full">
                         <label class="form-label form-label-sm small text-muted mb-1" for="source-exclusions">Traffic Source Exclusions (comma-separated names)</label>
                         <input type="text" class="form-control form-control-sm" id="source-exclusions" placeholder="LG-SCANNERS">
                     </div>
@@ -199,7 +211,7 @@
                     <div class="small mt-1 text-muted" id="msg-tampering-reconcile-status"></div>
                 </details>
 
-                <details class="section-toggle mb-2">
+                <details class="section-toggle section-two-col mb-2">
                     <summary>VEN Warning/Error Anomaly Settings</summary>
                     <div class="mb-2 mt-2">
                         <label class="form-label form-label-sm small text-muted mb-1" for="ven-ma-window">
@@ -234,7 +246,7 @@
                     <div class="small mt-2" id="msg-ven"></div>
                 </details>
 
-                <details class="section-toggle">
+                <details class="section-toggle section-two-col">
                     <summary>Tampering Anomaly Settings</summary>
                     <div class="mb-2 mt-2">
                         <label class="form-label form-label-sm small text-muted mb-1" for="tampering-ma-window">
