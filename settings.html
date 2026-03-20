@@ -79,15 +79,17 @@
             width: 100%;
         }
         @media (min-width: 1100px) {
-            .section-two-col > .mb-2 {
-                display: inline-block;
-                width: calc(50% - 8px);
-                vertical-align: top;
-                margin-right: 12px;
+            .section-two-col {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(320px, 1fr));
+                gap: 10px 14px;
+                align-items: start;
             }
-            .section-two-col > .mb-2.section-full {
-                width: 100%;
-                margin-right: 0;
+            .section-two-col > summary {
+                grid-column: 1 / -1;
+            }
+            .section-two-col > .section-full {
+                grid-column: 1 / -1;
             }
         }
         body[data-theme="dark"] .form-control,
@@ -198,17 +200,17 @@
                         <label class="form-label form-label-sm small text-muted mb-1" for="source-exclusions">Traffic Source Exclusions (comma-separated names)</label>
                         <input type="text" class="form-control form-control-sm" id="source-exclusions" placeholder="LG-SCANNERS">
                     </div>
-                    <div id="target-editor"></div>
-                    <div class="d-flex flex-wrap gap-2 mt-2">
+                    <div id="target-editor" class="section-full"></div>
+                    <div class="d-flex flex-wrap gap-2 mt-2 section-full">
                         <button class="btn btn-outline-secondary btn-sm" id="btn-add-target" type="button">Add Target</button>
                         <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic" type="button">Save Traffic/Data</button>
                         <button class="btn btn-outline-success btn-sm" id="btn-refresh-now" type="button">Refresh Now</button>
                         <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-history" type="button">Reconcile Blocked History</button>
                         <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-tampering-history" type="button">Reconcile Tampering History</button>
                     </div>
-                    <div class="small mt-2" id="msg-traffic"></div>
-                    <div class="small mt-1 text-muted" id="msg-reconcile-status"></div>
-                    <div class="small mt-1 text-muted" id="msg-tampering-reconcile-status"></div>
+                    <div class="small mt-2 section-full" id="msg-traffic"></div>
+                    <div class="small mt-1 text-muted section-full" id="msg-reconcile-status"></div>
+                    <div class="small mt-1 text-muted section-full" id="msg-tampering-reconcile-status"></div>
                 </details>
 
                 <details class="section-toggle section-two-col mb-2">
