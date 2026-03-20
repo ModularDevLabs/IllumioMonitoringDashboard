@@ -7024,8 +7024,29 @@ func blockedFlowConnections(row map[string]interface{}) int {
 	return n
 }
 
+func blockedFlowEndpointIdentity(values ...string) string {
+	parts := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, raw := range values {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		parts = append(parts, v)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
+}
+
 func blockedFlowSignature(row map[string]interface{}, leg string) string {
-	srcID := firstNonEmptyString(
+	srcID := blockedFlowEndpointIdentity(
 		pathString(row, "src", "workload", "href"),
 		pathString(row, "source", "workload", "href"),
 		pathString(row, "src_workload", "href"),
@@ -7034,9 +7055,10 @@ func blockedFlowSignature(row map[string]interface{}, leg string) string {
 		pathString(row, "src", "ip"),
 		pathString(row, "source_ip"),
 		pathString(row, "src_ip"),
+		pathString(row, "src", "fqdn"),
 		pathString(row, "src_fqdn"),
 	)
-	dstID := firstNonEmptyString(
+	dstID := blockedFlowEndpointIdentity(
 		pathString(row, "dst", "workload", "href"),
 		pathString(row, "destination", "workload", "href"),
 		pathString(row, "dst_workload", "href"),
@@ -7045,6 +7067,7 @@ func blockedFlowSignature(row map[string]interface{}, leg string) string {
 		pathString(row, "dst", "ip"),
 		pathString(row, "destination_ip"),
 		pathString(row, "dst_ip"),
+		pathString(row, "dst", "fqdn"),
 		pathString(row, "dst_fqdn"),
 	)
 	svcPort := firstNonZeroInt(
