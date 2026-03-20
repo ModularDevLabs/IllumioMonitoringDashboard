@@ -44,6 +44,17 @@
             font-weight: 750;
             margin: 0;
         }
+        #status-bar { font-size: 0.86rem; }
+        .status-meta {
+            font-size: 0.78rem;
+            opacity: 0.95;
+            margin-left: 8px;
+        }
+        .status-actions .btn {
+            --bs-btn-padding-y: 0.1rem;
+            --bs-btn-padding-x: 0.45rem;
+            --bs-btn-font-size: 0.72rem;
+        }
         .version-badge {
             position: fixed;
             right: 12px;
@@ -129,12 +140,15 @@
 <body>
     <div class="header text-center">
         <h1>Illumio Monitoring Dashboard</h1>
-        <div id="actions" class="mt-2 d-flex gap-2 justify-content-center flex-wrap align-items-center">
-            <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
-            <a id="btn-csv" href="#" class="btn btn-light btn-sm">Export CSV</a>
-            <button id="btn-pdf" type="button" class="btn btn-light btn-sm">Export PDF</button>
-            <a href="/trends" class="btn btn-light btn-sm">Trend View</a>
-            <a href="/" class="btn btn-light btn-sm">Back to Dashboard</a>
+        <div id="status-bar" class="mt-2">
+            <span id="meta" class="status-meta">Loading...</span>
+            <span id="actions" class="status-actions ms-2">
+                <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
+                <a id="btn-csv" href="#" class="btn btn-light btn-sm">Export CSV</a>
+                <button id="btn-pdf" type="button" class="btn btn-light btn-sm">Export PDF</button>
+                <a href="/trends" class="btn btn-light btn-sm">Trend View</a>
+                <a href="/" class="btn btn-light btn-sm">Back to Dashboard</a>
+            </span>
         </div>
     </div>
 

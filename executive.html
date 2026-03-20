@@ -45,8 +45,14 @@
             margin-bottom: 16px;
         }
         .header h1 { margin: 0; font-size: clamp(1.45rem, 2.1vw, 1.9rem); font-weight: 750; }
+        #status-bar { font-size: 0.86rem; }
+        .status-meta {
+            font-size: 0.78rem;
+            opacity: 0.95;
+            margin-left: 8px;
+        }
+        .status-actions { margin-left: 8px; display: inline-flex; gap: 8px; flex-wrap: wrap; align-items: center; }
         .muted { color: var(--muted); font-size: 0.88rem; }
-        .actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
         .period-controls { display: inline-flex; gap: 6px; align-items: center; }
         .btn {
             border: 1px solid var(--border);
@@ -146,7 +152,7 @@
         @media print {
             body { background: #fff; color: #111; font-size: 12px; }
             .wrap { max-width: none; padding: 0; }
-            .actions { display: none !important; }
+            .status-actions { display: none !important; }
             .panel, .header, .kpi, .board-col { box-shadow: none; break-inside: avoid; page-break-inside: avoid; }
             .chart-wrap { height: 180px; }
         }
@@ -155,19 +161,21 @@
 <body>
 <div class="header text-center">
     <h1>Illumio Monitoring Dashboard</h1>
-    <div class="muted" id="meta">Loading...</div>
-    <div class="actions d-flex justify-content-center flex-wrap align-items-center">
-        <button id="btn-theme" type="button" class="btn">Dark Mode</button>
-        <button id="btn-refresh" type="button" class="btn primary">Refresh</button>
-        <span class="period-controls">
-            <span class="muted">Period</span>
-            <button id="period-7" type="button" class="btn">7d</button>
-            <button id="period-30" type="button" class="btn">30d</button>
-            <button id="period-90" type="button" class="btn">90d</button>
+    <div id="status-bar" class="mt-2">
+        <span id="meta" class="status-meta">Loading...</span>
+        <span class="status-actions">
+            <button id="btn-theme" type="button" class="btn">Dark Mode</button>
+            <button id="btn-refresh" type="button" class="btn primary">Refresh</button>
+            <span class="period-controls">
+                <span class="muted">Period</span>
+                <button id="period-7" type="button" class="btn">7d</button>
+                <button id="period-30" type="button" class="btn">30d</button>
+                <button id="period-90" type="button" class="btn">90d</button>
+            </span>
+            <a class="btn" id="btn-board" href="/executive?board=1">Board PDF View</a>
+            <a class="btn" href="/report?live=1">Trend View</a>
+            <a class="btn" href="/">Back to Dashboard</a>
         </span>
-        <a class="btn" id="btn-board" href="/executive?board=1">Board PDF View</a>
-        <a class="btn" href="/report?live=1">Trend View</a>
-        <a class="btn" href="/">Back to Dashboard</a>
     </div>
 </div>
 <div class="wrap">

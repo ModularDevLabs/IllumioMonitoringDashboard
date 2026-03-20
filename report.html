@@ -49,7 +49,14 @@
             font-size: clamp(1.45rem, 2.1vw, 1.9rem);
             font-weight: 750;
         }
-        .meta { margin-top: 8px; color: rgba(255,255,255,0.9); font-size: 0.88rem; }
+        #status-bar { font-size: 0.86rem; }
+        .status-meta {
+            font-size: 0.78rem;
+            opacity: 0.95;
+            margin-left: 8px;
+            color: rgba(255,255,255,0.9);
+        }
+        .status-actions { margin-left: 8px; display: inline-flex; gap: 9px; flex-wrap: wrap; align-items: center; }
         .actions { margin-top: 10px; display: flex; gap: 9px; flex-wrap: wrap; }
         .refresh-note { align-self: center; font-size: 0.84rem; color: var(--muted); }
         .range-controls { display: inline-flex; gap: 6px; margin-left: 2px; }
@@ -142,7 +149,7 @@
         .muted { color: var(--muted); font-size: 0.83rem; }
         @media print {
             body { background: #fff; }
-            .actions { display: none; }
+            .status-actions { display: none !important; }
             .wrap { max-width: none; padding: 0; }
             .panel, .header, .chart-card { box-shadow: none; }
             details[open] summary { display: none; }
@@ -152,32 +159,34 @@
 <body>
 <div class="header text-center">
     <h1>Illumio Monitoring Dashboard</h1>
-    <div class="meta" id="meta">Loading...</div>
-    <div class="actions d-flex justify-content-center flex-wrap align-items-center">
-        <button class="btn" id="btn-theme">Dark Mode</button>
-        <button class="btn primary" id="btn-print">Print / Save as PDF</button>
-        <button class="btn" id="btn-refresh-live">Refresh</button>
-        <span class="control-group">
-            <span class="control-label">View</span>
-            <span class="mode-controls" id="mode-controls">
-                <button class="btn" id="mode-both">Show: All</button>
-                <button class="btn" id="mode-24h">24h (5m) Only</button>
-                <button class="btn" id="mode-daily">Daily Only</button>
+    <div id="status-bar" class="mt-2">
+        <span id="meta" class="status-meta">Loading...</span>
+        <span class="status-actions">
+            <button class="btn" id="btn-theme">Dark Mode</button>
+            <button class="btn primary" id="btn-print">Print / Save as PDF</button>
+            <button class="btn" id="btn-refresh-live">Refresh</button>
+            <span class="control-group">
+                <span class="control-label">View</span>
+                <span class="mode-controls" id="mode-controls">
+                    <button class="btn" id="mode-both">Show: All</button>
+                    <button class="btn" id="mode-24h">24h (5m) Only</button>
+                    <button class="btn" id="mode-daily">Daily Only</button>
+                </span>
             </span>
-        </span>
-        <span class="control-group">
-            <span class="control-label">Chart Length</span>
-            <span class="range-controls" id="range-controls">
-                <button class="btn" id="range-7">7d</button>
-                <button class="btn" id="range-30">30d</button>
-                <button class="btn" id="range-90">90d</button>
-                <button class="btn" id="range-180">180d</button>
-                <button class="btn" id="range-365">365d</button>
+            <span class="control-group">
+                <span class="control-label">Chart Length</span>
+                <span class="range-controls" id="range-controls">
+                    <button class="btn" id="range-7">7d</button>
+                    <button class="btn" id="range-30">30d</button>
+                    <button class="btn" id="range-90">90d</button>
+                    <button class="btn" id="range-180">180d</button>
+                    <button class="btn" id="range-365">365d</button>
+                </span>
             </span>
+            <a class="btn" href="/api/export/report.csv">Download CSV (Excel)</a>
+            <a class="btn" href="/">Back to Dashboard</a>
+            <span class="refresh-note d-none" id="next-refresh">Next refresh in --</span>
         </span>
-        <a class="btn" href="/api/export/report.csv">Download CSV (Excel)</a>
-        <a class="btn" href="/">Back to Dashboard</a>
-        <span class="refresh-note d-none" id="next-refresh">Next refresh in --</span>
     </div>
 </div>
 <div class="wrap">
