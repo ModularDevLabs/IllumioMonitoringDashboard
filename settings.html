@@ -239,136 +239,140 @@
                     <div class="small mt-1 text-muted section-full" id="msg-tampering-reconcile-status"></div>
                 </details>
 
-                <details class="section-toggle section-two-col mb-2">
-                    <summary>VEN Warning/Error Anomaly Settings</summary>
-                    <div class="mb-2 mt-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-ma-window">
-                            VEN 5m Moving Average Window (points)
-                            <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
-                        </label>
-                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="ven-ma-window" value="12">
-                        <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-pct">VEN Anomaly Threshold (%)</label>
-                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="ven-anomaly-pct" value="50">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-baseline">VEN Anomaly Baseline Source</label>
-                        <select class="form-select form-select-sm" id="ven-anomaly-baseline">
-                            <option value="5m">5m Moving Average</option>
-                            <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
-                        </select>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-days">VEN Daily Baseline Lookback (days)</label>
-                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="ven-anomaly-days" value="7">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-min-pct">VEN Baseline Min Coverage (%)</label>
-                        <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="ven-anomaly-min-pct" value="70">
-                    </div>
-                    <div class="d-flex flex-wrap gap-2 mt-2">
-                        <button class="btn btn-outline-primary btn-sm" id="btn-save-ven" type="button">Save VEN Settings</button>
-                    </div>
-                    <div class="small mt-2" id="msg-ven"></div>
-                </details>
+                <div class="settings-grid mt-2">
+                    <details class="section-toggle mb-2">
+                        <summary>VEN Warning/Error Anomaly Settings</summary>
+                        <div class="mb-2 mt-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="ven-ma-window">
+                                VEN 5m Moving Average Window (points)
+                                <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                            </label>
+                            <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="ven-ma-window" value="12">
+                            <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-pct">VEN Anomaly Threshold (%)</label>
+                            <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="ven-anomaly-pct" value="50">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-baseline">VEN Anomaly Baseline Source</label>
+                            <select class="form-select form-select-sm" id="ven-anomaly-baseline">
+                                <option value="5m">5m Moving Average</option>
+                                <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
+                            </select>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-days">VEN Daily Baseline Lookback (days)</label>
+                            <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="ven-anomaly-days" value="7">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-min-pct">VEN Baseline Min Coverage (%)</label>
+                            <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="ven-anomaly-min-pct" value="70">
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <button class="btn btn-outline-primary btn-sm" id="btn-save-ven" type="button">Save VEN Settings</button>
+                        </div>
+                        <div class="small mt-2" id="msg-ven"></div>
+                    </details>
 
-                <details class="section-toggle section-two-col">
-                    <summary>Tampering Anomaly Settings</summary>
-                    <div class="mb-2 mt-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-ma-window">
-                            Tampering 5m Moving Average Window (points)
-                            <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
-                        </label>
-                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="tampering-ma-window" value="12">
-                        <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-pct">Tampering Anomaly Threshold (%)</label>
-                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-anomaly-pct" value="50">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-baseline">Tampering Anomaly Baseline Source</label>
-                        <select class="form-select form-select-sm" id="tampering-anomaly-baseline">
-                            <option value="5m">5m Moving Average</option>
-                            <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
-                        </select>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-days">Tampering Daily Baseline Lookback (days)</label>
-                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="tampering-anomaly-days" value="7">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-min-pct">Tampering Baseline Min Coverage (%)</label>
-                        <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="tampering-anomaly-min-pct" value="70">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-daily-anomaly-pct">Daily Tampering Anomaly Threshold (%)</label>
-                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-daily-anomaly-pct" value="50">
-                        <div class="small text-muted mt-1">Used when Tampering baseline source is set to Daily.</div>
-                    </div>
-                    <div class="d-flex flex-wrap gap-2 mt-2">
-                        <button class="btn btn-outline-primary btn-sm" id="btn-save-tampering" type="button">Save Tampering Settings</button>
-                    </div>
-                    <div class="small mt-2" id="msg-tampering"></div>
-                </details>
+                    <details class="section-toggle mb-2">
+                        <summary>Tampering Anomaly Settings</summary>
+                        <div class="mb-2 mt-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-ma-window">
+                                Tampering 5m Moving Average Window (points)
+                                <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                            </label>
+                            <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="tampering-ma-window" value="12">
+                            <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-pct">Tampering Anomaly Threshold (%)</label>
+                            <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-anomaly-pct" value="50">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-baseline">Tampering Anomaly Baseline Source</label>
+                            <select class="form-select form-select-sm" id="tampering-anomaly-baseline">
+                                <option value="5m">5m Moving Average</option>
+                                <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
+                            </select>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-days">Tampering Daily Baseline Lookback (days)</label>
+                            <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="tampering-anomaly-days" value="7">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-min-pct">Tampering Baseline Min Coverage (%)</label>
+                            <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="tampering-anomaly-min-pct" value="70">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-daily-anomaly-pct">Daily Tampering Anomaly Threshold (%)</label>
+                            <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-daily-anomaly-pct" value="50">
+                            <div class="small text-muted mt-1">Used when Tampering baseline source is set to Daily.</div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <button class="btn btn-outline-primary btn-sm" id="btn-save-tampering" type="button">Save Tampering Settings</button>
+                        </div>
+                        <div class="small mt-2" id="msg-tampering"></div>
+                    </details>
+                </div>
         </div>
 
-        <div class="card p-3">
-            <details class="section-toggle" open>
-                <summary>Hosting Settings</summary>
-                <p class="text-muted small mb-3 mt-1">Configure how the dashboard listens on the server and what base URL is used in generated links.</p>
+        <div class="settings-grid mt-3">
+            <div class="card p-3">
+                <details class="section-toggle" open>
+                    <summary>Hosting Settings</summary>
+                    <p class="text-muted small mb-3 mt-1">Configure how the dashboard listens on the server and what base URL is used in generated links.</p>
 
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="bind-address">Server Bind Address</label>
-                    <input type="text" class="form-control form-control-sm" id="bind-address" placeholder=":18443 or 0.0.0.0:18443">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="public-base-url">Public Base URL</label>
-                    <input type="text" class="form-control form-control-sm" id="public-base-url" placeholder="https://dashboard.example.com">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="timezone">Timezone (IANA, optional)</label>
-                    <input type="text" class="form-control form-control-sm" id="timezone" placeholder="System local (e.g., America/Chicago)">
-                    <div class="small text-muted mt-1">Daily buckets and daily charts use this timezone. Leave blank for server local time.</div>
-                </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="bind-address">Server Bind Address</label>
+                        <input type="text" class="form-control form-control-sm" id="bind-address" placeholder=":18443 or 0.0.0.0:18443">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="public-base-url">Public Base URL</label>
+                        <input type="text" class="form-control form-control-sm" id="public-base-url" placeholder="https://dashboard.example.com">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="timezone">Timezone (IANA, optional)</label>
+                        <input type="text" class="form-control form-control-sm" id="timezone" placeholder="System local (e.g., America/Chicago)">
+                        <div class="small text-muted mt-1">Daily buckets and daily charts use this timezone. Leave blank for server local time.</div>
+                    </div>
 
-                <div class="d-flex flex-wrap gap-2 mt-2">
-                    <button class="btn btn-outline-primary btn-sm" id="btn-save-hosting" type="button">Save Hosting</button>
-                </div>
-                <div class="small mt-2" id="msg-hosting"></div>
-                <div class="small mt-2 text-muted">Hosting changes take effect on next start.</div>
-            </details>
-        </div>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <button class="btn btn-outline-primary btn-sm" id="btn-save-hosting" type="button">Save Hosting</button>
+                    </div>
+                    <div class="small mt-2" id="msg-hosting"></div>
+                    <div class="small mt-2 text-muted">Hosting changes take effect on next start.</div>
+                </details>
+            </div>
 
-        <div class="card p-3 mt-3">
-            <details class="section-toggle" open>
-                <summary>API Credentials</summary>
-                <p class="text-muted small mb-3 mt-1">Update PCE URL/API credentials without restarting. New requests use saved values immediately.</p>
+            <div class="card p-3">
+                <details class="section-toggle" open>
+                    <summary>API Credentials</summary>
+                    <p class="text-muted small mb-3 mt-1">Update PCE URL/API credentials without restarting. New requests use saved values immediately.</p>
 
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-pce-url">PCE URL</label>
-                    <input type="text" class="form-control form-control-sm" id="cred-pce-url" placeholder="https://your-pce.example.com:8443">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-org-id">Org ID</label>
-                    <input type="text" class="form-control form-control-sm" id="cred-org-id" placeholder="1">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-api-key">API Key ID</label>
-                    <input type="text" class="form-control form-control-sm" id="cred-api-key" placeholder="api_key_id">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-api-secret">API Secret</label>
-                    <input type="password" class="form-control form-control-sm" id="cred-api-secret" placeholder="Leave blank to keep current secret">
-                    <div class="small text-muted mt-1" id="cred-secret-status"></div>
-                </div>
-                <div class="d-flex flex-wrap gap-2 mt-2">
-                    <button class="btn btn-outline-primary btn-sm" id="btn-save-credentials" type="button">Save Credentials</button>
-                </div>
-                <div class="small mt-2" id="msg-credentials"></div>
-            </details>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="cred-pce-url">PCE URL</label>
+                        <input type="text" class="form-control form-control-sm" id="cred-pce-url" placeholder="https://your-pce.example.com:8443">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="cred-org-id">Org ID</label>
+                        <input type="text" class="form-control form-control-sm" id="cred-org-id" placeholder="1">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="cred-api-key">API Key ID</label>
+                        <input type="text" class="form-control form-control-sm" id="cred-api-key" placeholder="api_key_id">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="cred-api-secret">API Secret</label>
+                        <input type="password" class="form-control form-control-sm" id="cred-api-secret" placeholder="Leave blank to keep current secret">
+                        <div class="small text-muted mt-1" id="cred-secret-status"></div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <button class="btn btn-outline-primary btn-sm" id="btn-save-credentials" type="button">Save Credentials</button>
+                    </div>
+                    <div class="small mt-2" id="msg-credentials"></div>
+                </details>
+            </div>
         </div>
 
         <div class="card p-3 mt-3">
