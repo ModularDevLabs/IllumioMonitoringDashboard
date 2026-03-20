@@ -760,6 +760,17 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.Trend = resp.Trend24h
 	}
 	if metric == "blocked_target" && target != "" {
+		baseURL := ""
+		configMutex.RLock()
+		pceURL := strings.TrimSuffix(strings.TrimSpace(config.PCEURL), "/")
+		orgID := strings.TrimSpace(config.OrgID)
+		configMutex.RUnlock()
+		if orgID == "" {
+			orgID = "1"
+		}
+		if pceURL != "" {
+			baseURL = fmt.Sprintf("%s/api/v2/orgs/%s", pceURL, orgID)
+		}
 		window := configuredBlockedMAWindow()
 		pct := configuredBlockedAnomalyPct()
 		baselineSource := configuredBlockedAnomalyBaselineSource()
@@ -781,6 +792,18 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		}
 		if resp.BlockedHostMetrics && includePorts && resp.BlockedHostRetention != "daily_only" {
 			resp.BlockedHosts24h = blockedHost24hAggregate(target)
+			if len(resp.BlockedHosts24h) == 0 && baseURL != "" {
+				if tt, ok := configuredTrafficTargetByName(target); ok {
+					sourceExclusions := configuredSourceExclusions()
+					sourceExcludeHRefs := resolveSourceExclusionHRefsBestEffort(baseURL, sourceExclusions)
+					if hosts, err := blockedHost24hLiveFallback(baseURL, tt, time.Now().UTC(), sourceExcludeHRefs); err != nil {
+						log.Printf("[DRILLDOWN] blocked host live fallback failed target=%s err=%v", target, err)
+					} else if len(hosts) > 0 {
+						resp.BlockedHosts24h = hosts
+						log.Printf("[DRILLDOWN] blocked host live fallback populated target=%s hosts=%d", target, len(hosts))
+					}
+				}
+			}
 		}
 		if includeLivePorts {
 			log.Printf("[DRILLDOWN] include_live_ports requested for target=%s but live query path is disabled; serving persisted history only", target)
@@ -3313,6 +3336,40 @@ func blockedHost24hAggregate(target string) []HostCount {
 	return out
 }
 
+func hostTrafficCountMapToSortedSlice(hostMap map[string]hostTrafficCount) []HostCount {
+	if len(hostMap) == 0 {
+		return nil
+	}
+	out := make([]HostCount, 0, len(hostMap))
+	for host, c := range hostMap {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			continue
+		}
+		if c.Inbound <= 0 && c.Outbound <= 0 {
+			continue
+		}
+		out = append(out, HostCount{Hostname: host, Inbound: c.Inbound, Outbound: c.Outbound})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ti := out[i].Inbound + out[i].Outbound
+		tj := out[j].Inbound + out[j].Outbound
+		if ti == tj {
+			return out[i].Hostname < out[j].Hostname
+		}
+		return ti > tj
+	})
+	return out
+}
+
+func blockedHost24hLiveFallback(baseURL string, target TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) ([]HostCount, error) {
+	_, _, hostCounts, _, err := getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+	if err != nil {
+		return nil, err
+	}
+	return hostTrafficCountMapToSortedSlice(hostCounts), nil
+}
+
 func portCountMapToSortedSlice(portMap map[string]int) []PortCount {
 	ports := make([]PortCount, 0, len(portMap))
 	for key, count := range portMap {
@@ -4797,11 +4854,7 @@ func configuredSourceExclusions() []TrafficTarget {
 	configMutex.RLock()
 	raw := append([]TrafficTarget(nil), config.SourceExclusions...)
 	configMutex.RUnlock()
-	cleaned := sanitizeTargets(raw)
-	if len(cleaned) > 0 {
-		return cleaned
-	}
-	return []TrafficTarget{{Name: "LG-SCANNERS", Kind: "auto"}}
+	return sanitizeTargets(raw)
 }
 
 func configuredHistoryDays() int {
