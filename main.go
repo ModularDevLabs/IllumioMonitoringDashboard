@@ -320,7 +320,9 @@ type trafficQueryResult struct {
 type blockedFlowSample struct {
 	Signature       string
 	LastDetectedUTC time.Time
+	SourceKey       string
 	SourceHost      string
+	DestinationKey  string
 	DestinationHost string
 	Connections     int
 }
@@ -341,6 +343,11 @@ type dailyBlockedPortRecord struct {
 type hostTrafficCount struct {
 	Inbound  int
 	Outbound int
+}
+
+type flowWorkloadIdentity struct {
+	Key     string
+	Display string
 }
 
 type dailyBlockedHostRecord struct {
@@ -6892,44 +6899,49 @@ func aggregatePortCounts(rows []map[string]interface{}) map[string]int {
 }
 
 func aggregateHostCounts(rows []map[string]interface{}, asSource bool, allScope bool) map[string]hostTrafficCount {
-	out := make(map[string]hostTrafficCount)
+	byKey := make(map[string]hostTrafficCount)
+	displayByKey := make(map[string]string)
+	add := func(id flowWorkloadIdentity, inbound, outbound int) {
+		key := strings.TrimSpace(id.Key)
+		if key == "" {
+			return
+		}
+		display := strings.TrimSpace(id.Display)
+		if display == "" {
+			return
+		}
+		displayByKey[key] = choosePreferredWorkloadDisplay(displayByKey[key], display)
+		cur := byKey[key]
+		cur.Inbound += inbound
+		cur.Outbound += outbound
+		byKey[key] = cur
+	}
 	for _, row := range rows {
 		n := intFromAny(row["num_connections"])
 		if n <= 0 {
 			n = 1
 		}
 		if allScope {
-			src := extractFlowSourceHostname(row)
-			if src != "" {
-				cur := out[src]
-				cur.Outbound += n
-				out[src] = cur
-			}
-			dst := extractFlowDestinationHostname(row)
-			if dst != "" {
-				cur := out[dst]
-				cur.Inbound += n
-				out[dst] = cur
-			}
+			add(extractFlowSourceWorkloadIdentity(row), 0, n)
+			add(extractFlowDestinationWorkloadIdentity(row), n, 0)
 			continue
 		}
 		if asSource {
-			src := extractFlowSourceHostname(row)
-			if src == "" {
-				continue
-			}
-			cur := out[src]
-			cur.Outbound += n
-			out[src] = cur
+			add(extractFlowSourceWorkloadIdentity(row), 0, n)
 		} else {
-			dst := extractFlowDestinationHostname(row)
-			if dst == "" {
-				continue
-			}
-			cur := out[dst]
-			cur.Inbound += n
-			out[dst] = cur
+			add(extractFlowDestinationWorkloadIdentity(row), n, 0)
 		}
+	}
+	out := make(map[string]hostTrafficCount, len(byKey))
+	for key, c := range byKey {
+		display := strings.TrimSpace(displayByKey[key])
+		if display == "" {
+			continue
+		}
+		cur := out[display]
+		cur.Inbound += c.Inbound
+		cur.Outbound += c.Outbound
+		out[display] = cur
 	}
 	return out
 }
@@ -6948,70 +6960,162 @@ func mergeHostTrafficCounts(a, b map[string]hostTrafficCount) map[string]hostTra
 	return out
 }
 
-func extractFlowSourceHostname(row map[string]interface{}) string {
-	if !flowSourceHasWorkload(row) {
-		return ""
+func choosePreferredWorkloadDisplay(existing, candidate string) string {
+	existing = strings.TrimSpace(existing)
+	candidate = strings.TrimSpace(candidate)
+	if existing == "" {
+		return candidate
 	}
-	return firstNonEmptyString(
-		pathString(row, "src", "workload", "hostname"),
-		pathString(row, "src", "workload", "name"),
-		pathString(row, "source", "workload", "hostname"),
-		pathString(row, "source", "workload", "name"),
-		pathString(row, "src_workload", "hostname"),
-		pathString(row, "src_workload", "name"),
-		pathString(row, "consumer", "workload", "hostname"),
-		pathString(row, "consumer", "workload", "name"),
-	)
+	if candidate == "" {
+		return existing
+	}
+	existingIP := net.ParseIP(existing) != nil
+	candidateIP := net.ParseIP(candidate) != nil
+	if existingIP && !candidateIP {
+		return candidate
+	}
+	if candidateIP && !existingIP {
+		return existing
+	}
+	existingFQDNish := strings.Contains(existing, ".")
+	candidateFQDNish := strings.Contains(candidate, ".")
+	if candidateFQDNish && !existingFQDNish {
+		return candidate
+	}
+	if existingFQDNish && !candidateFQDNish {
+		return existing
+	}
+	if len(candidate) > len(existing) {
+		return candidate
+	}
+	return existing
 }
 
-func extractFlowDestinationHostname(row map[string]interface{}) string {
-	if !flowDestinationHasWorkload(row) {
-		return ""
+func preferredWorkloadDisplay(hostnameCandidates, nameCandidates []string) string {
+	hostname := firstNonEmptyString(hostnameCandidates...)
+	name := firstNonEmptyString(nameCandidates...)
+	hostname = strings.TrimSpace(hostname)
+	name = strings.TrimSpace(name)
+	if hostname == "" {
+		return name
 	}
-	return firstNonEmptyString(
-		pathString(row, "dst", "workload", "hostname"),
-		pathString(row, "dst", "workload", "name"),
-		pathString(row, "destination", "workload", "hostname"),
-		pathString(row, "destination", "workload", "name"),
-		pathString(row, "dst_workload", "hostname"),
-		pathString(row, "dst_workload", "name"),
-		pathString(row, "provider", "workload", "hostname"),
-		pathString(row, "provider", "workload", "name"),
-	)
+	if name == "" {
+		return hostname
+	}
+	if net.ParseIP(hostname) != nil && net.ParseIP(name) == nil {
+		return name
+	}
+	return hostname
 }
 
-func flowSourceHasWorkload(row map[string]interface{}) bool {
-	return firstNonEmptyString(
+func extractFlowSourceWorkloadIdentity(row map[string]interface{}) flowWorkloadIdentity {
+	href := firstNonEmptyString(
 		pathString(row, "src", "workload", "href"),
 		pathString(row, "source", "workload", "href"),
 		pathString(row, "src_workload", "href"),
 		pathString(row, "consumer", "workload", "href"),
-	) != ""
+	)
+	display := preferredWorkloadDisplay(
+		[]string{
+			pathString(row, "src", "workload", "hostname"),
+			pathString(row, "source", "workload", "hostname"),
+			pathString(row, "src_workload", "hostname"),
+			pathString(row, "consumer", "workload", "hostname"),
+		},
+		[]string{
+			pathString(row, "src", "workload", "name"),
+			pathString(row, "source", "workload", "name"),
+			pathString(row, "src_workload", "name"),
+			pathString(row, "consumer", "workload", "name"),
+		},
+	)
+	key := strings.TrimSpace(href)
+	if key == "" {
+		display = strings.TrimSpace(display)
+		if display == "" {
+			return flowWorkloadIdentity{}
+		}
+		key = "host:" + strings.ToLower(display)
+	}
+	return flowWorkloadIdentity{
+		Key:     key,
+		Display: strings.TrimSpace(display),
+	}
 }
 
-func flowDestinationHasWorkload(row map[string]interface{}) bool {
-	return firstNonEmptyString(
+func extractFlowDestinationWorkloadIdentity(row map[string]interface{}) flowWorkloadIdentity {
+	href := firstNonEmptyString(
 		pathString(row, "dst", "workload", "href"),
 		pathString(row, "destination", "workload", "href"),
 		pathString(row, "dst_workload", "href"),
 		pathString(row, "provider", "workload", "href"),
-	) != ""
+	)
+	display := preferredWorkloadDisplay(
+		[]string{
+			pathString(row, "dst", "workload", "hostname"),
+			pathString(row, "destination", "workload", "hostname"),
+			pathString(row, "dst_workload", "hostname"),
+			pathString(row, "provider", "workload", "hostname"),
+		},
+		[]string{
+			pathString(row, "dst", "workload", "name"),
+			pathString(row, "destination", "workload", "name"),
+			pathString(row, "dst_workload", "name"),
+			pathString(row, "provider", "workload", "name"),
+		},
+	)
+	key := strings.TrimSpace(href)
+	if key == "" {
+		display = strings.TrimSpace(display)
+		if display == "" {
+			return flowWorkloadIdentity{}
+		}
+		key = "host:" + strings.ToLower(display)
+	}
+	return flowWorkloadIdentity{
+		Key:     key,
+		Display: strings.TrimSpace(display),
+	}
 }
 
 func extractBlockedFlowSamples(rows []map[string]interface{}, leg string, fallbackUTC time.Time) []blockedFlowSample {
 	out := make([]blockedFlowSample, 0, len(rows))
+	sourceDisplayByKey := map[string]string{}
+	destinationDisplayByKey := map[string]string{}
 	for _, row := range rows {
 		sig := blockedFlowSignature(row, leg)
 		if sig == "" {
 			continue
 		}
+		src := extractFlowSourceWorkloadIdentity(row)
+		dst := extractFlowDestinationWorkloadIdentity(row)
+		if src.Key != "" && src.Display != "" {
+			sourceDisplayByKey[src.Key] = choosePreferredWorkloadDisplay(sourceDisplayByKey[src.Key], src.Display)
+		}
+		if dst.Key != "" && dst.Display != "" {
+			destinationDisplayByKey[dst.Key] = choosePreferredWorkloadDisplay(destinationDisplayByKey[dst.Key], dst.Display)
+		}
 		out = append(out, blockedFlowSample{
 			Signature:       sig,
 			LastDetectedUTC: blockedFlowLastDetectedUTC(row, fallbackUTC),
-			SourceHost:      extractFlowSourceHostname(row),
-			DestinationHost: extractFlowDestinationHostname(row),
+			SourceKey:       src.Key,
+			SourceHost:      src.Display,
+			DestinationKey:  dst.Key,
+			DestinationHost: dst.Display,
 			Connections:     blockedFlowConnections(row),
 		})
+	}
+	for i := range out {
+		if key := strings.TrimSpace(out[i].SourceKey); key != "" {
+			if display := strings.TrimSpace(sourceDisplayByKey[key]); display != "" {
+				out[i].SourceHost = display
+			}
+		}
+		if key := strings.TrimSpace(out[i].DestinationKey); key != "" {
+			if display := strings.TrimSpace(destinationDisplayByKey[key]); display != "" {
+				out[i].DestinationHost = display
+			}
+		}
 	}
 	return out
 }
