@@ -274,7 +274,7 @@ type rollingState struct {
 	Buckets []rollingBucket
 
 	// In-memory only: per-target flow signatures seen within the active 24h rolling horizon.
-	BlockedFlowLastSeen map[string]map[string]time.Time
+	BlockedFlowLastSeen map[string]map[string]blockedFlowSeenState
 }
 
 type persistedTargetBaseline struct {
@@ -344,6 +344,11 @@ type dailyBlockedPortRecord struct {
 type hostTrafficCount struct {
 	Inbound  int
 	Outbound int
+}
+
+type blockedFlowSeenState struct {
+	LastSeenUTC time.Time
+	Connections int
 }
 
 type flowWorkloadIdentity struct {
@@ -3274,7 +3279,8 @@ func blockedTodaySoFarCount(target string, todayStartUTC, nowUTC time.Time) int 
 	if rollingCache.BlockedFlowLastSeen != nil {
 		if targetSeen, ok := rollingCache.BlockedFlowLastSeen[target]; ok {
 			count := 0
-			for _, ts := range targetSeen {
+			for _, st := range targetSeen {
+				ts := st.LastSeenUTC
 				if ts.After(todayStartUTC) && !ts.After(nowUTC) {
 					count++
 				}
@@ -4225,36 +4231,47 @@ func applyBlockedFlowSamplesLocked(targetName string, nowUTC time.Time, samples 
 		return 0, 0, nil
 	}
 	if rollingCache.BlockedFlowLastSeen == nil {
-		rollingCache.BlockedFlowLastSeen = map[string]map[string]time.Time{}
+		rollingCache.BlockedFlowLastSeen = map[string]map[string]blockedFlowSeenState{}
 	}
 	targetSeen, ok := rollingCache.BlockedFlowLastSeen[targetName]
 	if !ok {
-		targetSeen = map[string]time.Time{}
+		targetSeen = map[string]blockedFlowSeenState{}
 		rollingCache.BlockedFlowLastSeen[targetName] = targetSeen
 	}
 	cutoff := nowUTC.Add(-24 * time.Hour)
-	for sig, ts := range targetSeen {
-		if !ts.After(cutoff) {
+	for sig, st := range targetSeen {
+		if !st.LastSeenUTC.After(cutoff) {
 			delete(targetSeen, sig)
 		}
 	}
 	latestBySig := latestBlockedFlowSamplesBySignature(samples, nowUTC, cutoff)
 	newUnique := 0
-	newHosts := make(map[string]hostTrafficCount)
+	hostDeltas := make(map[string]hostTrafficCount)
 	for sig, sample := range latestBySig {
 		ts := sample.LastDetectedUTC.UTC()
 		prev, exists := targetSeen[sig]
 		if !exists {
-			targetSeen[sig] = ts
+			targetSeen[sig] = blockedFlowSeenState{
+				LastSeenUTC: ts,
+				Connections: sample.Connections,
+			}
 			newUnique++
-			accumulateHostCountFromSample(newHosts, sample)
+			accumulateHostCountFromSampleWithDelta(hostDeltas, sample, sample.Connections)
 			continue
 		}
-		if ts.After(prev) {
-			targetSeen[sig] = ts
+		shouldUpdate := ts.After(prev.LastSeenUTC) || (ts.Equal(prev.LastSeenUTC) && sample.Connections > prev.Connections)
+		if !shouldUpdate {
+			continue
 		}
+		delta := sample.Connections - prev.Connections
+		if delta > 0 {
+			accumulateHostCountFromSampleWithDelta(hostDeltas, sample, delta)
+		}
+		prev.LastSeenUTC = ts
+		prev.Connections = sample.Connections
+		targetSeen[sig] = prev
 	}
-	return newUnique, len(targetSeen), newHosts
+	return newUnique, len(targetSeen), hostDeltas
 }
 
 func blockedRollingUniqueCountLocked(targetName string, cutoff time.Time) (int, bool) {
@@ -4272,8 +4289,8 @@ func blockedRollingUniqueCountLocked(targetName string, cutoff time.Time) (int, 
 	if !ok {
 		return 0, false
 	}
-	for sig, ts := range targetSeen {
-		if !ts.After(cutoff) {
+	for sig, st := range targetSeen {
+		if !st.LastSeenUTC.After(cutoff) {
 			delete(targetSeen, sig)
 		}
 	}
@@ -4293,7 +4310,7 @@ func resetBlockedFlowDedupeLocked(targets []TrafficTarget) {
 		}
 		return
 	}
-	rollingCache.BlockedFlowLastSeen = map[string]map[string]time.Time{}
+	rollingCache.BlockedFlowLastSeen = map[string]map[string]blockedFlowSeenState{}
 }
 
 func applyBlockedFlowSamplesSQLite(targetName string, nowUTC time.Time, samples []blockedFlowSample) (int, int, map[string]hostTrafficCount) {
@@ -4316,33 +4333,56 @@ func applyBlockedFlowSamplesSQLite(targetName string, nowUTC time.Time, samples 
 		log.Printf("[BLOCKED] dedupe sqlite prune failed target=%s err=%v", targetName, err)
 		return 0, 0, nil
 	}
-	insertStmt, err := tx.Prepare(`INSERT INTO blocked_flow_seen(target, signature, last_seen_unix) VALUES(?,?,?) ON CONFLICT(target, signature) DO NOTHING`)
+	selectStmt, err := tx.Prepare(`SELECT last_seen_unix, COALESCE(last_connections, 0) FROM blocked_flow_seen WHERE target = ? AND signature = ?`)
 	if err != nil {
+		_ = tx.Rollback()
+		log.Printf("[BLOCKED] dedupe sqlite prepare select failed target=%s err=%v", targetName, err)
+		return 0, 0, nil
+	}
+	insertStmt, err := tx.Prepare(`INSERT INTO blocked_flow_seen(target, signature, last_seen_unix, last_connections) VALUES(?,?,?,?)`)
+	if err != nil {
+		_ = selectStmt.Close()
 		_ = tx.Rollback()
 		log.Printf("[BLOCKED] dedupe sqlite prepare insert failed target=%s err=%v", targetName, err)
 		return 0, 0, nil
 	}
-	updateStmt, err := tx.Prepare(`UPDATE blocked_flow_seen SET last_seen_unix = ? WHERE target = ? AND signature = ? AND last_seen_unix < ?`)
+	updateStmt, err := tx.Prepare(`UPDATE blocked_flow_seen SET last_seen_unix = ?, last_connections = ? WHERE target = ? AND signature = ?`)
 	if err != nil {
+		_ = selectStmt.Close()
 		_ = insertStmt.Close()
 		_ = tx.Rollback()
 		log.Printf("[BLOCKED] dedupe sqlite prepare update failed target=%s err=%v", targetName, err)
 		return 0, 0, nil
 	}
 	newUnique := 0
-	newHosts := make(map[string]hostTrafficCount)
+	hostDeltas := make(map[string]hostTrafficCount)
 	for sig, sample := range latestBySig {
 		unixTS := sample.LastDetectedUTC.UTC().Unix()
-		res, err := insertStmt.Exec(targetName, sig, unixTS)
+		prevSeen := int64(0)
+		prevConn := 0
+		err := selectStmt.QueryRow(targetName, sig).Scan(&prevSeen, &prevConn)
+		if err == sql.ErrNoRows {
+			if _, err := insertStmt.Exec(targetName, sig, unixTS, sample.Connections); err != nil {
+				continue
+			}
+			newUnique++
+			accumulateHostCountFromSampleWithDelta(hostDeltas, sample, sample.Connections)
+			continue
+		}
 		if err != nil {
 			continue
 		}
-		if rows, err := res.RowsAffected(); err == nil && rows > 0 {
-			newUnique += int(rows)
-			accumulateHostCountFromSample(newHosts, sample)
+		shouldUpdate := unixTS > prevSeen || (unixTS == prevSeen && sample.Connections > prevConn)
+		if !shouldUpdate {
+			continue
 		}
-		_, _ = updateStmt.Exec(unixTS, targetName, sig, unixTS)
+		delta := sample.Connections - prevConn
+		if delta > 0 {
+			accumulateHostCountFromSampleWithDelta(hostDeltas, sample, delta)
+		}
+		_, _ = updateStmt.Exec(unixTS, sample.Connections, targetName, sig)
 	}
+	_ = selectStmt.Close()
 	_ = insertStmt.Close()
 	_ = updateStmt.Close()
 	totalUnique := 0
@@ -4355,7 +4395,7 @@ func applyBlockedFlowSamplesSQLite(targetName string, nowUTC time.Time, samples 
 		log.Printf("[BLOCKED] dedupe sqlite commit failed target=%s err=%v", targetName, err)
 		return 0, 0, nil
 	}
-	return newUnique, totalUnique, newHosts
+	return newUnique, totalUnique, hostDeltas
 }
 
 func latestBlockedFlowSamplesBySignature(samples []blockedFlowSample, nowUTC, cutoff time.Time) map[string]blockedFlowSample {
@@ -4385,8 +4425,15 @@ func accumulateHostCountFromSample(out map[string]hostTrafficCount, sample block
 		return
 	}
 	n := sample.Connections
+	accumulateHostCountFromSampleWithDelta(out, sample, n)
+}
+
+func accumulateHostCountFromSampleWithDelta(out map[string]hostTrafficCount, sample blockedFlowSample, n int) {
+	if out == nil {
+		return
+	}
 	if n <= 0 {
-		n = 1
+		return
 	}
 	src := strings.TrimSpace(sample.SourceHost)
 	if src != "" {
@@ -4449,7 +4496,7 @@ func updateRollingAndBuildView(
 			BaselineWorkloads:   map[string]struct{}{},
 			BaselineBlocked:     map[string]targetBaseline{},
 			Buckets:             []rollingBucket{},
-			BlockedFlowLastSeen: map[string]map[string]time.Time{},
+			BlockedFlowLastSeen: map[string]map[string]blockedFlowSeenState{},
 		}
 		resetBlockedFlowDedupeLocked(targets)
 		if tamperingOK {
@@ -6169,11 +6216,9 @@ func collectBlockedTargetPaced(
 		}
 		if configuredBlockedHostMetricsEnabled() || portDailyEnabled {
 			var portCounts map[string]int
-			var hostCounts map[string]hostTrafficCount
 			var samples []blockedFlowSample
-			qRes, portCounts, hostCounts, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+			qRes, portCounts, _, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
 			res.CurrentPorts = portCounts
-			res.CurrentHosts = hostCounts
 			res.CurrentSamples = samples
 		} else {
 			qRes, err = getBlockedCountForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
@@ -6185,14 +6230,12 @@ func collectBlockedTargetPaced(
 			log.Printf("[BLOCKED] delta query target=%s window=%s..%s include_ports=%t", target.Name, blockedDeltaStart.UTC().Format(time.RFC3339), nowUTC.UTC().Format(time.RFC3339), portDailyEnabled)
 		}
 		var portCounts map[string]int
-		var hostCounts map[string]hostTrafficCount
 		var samples []blockedFlowSample
-		qRes, portCounts, hostCounts, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+		qRes, portCounts, _, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
 		res.CurrentPorts = portCounts
-		res.CurrentHosts = hostCounts
 		res.CurrentSamples = samples
 		res.RawCount = qRes.Count
-		res.CurrentCount, _, _ = applyBlockedFlowSamples(target.Name, nowUTC, samples)
+		res.CurrentCount, _, res.CurrentHosts = applyBlockedFlowSamples(target.Name, nowUTC, samples)
 	}
 	res.Result.Count = qRes.Count
 	res.WarningMessage = strings.TrimSpace(qRes.Warning)
@@ -8063,6 +8106,7 @@ func initBlockedPortStore() {
 			target TEXT NOT NULL,
 			signature TEXT NOT NULL,
 			last_seen_unix INTEGER NOT NULL,
+			last_connections INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY(target, signature)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_blocked_flow_seen_target_ts ON blocked_flow_seen(target, last_seen_unix);`,
@@ -8073,6 +8117,9 @@ func initBlockedPortStore() {
 			_ = db.Close()
 			return
 		}
+	}
+	if _, err := db.Exec(`ALTER TABLE blocked_flow_seen ADD COLUMN last_connections INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		log.Printf("[STORE] sqlite schema migration for blocked_flow_seen.last_connections failed: %v", err)
 	}
 	metricsDB = db
 	migrateBlockedPortDailyJSONToSQLite()
@@ -8804,7 +8851,7 @@ func loadRollingState() {
 		BaselineWorkloads:   map[string]struct{}{},
 		BaselineBlocked:     map[string]targetBaseline{},
 		Buckets:             make([]rollingBucket, 0, len(persisted.Buckets)),
-		BlockedFlowLastSeen: map[string]map[string]time.Time{},
+		BlockedFlowLastSeen: map[string]map[string]blockedFlowSeenState{},
 	}
 	for _, n := range persisted.BaselineWorkloads {
 		n = strings.TrimSpace(n)
