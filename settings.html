@@ -169,6 +169,10 @@
                                 </select>
                                 <div class="small text-muted mt-1">Use daily snapshots to retain hostname aggregates for long-range history charts/tables.</div>
                             </div>
+                            <div class="d-flex flex-wrap gap-2 mt-2">
+                                <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic-storage" type="button">Save Retention/Storage</button>
+                            </div>
+                            <div class="small mt-2" id="msg-traffic-storage"></div>
                         </div>
                         <div class="setting-cluster">
                             <div class="setting-cluster-title">Anomaly Defaults</div>
@@ -212,6 +216,10 @@
                                 <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="blocked-anomaly-min-pct" value="70">
                                 <div class="small text-muted mt-1">If baseline is not fully built yet, alerts are suppressed until this coverage threshold is met (for example 70% means 5 of 7 days).</div>
                             </div>
+                            <div class="d-flex flex-wrap gap-2 mt-2">
+                                <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic-anomaly" type="button">Save Anomaly Defaults</button>
+                            </div>
+                            <div class="small mt-2" id="msg-traffic-anomaly"></div>
                         </div>
                     </div>
                     <div class="mb-2 mt-2 section-full">
@@ -221,7 +229,7 @@
                     <div id="target-editor" class="section-full"></div>
                     <div class="d-flex flex-wrap gap-2 mt-2 section-full">
                         <button class="btn btn-outline-secondary btn-sm" id="btn-add-target" type="button">Add Target</button>
-                        <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic" type="button">Save Traffic/Data</button>
+                        <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic" type="button">Save Targets/Exclusions</button>
                         <button class="btn btn-outline-success btn-sm" id="btn-refresh-now" type="button">Refresh Now</button>
                         <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-history" type="button">Reconcile Blocked History</button>
                         <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-tampering-history" type="button">Reconcile Tampering History</button>
@@ -579,8 +587,25 @@
             renderTargetEditor();
         }
 
-        async function saveSettingsWithMessage(messageId, successText) {
-            const payload = buildTrafficDataPayload(messageId);
+        async function saveSettingsWithMessage(messageId, successText, sections) {
+            const payload = buildTrafficDataPayload(messageId, sections);
+            if (!payload) return false;
+            const r = await fetch('/api/config/targets', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!r.ok) {
+                showMsg(messageId, `Save failed (${r.status})`, 'danger');
+                return false;
+            }
+            showMsg(messageId, successText, 'success');
+            await loadTrafficSettings();
+            return true;
+        }
+
+        async function saveExtendedSettingsWithMessage(messageId, successText) {
+            const payload = buildExtendedSettingsPayload(messageId);
             if (!payload) return false;
             const r = await fetch('/api/config/targets', {
                 method: 'PUT',
@@ -597,18 +622,29 @@
         }
 
         async function saveTrafficSettings() {
-            await saveSettingsWithMessage('msg-traffic', 'Traffic target settings saved.');
+            await saveSettingsWithMessage('msg-traffic', 'Traffic targets/exclusions saved.', { targetsOnly: true });
+        }
+
+        async function saveTrafficStorageSettings() {
+            await saveSettingsWithMessage('msg-traffic-storage', 'Retention/storage settings saved.', { retentionStorage: true });
+        }
+
+        async function saveTrafficAnomalySettings() {
+            await saveSettingsWithMessage('msg-traffic-anomaly', 'Anomaly defaults saved.', { anomalyDefaults: true });
         }
 
         async function saveVenSettings() {
-            await saveSettingsWithMessage('msg-ven', 'VEN warning/error settings saved.');
+            await saveExtendedSettingsWithMessage('msg-ven', 'VEN warning/error settings saved.');
         }
 
         async function saveTamperingSettings() {
-            await saveSettingsWithMessage('msg-tampering', 'Tampering settings saved.');
+            await saveExtendedSettingsWithMessage('msg-tampering', 'Tampering settings saved.');
         }
 
-        function buildTrafficDataPayload(messageId) {
+        function buildTrafficDataPayload(messageId, sections = {}) {
+            const saveTargetsOnly = sections.targetsOnly === true;
+            const saveRetentionStorage = sections.retentionStorage === true;
+            const saveAnomalyDefaults = sections.anomalyDefaults === true;
             const cleaned = editableTargets
                 .map((t) => ({
                     name: (t.name || '').trim(),
@@ -630,29 +666,74 @@
                 showMsg(messageId, 'Add at least one target before saving.', 'danger');
                 return null;
             }
-            let parsedDays = Number(document.getElementById('history-days').value || historyDays || 365);
-            if (!Number.isFinite(parsedDays) || parsedDays < 1) parsedDays = 365;
-            if (parsedDays > 3650) parsedDays = 3650;
-            const parsedBlockedPortDailyEnabled = String(document.getElementById('blocked-port-daily-enabled').value || (blockedPortDailyEnabled ? 'true' : 'false')) === 'true';
-            const parsedBlockedRollingDedupeBackend = String(document.getElementById('blocked-rolling-dedupe-backend').value || blockedRollingDedupeBackend || 'sqlite').trim().toLowerCase() === 'memory' ? 'memory' : 'sqlite';
-            const parsedBlockedHostMetricsEnabled = String(document.getElementById('blocked-host-metrics-enabled').value || (blockedHostMetricsEnabled ? 'true' : 'false')) === 'true';
-            const parsedBlockedHostRetentionMode = String(document.getElementById('blocked-host-retention-mode').value || blockedHostRetentionMode || 'rolling_24h_plus_daily').trim().toLowerCase() === 'rolling_24h_only' ? 'rolling_24h_only' : 'rolling_24h_plus_daily';
-            let parsedMAWindow = Number(document.getElementById('blocked-ma-window').value || blockedMAWindow || 12);
+            const payload = {
+                traffic_targets: cleaned
+            };
+            const exclusions = String(document.getElementById('source-exclusions').value || '')
+                .split(',')
+                .map((n) => n.trim())
+                .filter((n) => n.length > 0)
+                .map((name) => ({ name, kind: 'auto' }));
+            payload.traffic_source_exclusions = exclusions;
+            if (saveTargetsOnly) {
+                return payload;
+            }
+            if (saveRetentionStorage || (!saveRetentionStorage && !saveAnomalyDefaults)) {
+                let parsedDays = Number(document.getElementById('history-days').value || historyDays || 365);
+                if (!Number.isFinite(parsedDays) || parsedDays < 1) parsedDays = 365;
+                if (parsedDays > 3650) parsedDays = 3650;
+                const parsedBlockedPortDailyEnabled = String(document.getElementById('blocked-port-daily-enabled').value || (blockedPortDailyEnabled ? 'true' : 'false')) === 'true';
+                const parsedBlockedRollingDedupeBackend = String(document.getElementById('blocked-rolling-dedupe-backend').value || blockedRollingDedupeBackend || 'sqlite').trim().toLowerCase() === 'memory' ? 'memory' : 'sqlite';
+                const parsedBlockedHostMetricsEnabled = String(document.getElementById('blocked-host-metrics-enabled').value || (blockedHostMetricsEnabled ? 'true' : 'false')) === 'true';
+                const parsedBlockedHostRetentionMode = String(document.getElementById('blocked-host-retention-mode').value || blockedHostRetentionMode || 'rolling_24h_plus_daily').trim().toLowerCase() === 'rolling_24h_only' ? 'rolling_24h_only' : 'rolling_24h_plus_daily';
+                payload.history_days = Math.floor(parsedDays);
+                payload.blocked_port_daily_enabled = parsedBlockedPortDailyEnabled;
+                payload.blocked_rolling_dedupe_backend = parsedBlockedRollingDedupeBackend;
+                payload.blocked_host_metrics_enabled = parsedBlockedHostMetricsEnabled;
+                payload.blocked_host_retention_mode = parsedBlockedHostRetentionMode;
+            }
+            if (saveAnomalyDefaults || (!saveRetentionStorage && !saveAnomalyDefaults)) {
+                let parsedMAWindow = Number(document.getElementById('blocked-ma-window').value || blockedMAWindow || 12);
+                if (!Number.isFinite(parsedMAWindow) || parsedMAWindow < 2) parsedMAWindow = 12;
+                if (parsedMAWindow > 288) parsedMAWindow = 288;
+                let parsedAnomalyPct = Number(document.getElementById('blocked-anomaly-pct').value || blockedAnomalyPct || 50);
+                if (!Number.isFinite(parsedAnomalyPct) || parsedAnomalyPct < 1) parsedAnomalyPct = 50;
+                if (parsedAnomalyPct > 10000) parsedAnomalyPct = 10000;
+                const parsedBaseline = String(document.getElementById('blocked-anomaly-baseline').value || blockedAnomalyBaseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
+                let parsedBaselineDays = Number(document.getElementById('blocked-anomaly-days').value || blockedAnomalyDays || 7);
+                if (!Number.isFinite(parsedBaselineDays) || parsedBaselineDays < 1) parsedBaselineDays = 7;
+                if (parsedBaselineDays > 3650) parsedBaselineDays = 3650;
+                let parsedBaselineMinPct = Number(document.getElementById('blocked-anomaly-min-pct').value || blockedAnomalyMinPct || 70);
+                if (!Number.isFinite(parsedBaselineMinPct) || parsedBaselineMinPct < 1) parsedBaselineMinPct = 70;
+                if (parsedBaselineMinPct > 100) parsedBaselineMinPct = 100;
+                let parsedDailyMAWindow = Number(document.getElementById('daily-ma-window').value || dailyMAWindow || parsedBaselineDays || 7);
+                if (!Number.isFinite(parsedDailyMAWindow) || parsedDailyMAWindow < 2) parsedDailyMAWindow = parsedBaselineDays || 7;
+                if (parsedDailyMAWindow > 3650) parsedDailyMAWindow = 3650;
+                payload.blocked_ma_window = Math.floor(parsedMAWindow);
+                payload.blocked_anomaly_pct = Math.floor(parsedAnomalyPct);
+                payload.blocked_anomaly_baseline = parsedBaseline;
+                payload.blocked_anomaly_days = Math.floor(parsedBaselineDays);
+                payload.blocked_anomaly_min_pct = parsedBaselineMinPct;
+                payload.daily_ma_window = Math.floor(parsedDailyMAWindow);
+            }
+            return payload;
+        }
+
+        function buildExtendedSettingsPayload(messageId) {
+            const payload = buildTrafficDataPayload(messageId);
+            if (!payload) return null;
+            let parsedMAWindow = Number(payload.blocked_ma_window || blockedMAWindow || 12);
             if (!Number.isFinite(parsedMAWindow) || parsedMAWindow < 2) parsedMAWindow = 12;
             if (parsedMAWindow > 288) parsedMAWindow = 288;
-            let parsedAnomalyPct = Number(document.getElementById('blocked-anomaly-pct').value || blockedAnomalyPct || 50);
+            let parsedAnomalyPct = Number(payload.blocked_anomaly_pct || blockedAnomalyPct || 50);
             if (!Number.isFinite(parsedAnomalyPct) || parsedAnomalyPct < 1) parsedAnomalyPct = 50;
             if (parsedAnomalyPct > 10000) parsedAnomalyPct = 10000;
-            const parsedBaseline = String(document.getElementById('blocked-anomaly-baseline').value || blockedAnomalyBaseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
-            let parsedBaselineDays = Number(document.getElementById('blocked-anomaly-days').value || blockedAnomalyDays || 7);
+            let parsedBaselineDays = Number(payload.blocked_anomaly_days || blockedAnomalyDays || 7);
             if (!Number.isFinite(parsedBaselineDays) || parsedBaselineDays < 1) parsedBaselineDays = 7;
             if (parsedBaselineDays > 3650) parsedBaselineDays = 3650;
-            let parsedBaselineMinPct = Number(document.getElementById('blocked-anomaly-min-pct').value || blockedAnomalyMinPct || 70);
+            let parsedBaselineMinPct = Number(payload.blocked_anomaly_min_pct || blockedAnomalyMinPct || 70);
             if (!Number.isFinite(parsedBaselineMinPct) || parsedBaselineMinPct < 1) parsedBaselineMinPct = 70;
             if (parsedBaselineMinPct > 100) parsedBaselineMinPct = 100;
-            let parsedDailyMAWindow = Number(document.getElementById('daily-ma-window').value || dailyMAWindow || parsedBaselineDays || 7);
-            if (!Number.isFinite(parsedDailyMAWindow) || parsedDailyMAWindow < 2) parsedDailyMAWindow = parsedBaselineDays || 7;
-            if (parsedDailyMAWindow > 3650) parsedDailyMAWindow = 3650;
             let parsedVenMAWindow = Number(document.getElementById('ven-ma-window').value || venMAWindow || parsedMAWindow || 12);
             if (!Number.isFinite(parsedVenMAWindow) || parsedVenMAWindow < 2) parsedVenMAWindow = parsedMAWindow || 12;
             if (parsedVenMAWindow > 288) parsedVenMAWindow = 288;
@@ -685,44 +766,25 @@
             const parsedBindAddress = String(document.getElementById('bind-address').value || bindAddress || ':18443').trim();
             const parsedPublicBaseURL = String(document.getElementById('public-base-url').value || publicBaseURL || 'http://localhost:18443').trim();
             const parsedTimezone = String(document.getElementById('timezone').value || timezone || '').trim();
-            const exclusions = String(document.getElementById('source-exclusions').value || '')
-                .split(',')
-                .map((n) => n.trim())
-                .filter((n) => n.length > 0)
-                .map((name) => ({ name, kind: 'auto' }));
-            return {
-                traffic_targets: cleaned,
-                traffic_source_exclusions: exclusions,
-                history_days: Math.floor(parsedDays),
-                blocked_port_daily_enabled: parsedBlockedPortDailyEnabled,
-                blocked_rolling_dedupe_backend: parsedBlockedRollingDedupeBackend,
-                blocked_host_metrics_enabled: parsedBlockedHostMetricsEnabled,
-                blocked_host_retention_mode: parsedBlockedHostRetentionMode,
-                blocked_ma_window: Math.floor(parsedMAWindow),
-                blocked_anomaly_pct: Math.floor(parsedAnomalyPct),
-                blocked_anomaly_baseline: parsedBaseline,
-                blocked_anomaly_days: Math.floor(parsedBaselineDays),
-                blocked_anomaly_min_pct: parsedBaselineMinPct,
-                daily_ma_window: Math.floor(parsedDailyMAWindow),
-                ven_ma_window: Math.floor(parsedVenMAWindow),
-                ven_anomaly_pct: Math.floor(parsedVenAnomalyPct),
-                ven_anomaly_baseline: parsedVenBaseline,
-                ven_anomaly_days: Math.floor(parsedVenBaselineDays),
-                ven_anomaly_min_pct: parsedVenBaselineMinPct,
-                tampering_ma_window: Math.floor(parsedTamperingMAWindow),
-                tampering_anomaly_pct: Math.floor(parsedTamperingAnomalyPct),
-                tampering_anomaly_baseline: parsedTamperingBaseline,
-                tampering_anomaly_days: Math.floor(parsedTamperingBaselineDays),
-                tampering_anomaly_min_pct: parsedTamperingBaselineMinPct,
-                tampering_daily_anomaly_pct: Math.floor(parsedTamperingDailyAnomalyPct),
-                timezone: parsedTimezone,
-                bind_address: parsedBindAddress,
-                public_base_url: parsedPublicBaseURL
-            };
+            payload.ven_ma_window = Math.floor(parsedVenMAWindow);
+            payload.ven_anomaly_pct = Math.floor(parsedVenAnomalyPct);
+            payload.ven_anomaly_baseline = parsedVenBaseline;
+            payload.ven_anomaly_days = Math.floor(parsedVenBaselineDays);
+            payload.ven_anomaly_min_pct = parsedVenBaselineMinPct;
+            payload.tampering_ma_window = Math.floor(parsedTamperingMAWindow);
+            payload.tampering_anomaly_pct = Math.floor(parsedTamperingAnomalyPct);
+            payload.tampering_anomaly_baseline = parsedTamperingBaseline;
+            payload.tampering_anomaly_days = Math.floor(parsedTamperingBaselineDays);
+            payload.tampering_anomaly_min_pct = parsedTamperingBaselineMinPct;
+            payload.tampering_daily_anomaly_pct = Math.floor(parsedTamperingDailyAnomalyPct);
+            payload.timezone = parsedTimezone;
+            payload.bind_address = parsedBindAddress;
+            payload.public_base_url = parsedPublicBaseURL;
+            return payload;
         }
 
         async function saveHostingSettings() {
-            const payload = buildTrafficDataPayload('msg-hosting');
+            const payload = buildExtendedSettingsPayload('msg-hosting');
             if (!payload) return;
             const r = await fetch('/api/config/targets', {
                 method: 'PUT',
@@ -935,6 +997,8 @@
             renderTargetEditor();
         });
         document.getElementById('btn-save-traffic').addEventListener('click', saveTrafficSettings);
+        document.getElementById('btn-save-traffic-storage').addEventListener('click', saveTrafficStorageSettings);
+        document.getElementById('btn-save-traffic-anomaly').addEventListener('click', saveTrafficAnomalySettings);
         document.getElementById('btn-save-ven').addEventListener('click', saveVenSettings);
         document.getElementById('btn-save-tampering').addEventListener('click', saveTamperingSettings);
         document.getElementById('btn-save-hosting').addEventListener('click', saveHostingSettings);
