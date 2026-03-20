@@ -4054,6 +4054,11 @@ func getIllumioStats() DashboardStats {
 		warningParts = append(warningParts, exclusionWarn)
 	}
 	forceHostReseed := startupHostReseedPending.CompareAndSwap(true, false)
+	if forceHostReseed && configuredBlockedHostMetricsEnabled() {
+		if err := sqliteClearBlockedHost5m(); err != nil {
+			log.Printf("[BLOCKED] startup host snapshot reset failed err=%v", err)
+		}
+	}
 	blockedDeltaStart := blockedDeltaWindowStart(nowUTC)
 	portDailyEnabled := configuredBlockedPortDailyEnabled()
 	blockedResults, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, blockedBaseline, successCount, pacedWarnings := collectBlockedTargetsWithPacing(

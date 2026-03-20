@@ -3,6 +3,7 @@
 <head>
     <title>Executive View - Illumio Monitoring Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -54,18 +55,13 @@
             margin-left: 8px;
         }
         .status-actions { margin-left: 8px; display: inline-flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: center; }
+        .status-actions .btn {
+            --bs-btn-padding-y: 0.1rem;
+            --bs-btn-padding-x: 0.45rem;
+            --bs-btn-font-size: 0.72rem;
+        }
         .muted { color: var(--muted); font-size: 0.88rem; }
         .period-controls { display: inline-flex; gap: 6px; align-items: center; }
-        .btn {
-            border: 1px solid var(--border);
-            background: var(--surface);
-            color: var(--text);
-            border-radius: 7px;
-            padding: 6px 10px;
-            text-decoration: none;
-            cursor: pointer;
-        }
-        .btn.primary { background: var(--illumio-orange); color: #fff; border-color: var(--illumio-orange); }
         .btn.active { outline: 2px solid var(--illumio-orange); outline-offset: 0; }
         .header .muted { color: rgba(255,255,255,0.9); }
         .version-badge {
@@ -166,17 +162,17 @@
     <div id="status-bar" class="mt-2">
         <span id="meta" class="status-meta">Loading...</span>
         <span class="status-actions">
-            <button id="btn-theme" type="button" class="btn">Dark Mode</button>
-            <button id="btn-refresh" type="button" class="btn primary">Refresh</button>
+            <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
+            <button id="btn-refresh" type="button" class="btn btn-light btn-sm">Refresh</button>
             <span class="period-controls">
                 <span class="muted">Period</span>
-                <button id="period-7" type="button" class="btn">7d</button>
-                <button id="period-30" type="button" class="btn">30d</button>
-                <button id="period-90" type="button" class="btn">90d</button>
+                <button id="period-7" type="button" class="btn btn-light btn-sm">7d</button>
+                <button id="period-30" type="button" class="btn btn-light btn-sm">30d</button>
+                <button id="period-90" type="button" class="btn btn-light btn-sm">90d</button>
             </span>
-            <a class="btn" id="btn-board" href="/executive?board=1">Board PDF View</a>
-            <a class="btn" href="/report?live=1">Trend View</a>
-            <a class="btn" href="/">Back to Dashboard</a>
+            <a class="btn btn-light btn-sm" id="btn-board" href="/executive?board=1">Board PDF View</a>
+            <a class="btn btn-light btn-sm" href="/report?live=1">Trend View</a>
+            <a class="btn btn-light btn-sm" href="/">Back to Dashboard</a>
         </span>
     </div>
 </div>
