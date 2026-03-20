@@ -7021,6 +7021,10 @@ func extractFlowSourceWorkloadIdentity(row map[string]interface{}) flowWorkloadI
 		pathString(row, "source", "workload", "href"),
 		pathString(row, "src_workload", "href"),
 		pathString(row, "consumer", "workload", "href"),
+		pathString(row, "src", "href"),
+		pathString(row, "source", "href"),
+		pathString(row, "src_workload_href"),
+		pathString(row, "consumer", "href"),
 	)
 	display := preferredWorkloadDisplay(
 		[]string{
@@ -7028,12 +7032,26 @@ func extractFlowSourceWorkloadIdentity(row map[string]interface{}) flowWorkloadI
 			pathString(row, "source", "workload", "hostname"),
 			pathString(row, "src_workload", "hostname"),
 			pathString(row, "consumer", "workload", "hostname"),
+			pathString(row, "src", "hostname"),
+			pathString(row, "source_hostname"),
+			pathString(row, "src_hostname"),
+			pathString(row, "consumer", "hostname"),
+			pathString(row, "consumer_hostname"),
+			pathString(row, "src", "ip"),
+			pathString(row, "source_ip"),
+			pathString(row, "src_ip"),
+			pathString(row, "consumer", "ip"),
 		},
 		[]string{
 			pathString(row, "src", "workload", "name"),
 			pathString(row, "source", "workload", "name"),
 			pathString(row, "src_workload", "name"),
 			pathString(row, "consumer", "workload", "name"),
+			pathString(row, "src", "name"),
+			pathString(row, "source_name"),
+			pathString(row, "src_name"),
+			pathString(row, "consumer", "name"),
+			pathString(row, "consumer_name"),
 		},
 	)
 	key := strings.TrimSpace(href)
@@ -7056,6 +7074,10 @@ func extractFlowDestinationWorkloadIdentity(row map[string]interface{}) flowWork
 		pathString(row, "destination", "workload", "href"),
 		pathString(row, "dst_workload", "href"),
 		pathString(row, "provider", "workload", "href"),
+		pathString(row, "dst", "href"),
+		pathString(row, "destination", "href"),
+		pathString(row, "dst_workload_href"),
+		pathString(row, "provider", "href"),
 	)
 	display := preferredWorkloadDisplay(
 		[]string{
@@ -7063,12 +7085,26 @@ func extractFlowDestinationWorkloadIdentity(row map[string]interface{}) flowWork
 			pathString(row, "destination", "workload", "hostname"),
 			pathString(row, "dst_workload", "hostname"),
 			pathString(row, "provider", "workload", "hostname"),
+			pathString(row, "dst", "hostname"),
+			pathString(row, "destination_hostname"),
+			pathString(row, "dst_hostname"),
+			pathString(row, "provider", "hostname"),
+			pathString(row, "provider_hostname"),
+			pathString(row, "dst", "ip"),
+			pathString(row, "destination_ip"),
+			pathString(row, "dst_ip"),
+			pathString(row, "provider", "ip"),
 		},
 		[]string{
 			pathString(row, "dst", "workload", "name"),
 			pathString(row, "destination", "workload", "name"),
 			pathString(row, "dst_workload", "name"),
 			pathString(row, "provider", "workload", "name"),
+			pathString(row, "dst", "name"),
+			pathString(row, "destination_name"),
+			pathString(row, "dst_name"),
+			pathString(row, "provider", "name"),
+			pathString(row, "provider_name"),
 		},
 	)
 	key := strings.TrimSpace(href)
