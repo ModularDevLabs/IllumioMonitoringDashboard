@@ -135,7 +135,7 @@
 <body>
 <div class="wrap">
     <div class="head">
-        <h1 id="page-title">Executive Summary</h1>
+        <h1 id="page-title">Illumio Monitoring Dashboard</h1>
         <div class="muted" id="meta">Loading...</div>
         <div class="actions">
             <button id="btn-theme" type="button" class="btn">Dark Mode</button>
@@ -577,8 +577,6 @@
         syncPeriodInURL();
         if (boardMode) {
             document.body.classList.add('board-mode');
-            const title = document.getElementById('page-title');
-            if (title) title.innerText = 'Executive Board Summary';
             const boardBtn = document.getElementById('btn-board');
             if (boardBtn) {
                 boardBtn.textContent = 'Print Board PDF';

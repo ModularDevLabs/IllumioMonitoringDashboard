@@ -94,7 +94,7 @@
 <body>
     <div class="topbar">
         <div class="dashboard-shell d-flex justify-content-between align-items-center">
-            <div class="h5 mb-0">Metric Drilldown</div>
+            <div class="h5 mb-0">Illumio Monitoring Dashboard</div>
             <div id="actions" class="d-flex gap-2">
                 <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
                 <a id="btn-csv" href="#" class="btn btn-light btn-sm">Export CSV</a>
@@ -125,9 +125,12 @@
                 <canvas id="trend-chart"></canvas>
             </div>
             <div id="blocked-ports-wrap" class="d-none mb-3">
-                <h6>Blocked Ports (Daily Aggregate)</h6>
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <h6 class="mb-0">Blocked Ports (Daily Aggregate)</h6>
+                    <button id="btn-toggle-blocked-ports" type="button" class="btn btn-sm btn-outline-secondary">Collapse</button>
+                </div>
                 <div class="text-muted small mb-2" id="blocked-ports-meta"></div>
-                <div class="table-responsive">
+                <div id="blocked-ports-table-wrap" class="table-responsive">
                     <table class="table table-sm">
                         <thead>
                             <tr>
@@ -181,6 +184,7 @@
         let blockedHostRetentionMode = 'rolling_24h_plus_daily';
         let blockedHostsDaily = [];
         let blockedHosts24h = [];
+        let blockedPortsCollapsed = false;
         const THEME_KEY = 'illumio_theme';
         let dayRange = 30;
         let nextRefreshAt = null;
@@ -405,6 +409,8 @@
 
         function renderBlockedPortsTable() {
             const wrap = document.getElementById('blocked-ports-wrap');
+            const tableWrap = document.getElementById('blocked-ports-table-wrap');
+            const toggleBtn = document.getElementById('btn-toggle-blocked-ports');
             const body = document.getElementById('blocked-ports-body');
             const meta = document.getElementById('blocked-ports-meta');
             if (currentMetric !== 'blocked_target') {
@@ -412,6 +418,10 @@
                 return;
             }
             wrap.classList.remove('d-none');
+            if (tableWrap && toggleBtn) {
+                tableWrap.classList.toggle('d-none', blockedPortsCollapsed);
+                toggleBtn.innerText = blockedPortsCollapsed ? 'Expand' : 'Collapse';
+            }
             if (!blockedPortDailyEnabled) {
                 body.innerHTML = '<tr><td colspan="2" class="text-muted">Blocked port daily aggregation is disabled in settings.</td></tr>';
                 meta.innerText = 'Disabled.';
@@ -717,6 +727,13 @@
 
         initTheme();
         UICommon.applyMetricTooltips();
+        const toggleBlockedPortsBtn = document.getElementById('btn-toggle-blocked-ports');
+        if (toggleBlockedPortsBtn) {
+            toggleBlockedPortsBtn.addEventListener('click', () => {
+                blockedPortsCollapsed = !blockedPortsCollapsed;
+                renderBlockedPortsTable();
+            });
+        }
         if (!statusTimer) {
             statusTimer = setInterval(updateRefreshMeta, 1000);
         }
