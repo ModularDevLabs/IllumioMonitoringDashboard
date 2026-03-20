@@ -6220,6 +6220,17 @@ func collectBlockedTargetPaced(
 			qRes, portCounts, _, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
 			res.CurrentPorts = portCounts
 			res.CurrentSamples = samples
+			if err == nil {
+				if configuredBlockedHostMetricsEnabled() {
+					if err := sqliteClearBlockedHost5mTarget(target.Name); err != nil {
+						log.Printf("[BLOCKED] baseline host snapshot reset failed target=%s err=%v", target.Name, err)
+					}
+				}
+				if err := sqliteClearBlockedFlowSeenTarget(target.Name); err != nil {
+					log.Printf("[BLOCKED] baseline flow-seen reset failed target=%s err=%v", target.Name, err)
+				}
+				res.CurrentCount, _, res.CurrentHosts = applyBlockedFlowSamples(target.Name, nowUTC, samples)
+			}
 		} else {
 			qRes, err = getBlockedCountForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
 		}
@@ -8553,6 +8564,30 @@ func sqliteClearBlockedHost5m() error {
 		return errors.New("sqlite not initialized")
 	}
 	_, err := metricsDB.Exec(`DELETE FROM blocked_hosts_5m`)
+	return err
+}
+
+func sqliteClearBlockedHost5mTarget(target string) error {
+	if metricsDB == nil {
+		return errors.New("sqlite not initialized")
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil
+	}
+	_, err := metricsDB.Exec(`DELETE FROM blocked_hosts_5m WHERE target = ?`, target)
+	return err
+}
+
+func sqliteClearBlockedFlowSeenTarget(target string) error {
+	if metricsDB == nil {
+		return errors.New("sqlite not initialized")
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil
+	}
+	_, err := metricsDB.Exec(`DELETE FROM blocked_flow_seen WHERE target = ?`, target)
 	return err
 }
 
