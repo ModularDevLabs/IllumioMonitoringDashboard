@@ -282,6 +282,7 @@ Optional source exclusions:
 - `label_group`: resolve only as label group
 - `label`: resolve only as label
 - `auto`: try label first, then label group
+- `all`: run environment-wide blocked query with blank source/destination filters (name optional; defaults to `ALL-BLOCKED-TRAFFIC`)
 
 Optional per-target blocked anomaly overrides:
 - `blocked_ma_window`: MA window points for this target only (2-288)
@@ -346,7 +347,7 @@ Click these cards/badges to open detailed lists:
 Use `/settings` to manage traffic/data controls:
 
 1. Add target rows
-2. Choose target `kind` (`auto`, `label_group`, `label`)
+2. Choose target `kind` (`auto`, `label_group`, `label`, `all`)
 3. Save targets (writes `config.json`)
 4. Click **Refresh Now** to apply immediately
 5. Set daily blocked history retention days (saved to `config.json`)

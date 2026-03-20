@@ -52,6 +52,7 @@ const defaultBindAddress = ":18443"
 const defaultPublicBaseURL = "http://localhost:18443"
 const defaultBlockedPortStoreBackend = "sqlite"
 const defaultBlockedRollingDedupeBackend = "sqlite"
+const allBlockedTargetDefaultName = "ALL-BLOCKED-TRAFFIC"
 const stateKeyBlockedDaily = "blocked_daily_records_v1"
 const stateKeyVENDaily = "ven_daily_records_v1"
 const stateKeyRolling = "rolling_state_v1"
@@ -1539,6 +1540,10 @@ func targetKeyForReconcile(t TrafficTarget) string {
 	}
 	kind := strings.ToLower(strings.TrimSpace(t.Kind))
 	return kind + ":" + name
+}
+
+func isAllTrafficTarget(t TrafficTarget) bool {
+	return strings.EqualFold(strings.TrimSpace(t.Kind), "all")
 }
 
 func (m blockedHistoryReconcileMarker) HasTarget(key string) bool {
@@ -5704,18 +5709,21 @@ func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, 
 func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
 	cleaned := make([]TrafficTarget, 0, len(targets))
 	for _, t := range targets {
-		name := strings.TrimSpace(t.Name)
-		if name == "" {
-			continue
-		}
 		kind := strings.ToLower(strings.TrimSpace(t.Kind))
 		switch kind {
-		case "", "auto", "label", "label_group":
+		case "", "auto", "label", "label_group", "all":
 		default:
 			kind = "auto"
 		}
 		if kind == "" {
 			kind = "auto"
+		}
+		name := strings.TrimSpace(t.Name)
+		if kind == "all" && name == "" {
+			name = allBlockedTargetDefaultName
+		}
+		if name == "" {
+			continue
 		}
 		window := 0
 		if t.BlockedMAWindow > 0 {
@@ -5736,6 +5744,9 @@ func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
 }
 
 func getBlockedCountForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, error) {
+	if isAllTrafficTarget(target) {
+		return performAsyncTrafficQueryWindow(baseURL, nil, sourceExcludeHRefs, target.Name+"_all", startUTC, endUTC, false)
+	}
 	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
 	if err != nil {
 		return trafficQueryResult{}, err
@@ -5767,6 +5778,10 @@ func getBlockedCountAndPortCountsForTargetWindow(baseURL string, target TrafficT
 }
 
 func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, []blockedFlowSample, error) {
+	if isAllTrafficTarget(target) {
+		res, ports, samples, err := performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL, nil, sourceExcludeHRefs, target.Name+"_combined_all", startUTC, endUTC, false)
+		return res, ports, samples, err
+	}
 	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
 	if err != nil {
 		return trafficQueryResult{}, nil, nil, err
@@ -5935,6 +5950,9 @@ func collectBlockedTargetsWithPacing(
 }
 
 func getBlockedPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (map[string]int, error) {
+	if isAllTrafficTarget(target) {
+		return performAsyncTrafficQueryWindowPortCounts(baseURL, nil, sourceExcludeHRefs, target.Name+"_ports_all", startUTC, endUTC, false)
+	}
 	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
 	if err != nil {
 		return nil, err
@@ -6221,6 +6239,8 @@ func getBlockedCountTargetLabelHRefs(baseURL string, target TrafficTarget) ([]st
 		kind = "auto"
 	}
 	switch kind {
+	case "all":
+		return nil, nil
 	case "label":
 		href, err := resolveLabelHref(baseURL, target.Name)
 		if err != nil {
@@ -6243,9 +6263,6 @@ func getBlockedCountTargetLabelHRefs(baseURL string, target TrafficTarget) ([]st
 }
 
 func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
-	if len(labelHRefs) == 0 {
-		return trafficQueryResult{}, errors.New("cannot run blocked traffic query with empty label list")
-	}
 	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
 	seen := make(map[string]struct{}, len(labelHRefs))
 	for _, h := range labelHRefs {
@@ -6257,9 +6274,6 @@ func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceE
 		}
 		seen[h] = struct{}{}
 		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
-	}
-	if len(includeList) == 0 {
-		return trafficQueryResult{}, errors.New("resolved labels are empty after normalization")
 	}
 	includeAny := make([]interface{}, 0, len(includeList))
 	for _, item := range includeList {
@@ -6341,9 +6355,6 @@ func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceE
 }
 
 func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
-	if len(labelHRefs) == 0 {
-		return nil, errors.New("cannot run blocked traffic query with empty label list")
-	}
 	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
 	seen := make(map[string]struct{}, len(labelHRefs))
 	for _, h := range labelHRefs {
@@ -6355,9 +6366,6 @@ func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []strin
 		}
 		seen[h] = struct{}{}
 		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
-	}
-	if len(includeList) == 0 {
-		return nil, errors.New("resolved labels are empty after normalization")
 	}
 	includeAny := make([]interface{}, 0, len(includeList))
 	for _, item := range includeList {
@@ -6433,9 +6441,6 @@ func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []st
 }
 
 func performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, []blockedFlowSample, error) {
-	if len(labelHRefs) == 0 {
-		return trafficQueryResult{}, nil, nil, errors.New("cannot run blocked traffic query with empty label list")
-	}
 	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
 	seen := make(map[string]struct{}, len(labelHRefs))
 	for _, h := range labelHRefs {
@@ -6447,9 +6452,6 @@ func performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL string, labelHRe
 		}
 		seen[h] = struct{}{}
 		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
-	}
-	if len(includeList) == 0 {
-		return trafficQueryResult{}, nil, nil, errors.New("resolved labels are empty after normalization")
 	}
 	includeAny := make([]interface{}, 0, len(includeList))
 	for _, item := range includeList {
