@@ -6924,14 +6924,14 @@ func extractFlowSourceHostname(row map[string]interface{}) string {
 		return ""
 	}
 	return firstNonEmptyString(
-		pathString(row, "src", "workload", "name"),
 		pathString(row, "src", "workload", "hostname"),
-		pathString(row, "source", "workload", "name"),
+		pathString(row, "src", "workload", "name"),
 		pathString(row, "source", "workload", "hostname"),
-		pathString(row, "src_workload", "name"),
+		pathString(row, "source", "workload", "name"),
 		pathString(row, "src_workload", "hostname"),
-		pathString(row, "consumer", "workload", "name"),
+		pathString(row, "src_workload", "name"),
 		pathString(row, "consumer", "workload", "hostname"),
+		pathString(row, "consumer", "workload", "name"),
 	)
 }
 
@@ -6940,14 +6940,14 @@ func extractFlowDestinationHostname(row map[string]interface{}) string {
 		return ""
 	}
 	return firstNonEmptyString(
-		pathString(row, "dst", "workload", "name"),
 		pathString(row, "dst", "workload", "hostname"),
-		pathString(row, "destination", "workload", "name"),
+		pathString(row, "dst", "workload", "name"),
 		pathString(row, "destination", "workload", "hostname"),
-		pathString(row, "dst_workload", "name"),
+		pathString(row, "destination", "workload", "name"),
 		pathString(row, "dst_workload", "hostname"),
-		pathString(row, "provider", "workload", "name"),
+		pathString(row, "dst_workload", "name"),
 		pathString(row, "provider", "workload", "hostname"),
+		pathString(row, "provider", "workload", "name"),
 	)
 }
 
