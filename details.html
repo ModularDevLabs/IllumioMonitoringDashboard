@@ -139,6 +139,23 @@
                     </table>
                 </div>
             </div>
+            <div id="blocked-hosts-wrap" class="d-none mb-3">
+                <h6>Blocked Hostnames (Daily Aggregate)</h6>
+                <div class="text-muted small mb-2" id="blocked-hosts-meta"></div>
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Hostname</th>
+                                <th class="text-end">Outbound</th>
+                                <th class="text-end">Inbound</th>
+                                <th class="text-end">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody id="blocked-hosts-body"></tbody>
+                    </table>
+                </div>
+            </div>
             <ul class="list-group" id="items"></ul>
         </div>
     </div>
@@ -160,6 +177,10 @@
         let blockedAnomalySource = '5m';
         let blockedPortDailyEnabled = true;
         let blockedPortsDaily = [];
+        let blockedHostMetricsEnabled = false;
+        let blockedHostRetentionMode = 'rolling_24h_plus_daily';
+        let blockedHostsDaily = [];
+        let blockedHosts24h = [];
         const THEME_KEY = 'illumio_theme';
         let dayRange = 30;
         let nextRefreshAt = null;
@@ -379,6 +400,7 @@
             });
             UICommon.makeChartZoomable(trendChart, title);
             renderBlockedPortsTable();
+            renderBlockedHostsTable();
         }
 
         function renderBlockedPortsTable() {
@@ -430,6 +452,105 @@
             meta.innerText = `All blocked ports across last ${dayRange} day(s), including today-so-far.`;
         }
 
+        function renderBlockedHostsTable() {
+            const wrap = document.getElementById('blocked-hosts-wrap');
+            const body = document.getElementById('blocked-hosts-body');
+            const meta = document.getElementById('blocked-hosts-meta');
+            if (currentMetric !== 'blocked_target') {
+                wrap.classList.add('d-none');
+                return;
+            }
+            wrap.classList.remove('d-none');
+            if (!blockedHostMetricsEnabled) {
+                body.innerHTML = '<tr><td colspan="4" class="text-muted">Blocked hostname metrics are disabled in settings.</td></tr>';
+                meta.innerText = 'Disabled.';
+                return;
+            }
+            if (blockedHostRetentionMode !== 'rolling_24h_plus_daily') {
+                const rows24 = (blockedHosts24h || [])
+                    .map((h) => ({
+                        hostname: String(h.hostname || '').trim(),
+                        inbound: Number(h.inbound || 0),
+                        outbound: Number(h.outbound || 0)
+                    }))
+                    .filter((h) => h.hostname)
+                    .map((h) => ({ ...h, total: h.inbound + h.outbound }))
+                    .sort((a, b) => b.total - a.total || a.hostname.localeCompare(b.hostname));
+                body.innerHTML = '';
+                if (!rows24.length) {
+                    body.innerHTML = '<tr><td colspan="4" class="text-muted">No blocked hostname entries recorded in rolling 24h snapshots.</td></tr>';
+                } else {
+                    rows24.forEach((r) => {
+                        const tr = document.createElement('tr');
+                        const hostTd = document.createElement('td');
+                        hostTd.className = 'mono';
+                        hostTd.innerText = r.hostname;
+                        const outTd = document.createElement('td');
+                        outTd.className = 'text-end';
+                        outTd.innerText = r.outbound.toLocaleString();
+                        const inTd = document.createElement('td');
+                        inTd.className = 'text-end';
+                        inTd.innerText = r.inbound.toLocaleString();
+                        const totalTd = document.createElement('td');
+                        totalTd.className = 'text-end';
+                        totalTd.innerText = r.total.toLocaleString();
+                        tr.appendChild(hostTd);
+                        tr.appendChild(outTd);
+                        tr.appendChild(inTd);
+                        tr.appendChild(totalTd);
+                        body.appendChild(tr);
+                    });
+                }
+                meta.innerText = 'All blocked hostnames across rolling 24h (5m snapshots).';
+                return;
+            }
+            const cutoff = Date.now() - dayRange * 24 * 60 * 60 * 1000;
+            const totals = new Map();
+            (blockedHostsDaily || []).forEach((d) => {
+                const ts = new Date(d.timestamp).getTime();
+                if (!Number.isFinite(ts) || ts < cutoff) return;
+                (d.hosts || []).forEach((h) => {
+                    const host = String(h.hostname || '').trim();
+                    const inbound = Number(h.inbound || 0);
+                    const outbound = Number(h.outbound || 0);
+                    if (!host) return;
+                    const prev = totals.get(host) || { inbound: 0, outbound: 0 };
+                    prev.inbound += Number.isFinite(inbound) && inbound > 0 ? inbound : 0;
+                    prev.outbound += Number.isFinite(outbound) && outbound > 0 ? outbound : 0;
+                    totals.set(host, prev);
+                });
+            });
+            const rows = Array.from(totals.entries())
+                .map(([hostname, c]) => ({ hostname, inbound: c.inbound, outbound: c.outbound, total: c.inbound + c.outbound }))
+                .sort((a, b) => b.total - a.total || a.hostname.localeCompare(b.hostname));
+            body.innerHTML = '';
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="4" class="text-muted">No blocked hostname entries recorded for selected daily range.</td></tr>';
+            } else {
+                rows.forEach((r) => {
+                    const tr = document.createElement('tr');
+                    const hostTd = document.createElement('td');
+                    hostTd.className = 'mono';
+                    hostTd.innerText = r.hostname;
+                    const outTd = document.createElement('td');
+                    outTd.className = 'text-end';
+                    outTd.innerText = r.outbound.toLocaleString();
+                    const inTd = document.createElement('td');
+                    inTd.className = 'text-end';
+                    inTd.innerText = r.inbound.toLocaleString();
+                    const totalTd = document.createElement('td');
+                    totalTd.className = 'text-end';
+                    totalTd.innerText = r.total.toLocaleString();
+                    tr.appendChild(hostTd);
+                    tr.appendChild(outTd);
+                    tr.appendChild(inTd);
+                    tr.appendChild(totalTd);
+                    body.appendChild(tr);
+                });
+            }
+            meta.innerText = `All blocked hostnames across last ${dayRange} day(s), including today-so-far.`;
+        }
+
         function bindTrendControls() {
             document.getElementById('trend-raw').addEventListener('click', () => {
                 trendMode = 'raw';
@@ -451,6 +572,7 @@
                         renderTrend(trendPoints, document.getElementById('title').innerText, { hideList: currentMetric === 'blocked_target', showControls: true });
                     } else {
                         renderBlockedPortsTable();
+                        renderBlockedHostsTable();
                     }
                 });
             });
@@ -494,6 +616,10 @@
                 trendMADaily = d.trend_ma_daily || [];
                 blockedPortDailyEnabled = d.blocked_port_daily_enabled !== false;
                 blockedPortsDaily = d.blocked_ports_daily || [];
+                blockedHostMetricsEnabled = d.blocked_host_metrics_enabled === true;
+                blockedHostRetentionMode = String(d.blocked_host_retention_mode || 'rolling_24h_plus_daily').toLowerCase() === 'rolling_24h_only' ? 'rolling_24h_only' : 'rolling_24h_plus_daily';
+                blockedHostsDaily = d.blocked_hosts_daily || [];
+                blockedHosts24h = d.blocked_hosts_24h || [];
                 blockedMAWindow = Number(d.blocked_ma_window || blockedMAWindow || 12);
                 blockedAnomalyPct = Number(d.blocked_anomaly_pct || blockedAnomalyPct || 50);
                 blockedAnomalySource = String(d.anomaly_source || '5m').toLowerCase() === 'daily' ? 'daily' : '5m';
@@ -510,7 +636,12 @@
             }
             blockedPortsDaily = [];
             blockedPortDailyEnabled = true;
+            blockedHostMetricsEnabled = false;
+            blockedHostRetentionMode = 'rolling_24h_plus_daily';
+            blockedHostsDaily = [];
+            blockedHosts24h = [];
             renderBlockedPortsTable();
+            renderBlockedHostsTable();
             if (d.metric === 'ven_warning' || d.metric === 'ven_error') {
                 document.getElementById('trend-raw').innerText = '24h (5m)';
                 document.getElementById('trend-sum').innerText = 'Daily';

@@ -52,6 +52,7 @@ const defaultBindAddress = ":18443"
 const defaultPublicBaseURL = "http://localhost:18443"
 const defaultBlockedPortStoreBackend = "sqlite"
 const defaultBlockedRollingDedupeBackend = "sqlite"
+const defaultBlockedHostRetentionMode = "rolling_24h_plus_daily"
 const allBlockedTargetDefaultName = "ALL-BLOCKED-TRAFFIC"
 const stateKeyBlockedDaily = "blocked_daily_records_v1"
 const stateKeyVENDaily = "ven_daily_records_v1"
@@ -110,6 +111,8 @@ type Config struct {
 	WebhookTeamsTitlePrefix     string          `json:"webhook_teams_title_prefix,omitempty"`
 	BlockedPortStoreBackend     string          `json:"blocked_port_store_backend,omitempty"`
 	BlockedRollingDedupeBackend string          `json:"blocked_rolling_dedupe_backend,omitempty"`
+	BlockedHostMetricsEnabled   *bool           `json:"blocked_host_metrics_enabled,omitempty"`
+	BlockedHostRetentionMode    string          `json:"blocked_host_retention_mode,omitempty"`
 	DiagnosticsEnabled          bool            `json:"diagnostics_enabled,omitempty"`
 }
 
@@ -207,6 +210,10 @@ type DrilldownResponse struct {
 	BaselineCapturedUTC     *time.Time       `json:"baseline_captured_utc,omitempty"`
 	BlockedPortsDaily       []BlockedPortDay `json:"blocked_ports_daily,omitempty"`
 	BlockedPortDailyEnabled bool             `json:"blocked_port_daily_enabled"`
+	BlockedHostsDaily       []BlockedHostDay `json:"blocked_hosts_daily,omitempty"`
+	BlockedHosts24h         []HostCount      `json:"blocked_hosts_24h,omitempty"`
+	BlockedHostMetrics      bool             `json:"blocked_host_metrics_enabled"`
+	BlockedHostRetention    string           `json:"blocked_host_retention_mode,omitempty"`
 }
 
 type TrendPoint struct {
@@ -227,6 +234,17 @@ type PortCount struct {
 type BlockedPortDay struct {
 	Timestamp time.Time   `json:"timestamp"`
 	Ports     []PortCount `json:"ports,omitempty"`
+}
+
+type HostCount struct {
+	Hostname string `json:"hostname"`
+	Inbound  int    `json:"inbound"`
+	Outbound int    `json:"outbound"`
+}
+
+type BlockedHostDay struct {
+	Timestamp time.Time   `json:"timestamp"`
+	Hosts     []HostCount `json:"hosts,omitempty"`
 }
 
 type rollingBucket struct {
@@ -315,6 +333,19 @@ type dailyBlockedPortRecord struct {
 	Target string `json:"target"`
 	Port   string `json:"port"`
 	Count  int    `json:"count"`
+}
+
+type hostTrafficCount struct {
+	Inbound  int
+	Outbound int
+}
+
+type dailyBlockedHostRecord struct {
+	Day      string `json:"day"`
+	Target   string `json:"target"`
+	Hostname string `json:"hostname"`
+	Inbound  int    `json:"inbound"`
+	Outbound int    `json:"outbound"`
 }
 
 type blockedHistoryReconcileMarker struct {
@@ -419,6 +450,7 @@ type blockedTargetCycleResult struct {
 	RawCount       int
 	CurrentCount   int
 	CurrentPorts   map[string]int
+	CurrentHosts   map[string]hostTrafficCount
 	CurrentSamples []blockedFlowSample
 	BaselineCount  int
 	NewlyBaselined bool
@@ -439,6 +471,7 @@ var (
 	historyMu               sync.Mutex
 	blockedDaily            = map[string]map[string]int{}
 	blockedPortsDaily       = map[string]map[string]map[string]int{}
+	blockedHostsDaily       = map[string]map[string]map[string]hostTrafficCount{}
 	venHistoryMu            sync.Mutex
 	venDaily                = map[string]venDailySnapshot{}
 	alertMu                 sync.Mutex
@@ -481,6 +514,7 @@ func main() {
 	initBlockedPortStore()
 	loadBlockedHistory()
 	loadBlockedPortHistory()
+	loadBlockedHostHistory()
 	loadVENHistory()
 	loadRollingState()
 	loadAlertState()
@@ -737,8 +771,16 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.Trend24h = blockedTrendSeries(target)
 		resp.TrendDaily = blockedDailyTrendSeries(target, configuredHistoryDays())
 		resp.BlockedPortDailyEnabled = configuredBlockedPortDailyEnabled()
+		resp.BlockedHostMetrics = configuredBlockedHostMetricsEnabled()
+		resp.BlockedHostRetention = configuredBlockedHostRetentionMode()
 		if resp.BlockedPortDailyEnabled && includePorts {
 			resp.BlockedPortsDaily = blockedPortDailySeries(target, configuredHistoryDays())
+		}
+		if resp.BlockedHostMetrics && includePorts && resp.BlockedHostRetention == "rolling_24h_plus_daily" {
+			resp.BlockedHostsDaily = blockedHostDailySeries(target, configuredHistoryDays())
+		}
+		if resp.BlockedHostMetrics && includePorts {
+			resp.BlockedHosts24h = blockedHost24hAggregate(target)
 		}
 		if includeLivePorts {
 			log.Printf("[DRILLDOWN] include_live_ports requested for target=%s but live query path is disabled; serving persisted history only", target)
@@ -913,6 +955,8 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		publicBaseURL := configuredPublicBaseURLLocked()
 		blockedPortStoreBackend := configuredBlockedPortStoreBackendLocked()
 		blockedRollingDedupeBackend := configuredBlockedRollingDedupeBackendLocked()
+		blockedHostMetricsEnabled := configuredBlockedHostMetricsEnabledLocked()
+		blockedHostRetentionMode := configuredBlockedHostRetentionModeLocked()
 		diagnosticsEnabled := configuredDiagnosticsEnabledLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := config.WebhookEnabled && webhookURL != ""
@@ -957,6 +1001,8 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"public_base_url":                publicBaseURL,
 			"blocked_port_store_backend":     blockedPortStoreBackend,
 			"blocked_rolling_dedupe_backend": blockedRollingDedupeBackend,
+			"blocked_host_metrics_enabled":   blockedHostMetricsEnabled,
+			"blocked_host_retention_mode":    blockedHostRetentionMode,
 			"diagnostics_enabled":            diagnosticsEnabled,
 			"webhook_url":                    webhookURL,
 			"webhook_enabled":                webhookEnabled,
@@ -994,6 +1040,8 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			PublicBaseURL               *string         `json:"public_base_url"`
 			BlockedPortStoreBackend     *string         `json:"blocked_port_store_backend"`
 			BlockedRollingDedupeBackend *string         `json:"blocked_rolling_dedupe_backend"`
+			BlockedHostMetricsEnabled   *bool           `json:"blocked_host_metrics_enabled"`
+			BlockedHostRetentionMode    *string         `json:"blocked_host_retention_mode"`
 			DiagnosticsEnabled          *bool           `json:"diagnostics_enabled"`
 			WebhookURL                  *string         `json:"webhook_url"`
 			WebhookEnabled              *bool           `json:"webhook_enabled"`
@@ -1091,6 +1139,13 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		if req.BlockedRollingDedupeBackend != nil {
 			config.BlockedRollingDedupeBackend = normalizeBlockedRollingDedupeBackend(*req.BlockedRollingDedupeBackend)
 		}
+		if req.BlockedHostMetricsEnabled != nil {
+			v := *req.BlockedHostMetricsEnabled
+			config.BlockedHostMetricsEnabled = &v
+		}
+		if req.BlockedHostRetentionMode != nil {
+			config.BlockedHostRetentionMode = normalizeBlockedHostRetentionMode(*req.BlockedHostRetentionMode)
+		}
 		if req.DiagnosticsEnabled != nil {
 			config.DiagnosticsEnabled = *req.DiagnosticsEnabled
 		}
@@ -1140,6 +1195,8 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		publicBaseURL := configuredPublicBaseURLLocked()
 		blockedPortStoreBackend := configuredBlockedPortStoreBackendLocked()
 		blockedRollingDedupeBackend := configuredBlockedRollingDedupeBackendLocked()
+		blockedHostMetricsEnabled := configuredBlockedHostMetricsEnabledLocked()
+		blockedHostRetentionMode := configuredBlockedHostRetentionModeLocked()
 		diagnosticsEnabled := configuredDiagnosticsEnabledLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := configuredWebhookEnabledLocked()
@@ -1183,6 +1240,8 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"public_base_url":                publicBaseURL,
 			"blocked_port_store_backend":     blockedPortStoreBackend,
 			"blocked_rolling_dedupe_backend": blockedRollingDedupeBackend,
+			"blocked_host_metrics_enabled":   blockedHostMetricsEnabled,
+			"blocked_host_retention_mode":    blockedHostRetentionMode,
 			"diagnostics_enabled":            diagnosticsEnabled,
 			"webhook_url":                    webhookURL,
 			"webhook_enabled":                webhookEnabled,
@@ -1851,7 +1910,7 @@ func handleDiagnosticsPerf(w http.ResponseWriter, r *http.Request) {
 		}
 		rowCounts := map[string]int64{}
 		if metricsDB != nil {
-			for _, tbl := range []string{"kv_state", "blocked_ports_daily", "blocked_ports_5m"} {
+			for _, tbl := range []string{"kv_state", "blocked_ports_daily", "blocked_ports_5m", "blocked_hosts_daily", "blocked_hosts_5m"} {
 				var n int64
 				if err := metricsDB.QueryRow(`SELECT COUNT(1) FROM ` + tbl).Scan(&n); err == nil {
 					rowCounts[tbl] = n
@@ -3194,6 +3253,66 @@ func blockedPortDailySeries(target string, keepDays int) []BlockedPortDay {
 	return out
 }
 
+func blockedHostDailySeries(target string, keepDays int) []BlockedHostDay {
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	loc := configuredDayLocation()
+	cutoff := localDayStart(time.Now(), loc).AddDate(0, 0, -keepDays)
+	target = strings.TrimSpace(target)
+
+	historyMu.Lock()
+	out := make([]BlockedHostDay, 0, len(blockedHostsDaily))
+	for day, targets := range blockedHostsDaily {
+		d, err := parseDayKeyInLocation(day, loc)
+		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		hostMap := targets[target]
+		if len(hostMap) == 0 {
+			continue
+		}
+		hosts := make([]HostCount, 0, len(hostMap))
+		for host, c := range hostMap {
+			host = strings.TrimSpace(host)
+			if host == "" {
+				continue
+			}
+			if c.Inbound <= 0 && c.Outbound <= 0 {
+				continue
+			}
+			hosts = append(hosts, HostCount{Hostname: host, Inbound: c.Inbound, Outbound: c.Outbound})
+		}
+		sort.Slice(hosts, func(i, j int) bool {
+			ti := hosts[i].Inbound + hosts[i].Outbound
+			tj := hosts[j].Inbound + hosts[j].Outbound
+			if ti == tj {
+				return hosts[i].Hostname < hosts[j].Hostname
+			}
+			return ti > tj
+		})
+		out = append(out, BlockedHostDay{
+			Timestamp: d.Add(12 * time.Hour).UTC(),
+			Hosts:     hosts,
+		})
+	}
+	historyMu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.Before(out[j].Timestamp) })
+	return out
+}
+
+func blockedHost24hAggregate(target string) []HostCount {
+	if !blockedPortStoreIsSQLite() {
+		return nil
+	}
+	out, err := sqliteBlockedHost24hAggregate(target, time.Now().UTC().Add(-24*time.Hour))
+	if err != nil {
+		log.Printf("[HISTORY] blocked host 24h aggregate failed target=%s err=%v", target, err)
+		return nil
+	}
+	return out
+}
+
 func portCountMapToSortedSlice(portMap map[string]int) []PortCount {
 	ports := make([]PortCount, 0, len(portMap))
 	for key, count := range portMap {
@@ -3821,7 +3940,7 @@ func getIllumioStats() DashboardStats {
 	}
 	blockedDeltaStart := blockedDeltaWindowStart(nowUTC)
 	portDailyEnabled := configuredBlockedPortDailyEnabled()
-	blockedResults, blockedCurrent, blockedCurrentPorts, blockedBaseline, successCount, pacedWarnings := collectBlockedTargetsWithPacing(
+	blockedResults, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, blockedBaseline, successCount, pacedWarnings := collectBlockedTargetsWithPacing(
 		baseURL,
 		targets,
 		nowUTC,
@@ -3942,7 +4061,7 @@ func getIllumioStats() DashboardStats {
 	} else {
 		stats.Blocked.Status = FetchStatus{Success: true}
 	}
-	accumulateBlockedHistoryFromCycle(nowUTC, blockedCurrent, blockedCurrentPorts, portDailyEnabled)
+	accumulateBlockedHistoryFromCycle(nowUTC, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, portDailyEnabled, configuredBlockedHostMetricsEnabled(), configuredBlockedHostRetentionMode())
 	reconcilePreviousDayBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
 
 	return stats
@@ -4725,6 +4844,29 @@ func configuredBlockedPortStoreBackendLocked() string {
 	return normalizeBlockedPortStoreBackend(config.BlockedPortStoreBackend)
 }
 
+func configuredBlockedHostMetricsEnabled() bool {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredBlockedHostMetricsEnabledLocked()
+}
+
+func configuredBlockedHostMetricsEnabledLocked() bool {
+	if config.BlockedHostMetricsEnabled == nil {
+		return false
+	}
+	return *config.BlockedHostMetricsEnabled
+}
+
+func configuredBlockedHostRetentionMode() string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredBlockedHostRetentionModeLocked()
+}
+
+func configuredBlockedHostRetentionModeLocked() string {
+	return normalizeBlockedHostRetentionMode(config.BlockedHostRetentionMode)
+}
+
 func configuredBlockedRollingDedupeBackend() string {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
@@ -5073,6 +5215,17 @@ func normalizeBlockedRollingDedupeBackend(raw string) string {
 	}
 }
 
+func normalizeBlockedHostRetentionMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "rolling_24h_only":
+		return "rolling_24h_only"
+	case "rolling_24h_plus_daily":
+		return "rolling_24h_plus_daily"
+	default:
+		return defaultBlockedHostRetentionMode
+	}
+}
+
 func normalizeBindAddress(raw string) string {
 	s := strings.TrimSpace(raw)
 	if s == "" {
@@ -5257,8 +5410,8 @@ func normalizeCoveragePct(raw float64, fallback float64) float64 {
 	return v
 }
 
-func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[string]int, blockedPorts map[string]map[string]int, portDailyEnabled bool) {
-	if len(blockedCounts) == 0 && (!portDailyEnabled || len(blockedPorts) == 0) {
+func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[string]int, blockedPorts map[string]map[string]int, blockedHosts map[string]map[string]hostTrafficCount, portDailyEnabled bool, hostMetricsEnabled bool, hostRetentionMode string) {
+	if len(blockedCounts) == 0 && (!portDailyEnabled || len(blockedPorts) == 0) && (!hostMetricsEnabled || len(blockedHosts) == 0) {
 		pruneBlockedHistory(nowUTC, configuredHistoryDays())
 		return
 	}
@@ -5267,10 +5420,17 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 			log.Printf("[STORE] failed persisting blocked 5m port snapshot: %v", err)
 		}
 	}
+	if blockedPortStoreIsSQLite() && hostMetricsEnabled && len(blockedHosts) > 0 {
+		if err := sqliteInsertBlockedHost5m(nowUTC, blockedHosts); err != nil {
+			log.Printf("[STORE] failed persisting blocked 5m host snapshot: %v", err)
+		}
+	}
 	loc := configuredDayLocation()
 	dayKey := localDayStart(nowUTC, loc).Format("2006-01-02")
 	changedCounts := false
 	changedPorts := false
+	changedHosts := false
+	saveDailyHosts := hostMetricsEnabled && hostRetentionMode == "rolling_24h_plus_daily"
 	historyMu.Lock()
 	if len(blockedCounts) > 0 {
 		if blockedDaily[dayKey] == nil {
@@ -5304,6 +5464,33 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 			}
 		}
 	}
+	if saveDailyHosts && len(blockedHosts) > 0 {
+		if blockedHostsDaily[dayKey] == nil {
+			blockedHostsDaily[dayKey] = map[string]map[string]hostTrafficCount{}
+		}
+		for target, hostMap := range blockedHosts {
+			if strings.TrimSpace(target) == "" || len(hostMap) == 0 {
+				continue
+			}
+			if blockedHostsDaily[dayKey][target] == nil {
+				blockedHostsDaily[dayKey][target] = map[string]hostTrafficCount{}
+			}
+			for host, c := range hostMap {
+				host = strings.TrimSpace(host)
+				if host == "" {
+					continue
+				}
+				if c.Inbound <= 0 && c.Outbound <= 0 {
+					continue
+				}
+				prev := blockedHostsDaily[dayKey][target][host]
+				prev.Inbound += c.Inbound
+				prev.Outbound += c.Outbound
+				blockedHostsDaily[dayKey][target][host] = prev
+				changedHosts = true
+			}
+		}
+	}
 	historyMu.Unlock()
 	pruneBlockedHistory(nowUTC, configuredHistoryDays())
 	if changedCounts {
@@ -5311,6 +5498,9 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 	}
 	if changedPorts {
 		saveBlockedPortHistory()
+	}
+	if changedHosts {
+		saveBlockedHostHistory()
 	}
 }
 
@@ -5775,26 +5965,26 @@ func getBlockedCountForTargetWindow(baseURL string, target TrafficTarget, startU
 }
 
 func getBlockedCountAndPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, error) {
-	res, ports, _, err := getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, startUTC, endUTC, sourceExcludeHRefs)
+	res, ports, _, _, err := getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, startUTC, endUTC, sourceExcludeHRefs)
 	return res, ports, err
 }
 
-func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, []blockedFlowSample, error) {
+func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
 	if isAllTrafficTarget(target) {
-		res, ports, samples, err := performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL, nil, sourceExcludeHRefs, target.Name+"_combined_all", startUTC, endUTC, false)
-		return res, ports, samples, err
+		res, ports, hosts, samples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL, nil, sourceExcludeHRefs, target.Name+"_combined_all", startUTC, endUTC, false)
+		return res, ports, hosts, samples, err
 	}
 	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
 	if err != nil {
-		return trafficQueryResult{}, nil, nil, err
+		return trafficQueryResult{}, nil, nil, nil, err
 	}
-	srcRes, srcPorts, srcSamples, err := performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_src", startUTC, endUTC, true)
+	srcRes, srcPorts, srcHosts, srcSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_src", startUTC, endUTC, true)
 	if err != nil {
-		return trafficQueryResult{}, nil, nil, err
+		return trafficQueryResult{}, nil, nil, nil, err
 	}
-	dstRes, dstPorts, dstSamples, err := performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_dst", startUTC, endUTC, false)
+	dstRes, dstPorts, dstHosts, dstSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_dst", startUTC, endUTC, false)
 	if err != nil {
-		return trafficQueryResult{}, nil, nil, err
+		return trafficQueryResult{}, nil, nil, nil, err
 	}
 	combined := trafficQueryResult{
 		Count:     srcRes.Count + dstRes.Count,
@@ -5814,10 +6004,11 @@ func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, targ
 			ports[k] += v
 		}
 	}
+	hosts := mergeHostTrafficCounts(srcHosts, dstHosts)
 	samples := make([]blockedFlowSample, 0, len(srcSamples)+len(dstSamples))
 	samples = append(samples, srcSamples...)
 	samples = append(samples, dstSamples...)
-	return combined, ports, samples, nil
+	return combined, ports, hosts, samples, nil
 }
 
 func collectBlockedTargetPaced(
@@ -5850,9 +6041,11 @@ func collectBlockedTargetPaced(
 			log.Printf("[BLOCKED] delta query target=%s window=%s..%s include_ports=%t", target.Name, blockedDeltaStart.UTC().Format(time.RFC3339), nowUTC.UTC().Format(time.RFC3339), portDailyEnabled)
 		}
 		var portCounts map[string]int
+		var hostCounts map[string]hostTrafficCount
 		var samples []blockedFlowSample
-		qRes, portCounts, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+		qRes, portCounts, hostCounts, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
 		res.CurrentPorts = portCounts
+		res.CurrentHosts = hostCounts
 		res.CurrentSamples = samples
 		res.RawCount = qRes.Count
 		res.CurrentCount, _ = applyBlockedFlowSamples(target.Name, nowUTC, samples)
@@ -5889,9 +6082,9 @@ func collectBlockedTargetsWithPacing(
 	portDailyEnabled bool,
 	blockedDeltaStart time.Time,
 	sourceExcludeHRefs []string,
-) ([]BlockedTargetResult, map[string]int, map[string]map[string]int, map[string]int, int, []string) {
+) ([]BlockedTargetResult, map[string]int, map[string]map[string]int, map[string]map[string]hostTrafficCount, map[string]int, int, []string) {
 	if len(targets) == 0 {
-		return nil, map[string]int{}, map[string]map[string]int{}, map[string]int{}, 0, nil
+		return nil, map[string]int{}, map[string]map[string]int{}, map[string]map[string]hostTrafficCount{}, map[string]int{}, 0, nil
 	}
 	workers := blockedTargetWorkerCount
 	if workers < 1 {
@@ -5926,6 +6119,7 @@ func collectBlockedTargetsWithPacing(
 	ordered := make([]BlockedTargetResult, len(targets))
 	blockedCurrent := make(map[string]int, len(targets))
 	blockedCurrentPorts := make(map[string]map[string]int, len(targets))
+	blockedCurrentHosts := make(map[string]map[string]hostTrafficCount, len(targets))
 	blockedBaseline := make(map[string]int)
 	warningParts := make([]string, 0)
 	successCount := 0
@@ -5946,9 +6140,12 @@ func collectBlockedTargetsWithPacing(
 			if len(r.CurrentPorts) > 0 {
 				blockedCurrentPorts[r.Result.Name] = r.CurrentPorts
 			}
+			if len(r.CurrentHosts) > 0 {
+				blockedCurrentHosts[r.Result.Name] = r.CurrentHosts
+			}
 		}
 	}
-	return ordered, blockedCurrent, blockedCurrentPorts, blockedBaseline, successCount, warningParts
+	return ordered, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, blockedBaseline, successCount, warningParts
 }
 
 func getBlockedPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (map[string]int, error) {
@@ -6438,11 +6635,11 @@ func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []strin
 }
 
 func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, error) {
-	res, ports, _, err := performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
+	res, ports, _, _, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
 	return res, ports, err
 }
 
-func performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, []blockedFlowSample, error) {
+func performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
 	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
 	seen := make(map[string]struct{}, len(labelHRefs))
 	for _, h := range labelHRefs {
@@ -6495,24 +6692,24 @@ func performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL string, labelHRe
 	}
 	var job map[string]interface{}
 	if err := apiCall(baseURL+"/traffic_flows/async_queries", "POST", payload, &job); err != nil {
-		return trafficQueryResult{}, nil, nil, err
+		return trafficQueryResult{}, nil, nil, nil, err
 	}
 	jobHref, _ := job["href"].(string)
 	if jobHref == "" {
-		return trafficQueryResult{}, nil, nil, errors.New("async query did not return job href")
+		return trafficQueryResult{}, nil, nil, nil, errors.New("async query did not return job href")
 	}
 	jobURL := resolveHrefToURL(jobHref)
 	for i := 0; i < 60; i++ {
 		var status map[string]interface{}
 		if err := apiCall(jobURL, "GET", nil, &status); err != nil {
-			return trafficQueryResult{}, nil, nil, err
+			return trafficQueryResult{}, nil, nil, nil, err
 		}
 		s, _ := status["status"].(string)
 		switch s {
 		case "completed":
 			rows, err := getAsyncQueryResultRows(jobURL)
 			if err != nil {
-				return trafficQueryResult{}, nil, nil, err
+				return trafficQueryResult{}, nil, nil, nil, err
 			}
 			count, ok := extractResultCount(status)
 			if !ok {
@@ -6533,13 +6730,14 @@ func performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL string, labelHRe
 				res.Warning = fmt.Sprintf("result may be truncated at max_results=%d", trafficQueryMaxResults)
 			}
 			samples := extractBlockedFlowSamples(rows, queryName, endUTC)
-			return res, aggregatePortCounts(rows), samples, nil
+			hosts := aggregateHostCounts(rows, asSource, len(labelHRefs) == 0)
+			return res, aggregatePortCounts(rows), hosts, samples, nil
 		case "failed":
-			return trafficQueryResult{}, nil, nil, fmt.Errorf("async job failed: %s", statusMessage(status))
+			return trafficQueryResult{}, nil, nil, nil, fmt.Errorf("async job failed: %s", statusMessage(status))
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return trafficQueryResult{}, nil, nil, fmt.Errorf("async job timed out")
+	return trafficQueryResult{}, nil, nil, nil, fmt.Errorf("async job timed out")
 }
 
 func getAsyncQueryResultRows(jobURL string) ([]map[string]interface{}, error) {
@@ -6601,6 +6799,103 @@ func aggregatePortCounts(rows []map[string]interface{}) map[string]int {
 		out[key] += n
 	}
 	return out
+}
+
+func aggregateHostCounts(rows []map[string]interface{}, asSource bool, allScope bool) map[string]hostTrafficCount {
+	out := make(map[string]hostTrafficCount)
+	for _, row := range rows {
+		n := intFromAny(row["num_connections"])
+		if n <= 0 {
+			n = 1
+		}
+		if allScope {
+			src := extractFlowSourceHostname(row)
+			if src != "" {
+				cur := out[src]
+				cur.Outbound += n
+				out[src] = cur
+			}
+			dst := extractFlowDestinationHostname(row)
+			if dst != "" {
+				cur := out[dst]
+				cur.Inbound += n
+				out[dst] = cur
+			}
+			continue
+		}
+		if asSource {
+			src := extractFlowSourceHostname(row)
+			if src == "" {
+				continue
+			}
+			cur := out[src]
+			cur.Outbound += n
+			out[src] = cur
+		} else {
+			dst := extractFlowDestinationHostname(row)
+			if dst == "" {
+				continue
+			}
+			cur := out[dst]
+			cur.Inbound += n
+			out[dst] = cur
+		}
+	}
+	return out
+}
+
+func mergeHostTrafficCounts(a, b map[string]hostTrafficCount) map[string]hostTrafficCount {
+	out := make(map[string]hostTrafficCount, len(a)+len(b))
+	for host, c := range a {
+		out[host] = c
+	}
+	for host, c := range b {
+		prev := out[host]
+		prev.Inbound += c.Inbound
+		prev.Outbound += c.Outbound
+		out[host] = prev
+	}
+	return out
+}
+
+func extractFlowSourceHostname(row map[string]interface{}) string {
+	return firstNonEmptyString(
+		pathString(row, "src", "workload", "name"),
+		pathString(row, "src", "workload", "hostname"),
+		pathString(row, "source", "workload", "name"),
+		pathString(row, "source", "workload", "hostname"),
+		pathString(row, "src_workload", "name"),
+		pathString(row, "src_workload", "hostname"),
+		pathString(row, "consumer", "workload", "name"),
+		pathString(row, "consumer", "workload", "hostname"),
+		pathString(row, "consumer", "name"),
+		pathString(row, "consumer", "hostname"),
+		pathString(row, "src", "fqdn"),
+		pathString(row, "src_fqdn"),
+		pathString(row, "source_ip"),
+		pathString(row, "src_ip"),
+		pathString(row, "src", "ip"),
+	)
+}
+
+func extractFlowDestinationHostname(row map[string]interface{}) string {
+	return firstNonEmptyString(
+		pathString(row, "dst", "workload", "name"),
+		pathString(row, "dst", "workload", "hostname"),
+		pathString(row, "destination", "workload", "name"),
+		pathString(row, "destination", "workload", "hostname"),
+		pathString(row, "dst_workload", "name"),
+		pathString(row, "dst_workload", "hostname"),
+		pathString(row, "provider", "workload", "name"),
+		pathString(row, "provider", "workload", "hostname"),
+		pathString(row, "provider", "name"),
+		pathString(row, "provider", "hostname"),
+		pathString(row, "dst", "fqdn"),
+		pathString(row, "dst_fqdn"),
+		pathString(row, "destination_ip"),
+		pathString(row, "dst_ip"),
+		pathString(row, "dst", "ip"),
+	)
 }
 
 func extractBlockedFlowSamples(rows []map[string]interface{}, leg string, fallbackUTC time.Time) []blockedFlowSample {
@@ -7234,6 +7529,7 @@ func loadConfigFile() (Config, time.Time, bool) {
 	cfg.PublicBaseURL = normalizePublicBaseURL(cfg.PublicBaseURL)
 	cfg.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(cfg.BlockedPortStoreBackend)
 	cfg.BlockedRollingDedupeBackend = normalizeBlockedRollingDedupeBackend(cfg.BlockedRollingDedupeBackend)
+	cfg.BlockedHostRetentionMode = normalizeBlockedHostRetentionMode(cfg.BlockedHostRetentionMode)
 	cfg.HistoryDays = normalizeHistoryDays(cfg.HistoryDays)
 	cfg.TrafficTargets = sanitizeTargets(cfg.TrafficTargets)
 	cfg.SourceExclusions = sanitizeTargets(cfg.SourceExclusions)
@@ -7424,6 +7720,24 @@ func initBlockedPortStore() {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_blocked_ports_5m_target_ts ON blocked_ports_5m(target, ts_unix);`,
 		`CREATE INDEX IF NOT EXISTS idx_blocked_ports_5m_ts ON blocked_ports_5m(ts_unix);`,
+		`CREATE TABLE IF NOT EXISTS blocked_hosts_daily (
+			day TEXT NOT NULL,
+			target TEXT NOT NULL,
+			hostname TEXT NOT NULL,
+			inbound_count INTEGER NOT NULL,
+			outbound_count INTEGER NOT NULL,
+			PRIMARY KEY(day, target, hostname)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_blocked_hosts_daily_target_day ON blocked_hosts_daily(target, day);`,
+		`CREATE TABLE IF NOT EXISTS blocked_hosts_5m (
+			ts_unix INTEGER NOT NULL,
+			target TEXT NOT NULL,
+			hostname TEXT NOT NULL,
+			inbound_count INTEGER NOT NULL,
+			outbound_count INTEGER NOT NULL,
+			PRIMARY KEY(ts_unix, target, hostname)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_blocked_hosts_5m_target_ts ON blocked_hosts_5m(target, ts_unix);`,
 		`CREATE TABLE IF NOT EXISTS blocked_flow_seen (
 			target TEXT NOT NULL,
 			signature TEXT NOT NULL,
@@ -7824,6 +8138,144 @@ func sqliteInsertBlockedPort5m(tsUTC time.Time, blockedPorts map[string]map[stri
 	return tx.Commit()
 }
 
+func sqliteInsertBlockedHost5m(tsUTC time.Time, blockedHosts map[string]map[string]hostTrafficCount) error {
+	if metricsDB == nil || len(blockedHosts) == 0 {
+		return nil
+	}
+	bucketUnix := tsUTC.UTC().Unix()
+	tx, err := metricsDB.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO blocked_hosts_5m(ts_unix, target, hostname, inbound_count, outbound_count) VALUES(?,?,?,?,?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for target, hostMap := range blockedHosts {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		for host, c := range hostMap {
+			host = strings.TrimSpace(host)
+			if host == "" {
+				continue
+			}
+			if c.Inbound <= 0 && c.Outbound <= 0 {
+				continue
+			}
+			if _, err := stmt.Exec(bucketUnix, target, host, c.Inbound, c.Outbound); err != nil {
+				_ = stmt.Close()
+				_ = tx.Rollback()
+				return err
+			}
+		}
+	}
+	_ = stmt.Close()
+	if _, err := tx.Exec(`DELETE FROM blocked_hosts_5m WHERE ts_unix < ?`, tsUTC.UTC().Add(-24*time.Hour).Unix()); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func sqliteReplaceBlockedHostDaily(records []dailyBlockedHostRecord) error {
+	if metricsDB == nil {
+		return errors.New("sqlite not initialized")
+	}
+	tx, err := metricsDB.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM blocked_hosts_daily`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO blocked_hosts_daily(day, target, hostname, inbound_count, outbound_count) VALUES(?,?,?,?,?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for _, rec := range records {
+		if _, err := stmt.Exec(rec.Day, rec.Target, rec.Hostname, rec.Inbound, rec.Outbound); err != nil {
+			_ = stmt.Close()
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	_ = stmt.Close()
+	return tx.Commit()
+}
+
+func sqliteLoadBlockedHostDaily() ([]dailyBlockedHostRecord, error) {
+	if metricsDB == nil {
+		return nil, errors.New("sqlite not initialized")
+	}
+	rows, err := metricsDB.Query(`SELECT day, target, hostname, inbound_count, outbound_count FROM blocked_hosts_daily ORDER BY day, target, hostname`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]dailyBlockedHostRecord, 0, 1024)
+	for rows.Next() {
+		var rec dailyBlockedHostRecord
+		if err := rows.Scan(&rec.Day, &rec.Target, &rec.Hostname, &rec.Inbound, &rec.Outbound); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func sqliteBlockedHost24hAggregate(target string, sinceUTC time.Time) ([]HostCount, error) {
+	if metricsDB == nil {
+		return nil, errors.New("sqlite not initialized")
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, nil
+	}
+	sinceUnix := sinceUTC.UTC().Unix()
+	rows, err := metricsDB.Query(`
+		SELECT hostname, COALESCE(SUM(inbound_count), 0), COALESCE(SUM(outbound_count), 0)
+		FROM blocked_hosts_5m
+		WHERE target = ? AND ts_unix >= ?
+		GROUP BY hostname
+	`, target, sinceUnix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]HostCount, 0, 1024)
+	for rows.Next() {
+		var host HostCount
+		if err := rows.Scan(&host.Hostname, &host.Inbound, &host.Outbound); err != nil {
+			return nil, err
+		}
+		host.Hostname = strings.TrimSpace(host.Hostname)
+		if host.Hostname == "" {
+			continue
+		}
+		if host.Inbound <= 0 && host.Outbound <= 0 {
+			continue
+		}
+		out = append(out, host)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ti := out[i].Inbound + out[i].Outbound
+		tj := out[j].Inbound + out[j].Outbound
+		if ti == tj {
+			return out[i].Hostname < out[j].Hostname
+		}
+		return ti > tj
+	})
+	return out, nil
+}
+
 func loadBlockedHistory() {
 	historyMu.Lock()
 	defer historyMu.Unlock()
@@ -7900,6 +8352,42 @@ func loadBlockedPortHistory() {
 			blockedPortsDaily[day][target] = map[string]int{}
 		}
 		blockedPortsDaily[day][target][port] = rec.Count
+	}
+}
+
+func loadBlockedHostHistory() {
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	blockedHostsDaily = map[string]map[string]map[string]hostTrafficCount{}
+
+	var records []dailyBlockedHostRecord
+	if blockedPortStoreIsSQLite() {
+		loaded, err := sqliteLoadBlockedHostDaily()
+		if err != nil {
+			log.Printf("[HISTORY] failed loading blocked host history from sqlite: %v", err)
+			return
+		}
+		records = loaded
+	} else {
+		return
+	}
+	for _, rec := range records {
+		day := strings.TrimSpace(rec.Day)
+		target := strings.TrimSpace(rec.Target)
+		host := strings.TrimSpace(rec.Hostname)
+		if day == "" || target == "" || host == "" {
+			continue
+		}
+		if blockedHostsDaily[day] == nil {
+			blockedHostsDaily[day] = map[string]map[string]hostTrafficCount{}
+		}
+		if blockedHostsDaily[day][target] == nil {
+			blockedHostsDaily[day][target] = map[string]hostTrafficCount{}
+		}
+		blockedHostsDaily[day][target][host] = hostTrafficCount{
+			Inbound:  rec.Inbound,
+			Outbound: rec.Outbound,
+		}
 	}
 }
 
@@ -8339,10 +8827,18 @@ func pruneBlockedHistory(nowUTC time.Time, keepDays int) {
 			changed = true
 		}
 	}
+	for day := range blockedHostsDaily {
+		parsed, err := parseDayKeyInLocation(day, loc)
+		if err != nil || parsed.Before(cutoff) {
+			delete(blockedHostsDaily, day)
+			changed = true
+		}
+	}
 	historyMu.Unlock()
 	if changed {
 		saveBlockedHistory()
 		saveBlockedPortHistory()
+		saveBlockedHostHistory()
 	}
 }
 
@@ -8413,6 +8909,46 @@ func saveBlockedPortHistory() {
 	}
 	if err := writeJSONFileAtomic(dataFilePath(blockedPortHistoryFileName), records); err != nil {
 		log.Printf("[HISTORY] failed to save blocked port history: %v", err)
+	}
+}
+
+func saveBlockedHostHistory() {
+	historyMu.Lock()
+	records := make([]dailyBlockedHostRecord, 0)
+	for day, targets := range blockedHostsDaily {
+		for target, hosts := range targets {
+			for host, c := range hosts {
+				if strings.TrimSpace(day) == "" || strings.TrimSpace(target) == "" || strings.TrimSpace(host) == "" {
+					continue
+				}
+				if c.Inbound <= 0 && c.Outbound <= 0 {
+					continue
+				}
+				records = append(records, dailyBlockedHostRecord{
+					Day:      day,
+					Target:   target,
+					Hostname: host,
+					Inbound:  c.Inbound,
+					Outbound: c.Outbound,
+				})
+			}
+		}
+	}
+	historyMu.Unlock()
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Day == records[j].Day {
+			if records[i].Target == records[j].Target {
+				return records[i].Hostname < records[j].Hostname
+			}
+			return records[i].Target < records[j].Target
+		}
+		return records[i].Day < records[j].Day
+	})
+	if blockedPortStoreIsSQLite() {
+		if err := sqliteReplaceBlockedHostDaily(records); err != nil {
+			log.Printf("[HISTORY] failed to save blocked host history (sqlite): %v", err)
+		}
+		return
 	}
 }
 
