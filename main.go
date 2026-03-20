@@ -6859,6 +6859,9 @@ func mergeHostTrafficCounts(a, b map[string]hostTrafficCount) map[string]hostTra
 }
 
 func extractFlowSourceHostname(row map[string]interface{}) string {
+	if !flowSourceHasWorkload(row) {
+		return ""
+	}
 	return firstNonEmptyString(
 		pathString(row, "src", "workload", "name"),
 		pathString(row, "src", "workload", "hostname"),
@@ -6868,17 +6871,13 @@ func extractFlowSourceHostname(row map[string]interface{}) string {
 		pathString(row, "src_workload", "hostname"),
 		pathString(row, "consumer", "workload", "name"),
 		pathString(row, "consumer", "workload", "hostname"),
-		pathString(row, "consumer", "name"),
-		pathString(row, "consumer", "hostname"),
-		pathString(row, "src", "fqdn"),
-		pathString(row, "src_fqdn"),
-		pathString(row, "source_ip"),
-		pathString(row, "src_ip"),
-		pathString(row, "src", "ip"),
 	)
 }
 
 func extractFlowDestinationHostname(row map[string]interface{}) string {
+	if !flowDestinationHasWorkload(row) {
+		return ""
+	}
 	return firstNonEmptyString(
 		pathString(row, "dst", "workload", "name"),
 		pathString(row, "dst", "workload", "hostname"),
@@ -6888,14 +6887,25 @@ func extractFlowDestinationHostname(row map[string]interface{}) string {
 		pathString(row, "dst_workload", "hostname"),
 		pathString(row, "provider", "workload", "name"),
 		pathString(row, "provider", "workload", "hostname"),
-		pathString(row, "provider", "name"),
-		pathString(row, "provider", "hostname"),
-		pathString(row, "dst", "fqdn"),
-		pathString(row, "dst_fqdn"),
-		pathString(row, "destination_ip"),
-		pathString(row, "dst_ip"),
-		pathString(row, "dst", "ip"),
 	)
+}
+
+func flowSourceHasWorkload(row map[string]interface{}) bool {
+	return firstNonEmptyString(
+		pathString(row, "src", "workload", "href"),
+		pathString(row, "source", "workload", "href"),
+		pathString(row, "src_workload", "href"),
+		pathString(row, "consumer", "workload", "href"),
+	) != ""
+}
+
+func flowDestinationHasWorkload(row map[string]interface{}) bool {
+	return firstNonEmptyString(
+		pathString(row, "dst", "workload", "href"),
+		pathString(row, "destination", "workload", "href"),
+		pathString(row, "dst_workload", "href"),
+		pathString(row, "provider", "workload", "href"),
+	) != ""
 }
 
 func extractBlockedFlowSamples(rows []map[string]interface{}, leg string, fallbackUTC time.Time) []blockedFlowSample {
