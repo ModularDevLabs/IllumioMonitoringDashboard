@@ -322,6 +322,7 @@ type blockedFlowSample struct {
 	LastDetectedUTC time.Time
 	SourceHost      string
 	DestinationHost string
+	Connections     int
 }
 
 type dailyBlockedRecord struct {
@@ -4341,16 +4342,20 @@ func accumulateHostCountFromSample(out map[string]hostTrafficCount, sample block
 	if out == nil {
 		return
 	}
+	n := sample.Connections
+	if n <= 0 {
+		n = 1
+	}
 	src := strings.TrimSpace(sample.SourceHost)
 	if src != "" {
 		cur := out[src]
-		cur.Outbound++
+		cur.Outbound += n
 		out[src] = cur
 	}
 	dst := strings.TrimSpace(sample.DestinationHost)
 	if dst != "" {
 		cur := out[dst]
-		cur.Inbound++
+		cur.Inbound += n
 		out[dst] = cur
 	}
 }
@@ -7005,9 +7010,18 @@ func extractBlockedFlowSamples(rows []map[string]interface{}, leg string, fallba
 			LastDetectedUTC: blockedFlowLastDetectedUTC(row, fallbackUTC),
 			SourceHost:      extractFlowSourceHostname(row),
 			DestinationHost: extractFlowDestinationHostname(row),
+			Connections:     blockedFlowConnections(row),
 		})
 	}
 	return out
+}
+
+func blockedFlowConnections(row map[string]interface{}) int {
+	n := intFromAny(row["num_connections"])
+	if n <= 0 {
+		n = 1
+	}
+	return n
 }
 
 func blockedFlowSignature(row map[string]interface{}, leg string) string {
