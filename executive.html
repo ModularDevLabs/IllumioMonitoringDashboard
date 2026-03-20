@@ -29,29 +29,16 @@
             color: var(--text);
             font-family: "Segoe UI", Tahoma, Arial, sans-serif;
         }
-        .dashboard-shell { width: min(98vw, 1920px); margin: 0 auto; padding: 0 16px; }
-        .topbar { background: var(--illumio-orange); color: #fff; padding: 14px 0; margin-bottom: 16px; }
-        .topbar-title { margin: 0; font-size: 1.1rem; font-weight: 700; }
-        .topbar-version {
-            display: inline-block;
-            margin-left: 8px;
-            padding: 2px 7px;
-            border-radius: 999px;
-            background: rgba(255,255,255,0.22);
-            font-size: 0.72rem;
-            letter-spacing: 0.02em;
-            vertical-align: middle;
-        }
         .wrap { width: min(98vw, 1920px); margin: 0 auto; padding: 16px; }
         .head {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-left: 5px solid var(--illumio-orange);
-            border-radius: 10px;
-            padding: 12px;
-            margin-bottom: 12px;
+            background: var(--illumio-orange);
+            color: #fff;
+            border: none;
+            border-radius: 0 0 15px 15px;
+            padding: 18px 20px 16px;
+            margin-bottom: 16px;
         }
-        .head h1 { margin: 0; font-size: 1.5rem; }
+        .head h1 { margin: 0; font-size: clamp(1.35rem, 1.9vw, 1.75rem); font-weight: 750; }
         .muted { color: var(--muted); font-size: 0.88rem; }
         .actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
         .period-controls { display: inline-flex; gap: 6px; align-items: center; }
@@ -66,6 +53,7 @@
         }
         .btn.primary { background: var(--illumio-orange); color: #fff; border-color: var(--illumio-orange); }
         .btn.active { outline: 2px solid var(--illumio-orange); outline-offset: 0; }
+        .head .muted { color: rgba(255,255,255,0.9); }
         .panel {
             background: var(--surface);
             border: 1px solid var(--border);
@@ -146,20 +134,11 @@
     </style>
 </head>
 <body>
-<div class="topbar">
-    <div class="dashboard-shell d-flex justify-content-between align-items-center gap-2 flex-wrap">
-        <div class="topbar-title">Illumio Monitoring Dashboard <span class="topbar-version">{{.VersionLabel}}</span></div>
-        <div class="d-flex gap-2">
-            <a class="btn" href="/">Dashboard</a>
-            <a class="btn" href="/settings">Settings</a>
-            <a class="btn" href="/trends">Trend View</a>
-        </div>
-    </div>
-</div>
 <div class="wrap">
     <div class="head">
         <h1 id="page-title">Illumio Monitoring Dashboard</h1>
         <div class="muted" id="meta">Loading...</div>
+        <div class="muted">Version: {{.VersionLabel}}</div>
         <div class="actions">
             <button id="btn-theme" type="button" class="btn">Dark Mode</button>
             <button id="btn-refresh" type="button" class="btn primary">Refresh</button>

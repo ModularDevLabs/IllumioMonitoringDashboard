@@ -37,18 +37,6 @@
             margin: 0 auto;
             padding: 0 16px;
         }
-        .topbar { background: var(--illumio-orange); color: #fff; padding: 14px 0; }
-        .topbar-title { margin: 0; font-size: 1.1rem; font-weight: 700; }
-        .topbar-version {
-            display: inline-block;
-            margin-left: 8px;
-            padding: 2px 7px;
-            border-radius: 999px;
-            background: rgba(255,255,255,0.22);
-            font-size: 0.72rem;
-            letter-spacing: 0.02em;
-            vertical-align: middle;
-        }
         .header {
             background: var(--illumio-orange);
             color: white;
@@ -278,22 +266,13 @@
     </style>
 </head>
 <body id="body">
-    <div class="topbar">
-        <div class="dashboard-shell d-flex justify-content-between align-items-center gap-2 flex-wrap">
-            <div class="topbar-title">Illumio Monitoring Dashboard <span class="topbar-version">{{.VersionLabel}}</span></div>
-            <div class="d-flex gap-2">
-                <a class="btn btn-light btn-sm" href="/">Dashboard</a>
-                <a class="btn btn-light btn-sm" href="/settings">Settings</a>
-                <a class="btn btn-light btn-sm" href="/trends">Trend View</a>
-            </div>
-        </div>
-    </div>
     <div class="header text-center">
         <h1>Illumio Monitoring Dashboard</h1>
         <div id="status-bar" class="mt-2">
             <span id="ts">Loading...</span>
             <span id="collection-badge" class="badge bg-light text-dark ms-2 collection-badge">INITIALIZING</span>
             <span id="refresh-meta" class="status-meta"></span>
+            <span class="status-meta ms-2">version: {{.VersionLabel}}</span>
             <span class="status-actions ms-2">
                 <button class="btn btn-light btn-sm" id="btn-theme" type="button">Dark Mode</button>
                 <a class="btn btn-light btn-sm" href="/settings">Settings</a>
