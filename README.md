@@ -28,7 +28,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Tampering trend charts include moving-average overlays and anomaly detection (24h/5m series)
 - Blocked traffic analytics:
   - Configurable targets (labels and/or label groups)
-  - Configurable source exclusions (default `LG-SCANNERS`)
+- Configurable source exclusions (can be empty)
   - Async traffic flow query support
   - Pacing/staggering of per-target blocked queries to reduce burst pressure on API rate limits
   - 5-minute blocked queries can reuse shared async results for both count and port/proto aggregation
@@ -245,7 +245,7 @@ Runtime state is stored in a shared data directory:
 | `tampering_anomaly_min_coverage_pct` | Tampering minimum daily baseline coverage before anomaly checks | blocked min coverage fallback | Range `1..100` |
 | `tampering_daily_anomaly_pct` | Tampering threshold when baseline=`daily` | tampering anomaly fallback | Range `1..10000` |
 | `traffic_targets[]` | Blocked traffic targets | built-in defaults | Each item has `name`, `kind`, optional per-target MA/anomaly overrides |
-| `traffic_source_exclusions[]` | Source exclusions for blocked queries | `LG-SCANNERS` (auto) | Each item has `name`, `kind` |
+| `traffic_source_exclusions[]` | Source exclusions for blocked queries | empty | Each item has `name`, `kind`; field can be cleared to disable exclusions |
 | `webhook_enabled` | Enable webhook alert sends | `false` | Requires valid `webhook_url` |
 | `webhook_url` | Webhook endpoint | empty | Used for alert transitions + test webhook |
 | `webhook_provider` | Payload format | `generic` | `generic`, `slack`, `teams` |
@@ -269,7 +269,7 @@ Runtime state is stored in a shared data directory:
 }
 ```
 
-Optional source exclusions:
+Optional source exclusions (leave empty to disable exclusions):
 
 ```json
 {
@@ -398,7 +398,7 @@ Use `/settings` to manage webhook alerting:
   - for `metric=blocked_target` response (when enabled/configured):
     - `blocked_host_metrics_enabled`
     - `blocked_host_retention_mode`
-    - `blocked_hosts_24h`: rolling 24h hostname aggregates (inbound/outbound)
+    - `blocked_hosts_24h`: rolling 24h hostname aggregates (inbound/outbound); if snapshots are empty on first run, drilldown performs a live 24h fallback query
     - `blocked_hosts_daily`: daily hostname snapshots (when retention mode includes daily)
 - `GET /api/export/drilldown.csv?metric=<metric>[&target=<target>]`:
   - Export drilldown list + trend points (`24h (5m)` and `Daily` when available) to CSV
