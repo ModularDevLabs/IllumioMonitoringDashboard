@@ -31,14 +31,28 @@
         .header {
             background: var(--illumio-orange);
             color: #fff;
-            padding: 18px 20px 16px;
+            padding: 22px 20px 18px;
             border-radius: 0 0 15px 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             margin-bottom: 16px;
         }
         .header h1 {
-            font-size: clamp(1.35rem, 1.9vw, 1.75rem);
+            font-size: clamp(1.45rem, 2.1vw, 1.9rem);
             font-weight: 750;
             margin: 0;
+        }
+        .version-badge {
+            position: fixed;
+            right: 12px;
+            bottom: 10px;
+            z-index: 1200;
+            background: rgba(17, 17, 17, 0.82);
+            color: #fff;
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+            border: 1px solid rgba(255,255,255,0.25);
         }
         .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; }
         .text-muted { color: var(--muted) !important; }
@@ -128,10 +142,9 @@
     <div class="header text-center">
         <h1>Illumio Monitoring Dashboard</h1>
         <div class="mt-2 d-flex justify-content-center gap-2 flex-wrap align-items-center">
-            <span class="small">version: {{.VersionLabel}}</span>
-                <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
-                <a href="/trends" class="btn btn-light btn-sm">Trend View</a>
-                <a href="/" class="btn btn-light btn-sm">Back to Dashboard</a>
+            <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
+            <a href="/trends" class="btn btn-light btn-sm">Trend View</a>
+            <a href="/" class="btn btn-light btn-sm">Back to Dashboard</a>
         </div>
     </div>
 
@@ -1037,5 +1050,6 @@
             showMsg('msg-credentials', e.message, 'danger');
         });
     </script>
+    <div class="version-badge">v."{{.VersionLabel}}"</div>
 </body>
 </html>

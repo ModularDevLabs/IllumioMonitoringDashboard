@@ -29,18 +29,24 @@
             line-height: 1.45;
             letter-spacing: 0.01em;
         }
+        .dashboard-shell {
+            width: min(98vw, 1920px);
+            margin: 0 auto;
+            padding: 0 16px;
+        }
         .wrap { width: min(98vw, 1920px); margin: 0 auto; padding: 16px; }
         .header {
             background: var(--illumio-orange);
             color: #fff;
             border: none;
             border-radius: 0 0 15px 15px;
-            padding: 18px 20px 16px;
+            padding: 22px 20px 18px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             margin-bottom: 16px;
         }
         .header h1 {
             margin: 0;
-            font-size: clamp(1.35rem, 1.9vw, 1.75rem);
+            font-size: clamp(1.45rem, 2.1vw, 1.9rem);
             font-weight: 750;
         }
         .meta { margin-top: 8px; color: rgba(255,255,255,0.9); font-size: 0.88rem; }
@@ -62,6 +68,19 @@
         }
         .btn.primary { background: var(--illumio-orange); color: #fff; border-color: var(--illumio-orange); }
         body[data-theme="dark"] .btn { background: #646d78; border-color: #aeb8c4; color: #fff; }
+        .version-badge {
+            position: fixed;
+            right: 12px;
+            bottom: 10px;
+            z-index: 1200;
+            background: rgba(17, 17, 17, 0.82);
+            color: #fff;
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+            border: 1px solid rgba(255,255,255,0.25);
+        }
         .panel {
             background: var(--panel-bg);
             border: 1px solid var(--border);
@@ -131,39 +150,37 @@
     </style>
 </head>
 <body>
-<div class="wrap">
-    <div class="header">
-        <h1>Illumio Monitoring Dashboard</h1>
-        <div class="meta" id="meta">Loading...</div>
-        <div class="meta">Version: {{.VersionLabel}}</div>
-        <div class="actions">
-            <button class="btn" id="btn-theme">Dark Mode</button>
-            <button class="btn primary" id="btn-print">Print / Save as PDF</button>
-            <button class="btn" id="btn-refresh-live">Refresh</button>
-            <span class="control-group">
-                <span class="control-label">View</span>
-                <span class="mode-controls" id="mode-controls">
-                    <button class="btn" id="mode-both">Show: All</button>
-                    <button class="btn" id="mode-24h">24h (5m) Only</button>
-                    <button class="btn" id="mode-daily">Daily Only</button>
-                </span>
+<div class="header text-center">
+    <h1>Illumio Monitoring Dashboard</h1>
+    <div class="meta" id="meta">Loading...</div>
+    <div class="actions d-flex justify-content-center flex-wrap align-items-center">
+        <button class="btn" id="btn-theme">Dark Mode</button>
+        <button class="btn primary" id="btn-print">Print / Save as PDF</button>
+        <button class="btn" id="btn-refresh-live">Refresh</button>
+        <span class="control-group">
+            <span class="control-label">View</span>
+            <span class="mode-controls" id="mode-controls">
+                <button class="btn" id="mode-both">Show: All</button>
+                <button class="btn" id="mode-24h">24h (5m) Only</button>
+                <button class="btn" id="mode-daily">Daily Only</button>
             </span>
-            <span class="control-group">
-                <span class="control-label">Chart Length</span>
-                <span class="range-controls" id="range-controls">
-                    <button class="btn" id="range-7">7d</button>
-                    <button class="btn" id="range-30">30d</button>
-                    <button class="btn" id="range-90">90d</button>
-                    <button class="btn" id="range-180">180d</button>
-                    <button class="btn" id="range-365">365d</button>
-                </span>
+        </span>
+        <span class="control-group">
+            <span class="control-label">Chart Length</span>
+            <span class="range-controls" id="range-controls">
+                <button class="btn" id="range-7">7d</button>
+                <button class="btn" id="range-30">30d</button>
+                <button class="btn" id="range-90">90d</button>
+                <button class="btn" id="range-180">180d</button>
+                <button class="btn" id="range-365">365d</button>
             </span>
-            <a class="btn" href="/api/export/report.csv">Download CSV (Excel)</a>
-            <a class="btn" href="/">Back to Dashboard</a>
-            <span class="refresh-note d-none" id="next-refresh">Next refresh in --</span>
-        </div>
+        </span>
+        <a class="btn" href="/api/export/report.csv">Download CSV (Excel)</a>
+        <a class="btn" href="/">Back to Dashboard</a>
+        <span class="refresh-note d-none" id="next-refresh">Next refresh in --</span>
     </div>
-
+</div>
+<div class="wrap">
     <div class="panel">
         <h2>Summary</h2>
         <div class="summary-grid" id="summary"></div>
@@ -190,6 +207,7 @@
         </details>
     </div>
 </div>
+<div class="version-badge">v."{{.VersionLabel}}"</div>
 
 <script src="/static/ui-common.js"></script>
 <script>

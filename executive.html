@@ -29,16 +29,22 @@
             color: var(--text);
             font-family: "Segoe UI", Tahoma, Arial, sans-serif;
         }
+        .dashboard-shell {
+            width: min(98vw, 1920px);
+            margin: 0 auto;
+            padding: 0 16px;
+        }
         .wrap { width: min(98vw, 1920px); margin: 0 auto; padding: 16px; }
-        .head {
+        .header {
             background: var(--illumio-orange);
             color: #fff;
             border: none;
             border-radius: 0 0 15px 15px;
-            padding: 18px 20px 16px;
+            padding: 22px 20px 18px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             margin-bottom: 16px;
         }
-        .head h1 { margin: 0; font-size: clamp(1.35rem, 1.9vw, 1.75rem); font-weight: 750; }
+        .header h1 { margin: 0; font-size: clamp(1.45rem, 2.1vw, 1.9rem); font-weight: 750; }
         .muted { color: var(--muted); font-size: 0.88rem; }
         .actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
         .period-controls { display: inline-flex; gap: 6px; align-items: center; }
@@ -53,7 +59,20 @@
         }
         .btn.primary { background: var(--illumio-orange); color: #fff; border-color: var(--illumio-orange); }
         .btn.active { outline: 2px solid var(--illumio-orange); outline-offset: 0; }
-        .head .muted { color: rgba(255,255,255,0.9); }
+        .header .muted { color: rgba(255,255,255,0.9); }
+        .version-badge {
+            position: fixed;
+            right: 12px;
+            bottom: 10px;
+            z-index: 1200;
+            background: rgba(17, 17, 17, 0.82);
+            color: #fff;
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+            border: 1px solid rgba(255,255,255,0.25);
+        }
         .panel {
             background: var(--surface);
             border: 1px solid var(--border);
@@ -128,32 +147,30 @@
             body { background: #fff; color: #111; font-size: 12px; }
             .wrap { max-width: none; padding: 0; }
             .actions { display: none !important; }
-            .panel, .head, .kpi, .board-col { box-shadow: none; break-inside: avoid; page-break-inside: avoid; }
+            .panel, .header, .kpi, .board-col { box-shadow: none; break-inside: avoid; page-break-inside: avoid; }
             .chart-wrap { height: 180px; }
         }
     </style>
 </head>
 <body>
-<div class="wrap">
-    <div class="head">
-        <h1 id="page-title">Illumio Monitoring Dashboard</h1>
-        <div class="muted" id="meta">Loading...</div>
-        <div class="muted">Version: {{.VersionLabel}}</div>
-        <div class="actions">
-            <button id="btn-theme" type="button" class="btn">Dark Mode</button>
-            <button id="btn-refresh" type="button" class="btn primary">Refresh</button>
-            <span class="period-controls">
-                <span class="muted">Period</span>
-                <button id="period-7" type="button" class="btn">7d</button>
-                <button id="period-30" type="button" class="btn">30d</button>
-                <button id="period-90" type="button" class="btn">90d</button>
-            </span>
-            <a class="btn" id="btn-board" href="/executive?board=1">Board PDF View</a>
-            <a class="btn" href="/report?live=1">Trend View</a>
-            <a class="btn" href="/">Back to Dashboard</a>
-        </div>
+<div class="header text-center">
+    <h1>Illumio Monitoring Dashboard</h1>
+    <div class="muted" id="meta">Loading...</div>
+    <div class="actions d-flex justify-content-center flex-wrap align-items-center">
+        <button id="btn-theme" type="button" class="btn">Dark Mode</button>
+        <button id="btn-refresh" type="button" class="btn primary">Refresh</button>
+        <span class="period-controls">
+            <span class="muted">Period</span>
+            <button id="period-7" type="button" class="btn">7d</button>
+            <button id="period-30" type="button" class="btn">30d</button>
+            <button id="period-90" type="button" class="btn">90d</button>
+        </span>
+        <a class="btn" id="btn-board" href="/executive?board=1">Board PDF View</a>
+        <a class="btn" href="/report?live=1">Trend View</a>
+        <a class="btn" href="/">Back to Dashboard</a>
     </div>
-
+</div>
+<div class="wrap">
     <div class="panel board-only" id="board-panel">
         <h2>Board Snapshot</h2>
         <div class="muted">One-page summary: protection value, risk signals, and immediate actions.</div>
@@ -228,6 +245,7 @@
         </div>
     </div>
 </div>
+<div class="version-badge">v."{{.VersionLabel}}"</div>
 
 <script src="/static/ui-common.js"></script>
 <script>

@@ -520,12 +520,12 @@ var (
 )
 
 func dashboardVersionLabel() string {
-	if v := strings.TrimSpace(buildVersion); v != "" && v != "dev" {
+	if v := strings.TrimSpace(buildVersion); v != "" {
 		return v
 	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		return "dev"
+		return "unversioned"
 	}
 	var rev string
 	modified := false
@@ -539,7 +539,7 @@ func dashboardVersionLabel() string {
 	}
 	rev = strings.TrimSpace(rev)
 	if rev == "" {
-		return "dev"
+		return "unversioned"
 	}
 	if len(rev) > 12 {
 		rev = rev[:12]
