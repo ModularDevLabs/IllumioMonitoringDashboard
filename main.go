@@ -3373,16 +3373,11 @@ func hostTrafficCountMapToSortedSlice(hostMap map[string]hostTrafficCount) []Hos
 }
 
 func blockedHost24hLiveFallback(baseURL string, target TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) ([]HostCount, error) {
-	_, _, _, samples, err := getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+	_, _, hosts, _, err := getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
 	if err != nil {
 		return nil, err
 	}
-	latest := latestBlockedFlowSamplesBySignature(samples, nowUTC, nowUTC.Add(-24*time.Hour))
-	hostCounts := make(map[string]hostTrafficCount, len(latest))
-	for _, sample := range latest {
-		accumulateHostCountFromSample(hostCounts, sample)
-	}
-	return hostTrafficCountMapToSortedSlice(hostCounts), nil
+	return hostTrafficCountMapToSortedSlice(hosts), nil
 }
 
 func portCountMapToSortedSlice(portMap map[string]int) []PortCount {
@@ -6140,12 +6135,14 @@ func collectBlockedTargetPaced(
 			log.Printf("[BLOCKED] delta query target=%s window=%s..%s include_ports=%t", target.Name, blockedDeltaStart.UTC().Format(time.RFC3339), nowUTC.UTC().Format(time.RFC3339), portDailyEnabled)
 		}
 		var portCounts map[string]int
+		var hostCounts map[string]hostTrafficCount
 		var samples []blockedFlowSample
-		qRes, portCounts, _, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+		qRes, portCounts, hostCounts, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
 		res.CurrentPorts = portCounts
+		res.CurrentHosts = hostCounts
 		res.CurrentSamples = samples
 		res.RawCount = qRes.Count
-		res.CurrentCount, _, res.CurrentHosts = applyBlockedFlowSamples(target.Name, nowUTC, samples)
+		res.CurrentCount, _, _ = applyBlockedFlowSamples(target.Name, nowUTC, samples)
 	}
 	res.Result.Count = qRes.Count
 	res.WarningMessage = strings.TrimSpace(qRes.Warning)
