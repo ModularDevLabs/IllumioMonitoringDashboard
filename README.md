@@ -225,6 +225,8 @@ Runtime state is stored in a shared data directory:
 | `blocked_port_daily_enabled` | Enable daily blocked `port/proto` aggregation | `true` | Controls blocked target drilldown blocked-ports table and daily port history collection |
 | `blocked_port_store_backend` | History/state backend | `sqlite` | `sqlite` or `json`; when `sqlite`, persisted history/state is stored in `metrics.db` |
 | `blocked_rolling_dedupe_backend` | 24h blocked 5m rolling dedupe backend | `sqlite` | `sqlite` (recommended) or `memory`; controls unique-flow dedupe state used by 24h blocked rolling charts |
+| `blocked_host_metrics_enabled` | Enable blocked hostname inbound/outbound aggregation | `false` | When enabled, stores per-host blocked counts for blocked target drilldown tables |
+| `blocked_host_retention_mode` | Hostname retention mode | `rolling_24h_plus_daily` | `rolling_24h_only` keeps only 24h 5m snapshots; `rolling_24h_plus_daily` also persists daily host rollups |
 | `diagnostics_enabled` | Enable diagnostics endpoint | `false` | When `true`, enables `GET /api/diagnostics/perf` for troubleshooting |
 | `blocked_ma_window` | Global 5m moving-average window points | `12` | Range `2..288` |
 | `blocked_anomaly_pct` | Global blocked anomaly threshold percent | `50` | Range `1..10000` |
@@ -324,10 +326,14 @@ Click these cards/badges to open detailed lists:
     - `24h (5m)` recent trend
     - `Daily` retained trend (bounded by `history_days`)
   - Blocked target drilldowns include `24h (5m)` and `Daily` trend toggle
-  - Blocked target drilldowns include `Blocked Ports (Daily Aggregate)` table:
+- Blocked target drilldowns include `Blocked Ports (Daily Aggregate)` table:
     - all observed blocked `port/proto` values (not top-only)
     - totals are summed from flow `num_connections`
     - aggregation follows selected daily range (`7d/30d/90d/180d/365d`)
+  - Blocked target drilldowns include `Blocked Hostnames` table (when enabled):
+    - shows `hostname`, `outbound`, `inbound`, `total`
+    - `rolling_24h_only`: table uses rolling 24h 5m snapshots
+    - `rolling_24h_plus_daily`: table uses retained daily host rollups by selected day range
 
 ### Trend View / Report
 
@@ -388,6 +394,11 @@ Use `/settings` to manage webhook alerting:
   - for `metric=blocked_target`, optional flags:
     - `include_ports=1`: include persisted daily blocked port/proto aggregates
     - `include_live_ports=1`: accepted for compatibility; ignored (drilldown uses persisted history only)
+  - for `metric=blocked_target` response (when enabled/configured):
+    - `blocked_host_metrics_enabled`
+    - `blocked_host_retention_mode`
+    - `blocked_hosts_24h`: rolling 24h hostname aggregates (inbound/outbound)
+    - `blocked_hosts_daily`: daily hostname snapshots (when retention mode includes daily)
 - `GET /api/export/drilldown.csv?metric=<metric>[&target=<target>]`:
   - Export drilldown list + trend points (`24h (5m)` and `Daily` when available) to CSV
 - `GET /api/config/targets`:
@@ -399,7 +410,7 @@ Use `/settings` to manage webhook alerting:
   - Current `bind_address` and `public_base_url`
 - `PUT /api/config/targets`:
   - Save traffic/data settings
-  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
+  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "blocked_host_metrics_enabled": false, "blocked_host_retention_mode": "rolling_24h_plus_daily", "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
 - `POST /api/refresh`:
   - Trigger immediate collection cycle
 - `POST /api/reconcile/blocked-history`:
@@ -512,7 +523,7 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
     - `alert_state.json`
     - `anomaly_history.jsonl`
   - SQLite backend file:
-    - `metrics.db` (rolling state, blocked/VEN daily history, blocked port daily + 5m snapshots, alert state, anomaly history)
+    - `metrics.db` (rolling state, blocked/VEN daily history, blocked port daily + 5m snapshots, blocked host daily + 5m snapshots, alert state, anomaly history)
   - On startup, legacy local state files are auto-migrated into the shared data directory if destination files are absent.
   - Retention is pruned based on `history_days`.
   - Blocked-history reconcile behavior:

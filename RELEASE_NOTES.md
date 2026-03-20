@@ -1,5 +1,30 @@
 # Release Notes
 
+## v1.2.5-branch (feature/experiments-2026-03-19)
+
+Experimental feature branch updates (not merged to stable main):
+
+### Blocked Target Scope
+- Added `traffic_targets[].kind = "all"` support:
+  - runs environment-wide blocked query with blank source/destination filters
+  - target name is optional; defaults to `ALL-BLOCKED-TRAFFIC`
+
+### Blocked Tile Warmup Consistency
+- Warmup current view now shows `baseline + incremental` so tiles no longer show `0` while recent warmup increment is non-zero.
+
+### Blocked Hostname Metrics (Configurable)
+- Added optional per-host blocked flow aggregation (inbound/outbound counts):
+  - `blocked_host_metrics_enabled`
+  - `blocked_host_retention_mode`:
+    - `rolling_24h_only`
+    - `rolling_24h_plus_daily`
+- Added SQLite storage for hostname metrics:
+  - `blocked_hosts_5m` (rolling 24h snapshots)
+  - `blocked_hosts_daily` (daily retained snapshots when configured)
+- Added blocked target drilldown hostname table:
+  - columns: `hostname`, `outbound`, `inbound`, `total`
+  - uses rolling 24h or daily rollups based on retention mode
+
 ## v1.2.4 - 2026-03-18
 
 Stable release focused on tampering-data correctness, reconciliation reliability, and operator controls.
