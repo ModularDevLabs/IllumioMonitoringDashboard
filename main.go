@@ -60,6 +60,7 @@ const stateKeyVENDaily = "ven_daily_records_v1"
 const stateKeyRolling = "rolling_state_v1"
 const stateKeyAlert = "alert_state_v1"
 const stateKeyAnomalyHistory = "anomaly_history_v1"
+const stateKeyPolicyRulesetDaily = "policy_ruleset_daily_v1"
 const stateKeyBlockedHistoryReconcile = "blocked_history_reconcile_v1"
 const blockedHistoryReconcileFileName = "blocked_history_reconcile.json"
 const stateKeyTamperingHistoryReconcile = "tampering_history_reconcile_v1"
@@ -199,6 +200,7 @@ type DrilldownResponse struct {
 	Title                   string           `json:"title"`
 	Count                   int              `json:"count"`
 	Items                   []string         `json:"items"`
+	ItemTargets             []string         `json:"item_targets,omitempty"`
 	Trend                   []TrendPoint     `json:"trend,omitempty"`
 	Trend24h                []TrendPoint     `json:"trend_24h,omitempty"`
 	TrendDaily              []TrendPoint     `json:"trend_daily,omitempty"`
@@ -371,6 +373,12 @@ type dailyBlockedHostRecord struct {
 	Outbound int    `json:"outbound"`
 }
 
+type dailyPolicyRulesetRecord struct {
+	Day      string `json:"day"`
+	Ruleset  string `json:"ruleset"`
+	RuleCount int   `json:"rule_count"`
+}
+
 type blockedHistoryReconcileMarker struct {
 	SchemaVersion     int               `json:"schema_version"`
 	CompletedByTarget map[string]string `json:"completed_by_target,omitempty"`
@@ -501,6 +509,7 @@ var (
 	blockedDaily             = map[string]map[string]int{}
 	blockedPortsDaily        = map[string]map[string]map[string]int{}
 	blockedHostsDaily        = map[string]map[string]map[string]hostTrafficCount{}
+	policyRulesetDaily       = map[string]map[string]int{}
 	venHistoryMu             sync.Mutex
 	venDaily                 = map[string]venDailySnapshot{}
 	alertMu                  sync.Mutex
@@ -583,6 +592,7 @@ func main() {
 	loadBlockedPortHistory()
 	loadBlockedHostHistory()
 	loadVENHistory()
+	loadPolicyRulesetHistory()
 	loadRollingState()
 	loadAlertState()
 	loadAnomalyHistory()
@@ -730,9 +740,23 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown metric", http.StatusBadRequest)
 		return
 	}
-	sort.Strings(items)
+	if metric != "policy_rulesets" {
+		sort.Strings(items)
+	}
 
 	resp := DrilldownResponse{Metric: metric, Target: target, Title: title, Count: len(items), Items: items, Trend: trend}
+	if metric == "policy_rulesets" {
+		_, targets := policyRulesetSummaryItems(time.Now().UTC())
+		resp.ItemTargets = targets
+		resp.Trend24h = nil
+		resp.TrendDaily = rulesetsDailyTrendSeries(configuredHistoryDays())
+		resp.Trend = resp.TrendDaily
+	}
+	if metric == "policy_ruleset" {
+		resp.Trend24h = nil
+		resp.TrendDaily = policyRulesetDailyTrendSeries(target, configuredHistoryDays())
+		resp.Trend = resp.TrendDaily
+	}
 	if metric == "ven_warning" {
 		window := configuredVENMAWindow()
 		dailyWindow := configuredDailyMAWindow()
@@ -958,6 +982,8 @@ func handleExportDrilldownCSV(w http.ResponseWriter, r *http.Request) {
 		trendDaily = rulesetsDailyTrendSeries(configuredHistoryDays())
 	} else if metric == "policy_rules" {
 		trendDaily = rulesDailyTrendSeries(configuredHistoryDays())
+	} else if metric == "policy_ruleset" {
+		trendDaily = policyRulesetDailyTrendSeries(target, configuredHistoryDays())
 	} else {
 		trend24h = trend
 	}
@@ -2766,9 +2792,16 @@ func drilldownData(metric, target string, stats DashboardStats) (string, []strin
 	case "tampering":
 		return "Tampered VENs/Workloads (Deduped)", append([]string(nil), stats.Tampering.Workloads...), tamperingTrendSeries()
 	case "policy_rulesets":
-		return "Policy Rulesets (Daily)", nil, rulesetsDailyTrendSeries(configuredHistoryDays())
+		items, _ := policyRulesetSummaryItems(time.Now().UTC())
+		return "Policy Rulesets (Daily)", items, rulesetsDailyTrendSeries(configuredHistoryDays())
 	case "policy_rules":
 		return "Policy Rules (Daily)", nil, rulesDailyTrendSeries(configuredHistoryDays())
+	case "policy_ruleset":
+		name := strings.TrimSpace(target)
+		if name == "" {
+			return "", nil, nil
+		}
+		return fmt.Sprintf("Policy Ruleset Trend - %s", name), nil, policyRulesetDailyTrendSeries(name, configuredHistoryDays())
 	case "blocked_target":
 		target = strings.TrimSpace(target)
 		if target == "" {
@@ -3272,6 +3305,70 @@ func rulesDailyTrendSeries(keepDays int) []TrendPoint {
 	return points
 }
 
+func policyRulesetDailyTrendSeries(ruleset string, keepDays int) []TrendPoint {
+	ruleset = strings.TrimSpace(ruleset)
+	if ruleset == "" {
+		return nil
+	}
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	loc := configuredDayLocation()
+	cutoff := localDayStart(time.Now(), loc).AddDate(0, 0, -keepDays)
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	points := make([]TrendPoint, 0, len(policyRulesetDaily))
+	for day, byRuleset := range policyRulesetDaily {
+		d, err := parseDayKeyInLocation(day, loc)
+		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		v, ok := byRuleset[ruleset]
+		if !ok {
+			continue
+		}
+		points = append(points, TrendPoint{
+			Timestamp: d.Add(12 * time.Hour).UTC(),
+			Value:     v,
+		})
+	}
+	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
+	return points
+}
+
+func policyRulesetSummaryItems(nowUTC time.Time) ([]string, []string) {
+	loc := configuredDayLocation()
+	dayKey := nowUTC.In(loc).Format("2006-01-02")
+	historyMu.Lock()
+	dayMap := policyRulesetDaily[dayKey]
+	historyMu.Unlock()
+	type row struct {
+		name  string
+		count int
+	}
+	rows := make([]row, 0, len(dayMap))
+	for name, count := range dayMap {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		rows = append(rows, row{name: name, count: count})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].count == rows[j].count {
+			return strings.ToLower(rows[i].name) < strings.ToLower(rows[j].name)
+		}
+		return rows[i].count > rows[j].count
+	})
+	items := make([]string, 0, len(rows))
+	targets := make([]string, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, fmt.Sprintf("%s | total rules: %d", r.name, r.count))
+		targets = append(targets, r.name)
+	}
+	return items, targets
+}
+
 func policyDailySnapshot(nowUTC time.Time) (rulesets int, rules int, exists bool) {
 	loc := configuredDayLocation()
 	dayKey := nowUTC.In(loc).Format("2006-01-02")
@@ -3281,26 +3378,59 @@ func policyDailySnapshot(nowUTC time.Time) (rulesets int, rules int, exists bool
 	return snap.RulesetsMax, snap.RulesMax, ok
 }
 
-func updatePolicyDailyHistory(nowUTC time.Time, rulesets int, rules int) {
+func policyRulesetDailyExists(nowUTC time.Time) bool {
 	loc := configuredDayLocation()
 	dayKey := nowUTC.In(loc).Format("2006-01-02")
-	save := false
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	byRuleset, ok := policyRulesetDaily[dayKey]
+	return ok && len(byRuleset) > 0
+}
+
+func updatePolicyDailyHistory(nowUTC time.Time, rulesets int, rules int, rulesetCounts map[string]int) {
+	loc := configuredDayLocation()
+	dayKey := nowUTC.In(loc).Format("2006-01-02")
+	saveVEN := false
+	saveRulesets := false
 	venHistoryMu.Lock()
 	snap := venDaily[dayKey]
-	if rulesets > snap.RulesetsMax {
+	if snap.RulesetsMax != rulesets {
 		snap.RulesetsMax = rulesets
-		save = true
+		saveVEN = true
 	}
-	if rules > snap.RulesMax {
+	if snap.RulesMax != rules {
 		snap.RulesMax = rules
-		save = true
+		saveVEN = true
 	}
-	if save {
+	if saveVEN {
 		venDaily[dayKey] = snap
 	}
 	venHistoryMu.Unlock()
-	if save {
+	historyMu.Lock()
+	if policyRulesetDaily[dayKey] == nil {
+		policyRulesetDaily[dayKey] = map[string]int{}
+	}
+	dayMap := map[string]int{}
+	for name, count := range rulesetCounts {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if count < 0 {
+			count = 0
+		}
+		dayMap[name] = count
+	}
+	if !intMapEqual(policyRulesetDaily[dayKey], dayMap) {
+		policyRulesetDaily[dayKey] = dayMap
+		saveRulesets = true
+	}
+	historyMu.Unlock()
+	if saveVEN {
 		saveVENHistory()
+	}
+	if saveRulesets {
+		savePolicyRulesetHistory()
 	}
 }
 
@@ -3908,27 +4038,121 @@ func getAllVENsWithFilters(baseURL string, extraFilters map[string]string) ([]ma
 	return all, nil
 }
 
-func getPolicyCounts(baseURL string) (int, int, error) {
-	rulesets, rsErr := countCollectionWithFallback(baseURL, []string{
+func getPolicySnapshot(baseURL string) (int, int, map[string]int, error) {
+	rulesetsRaw, rsErr := fetchCollectionWithFallback(baseURL, []string{
 		"/sec_policy/active/rule_sets",
 		"/sec_policy/draft/rule_sets",
 		"/rule_sets",
 	})
-	rules, rErr := countCollectionWithFallback(baseURL, []string{
-		"/sec_policy/active/rules",
-		"/sec_policy/draft/rules",
-		"/rules",
-	})
-	if rsErr != nil && rErr != nil {
-		return 0, 0, fmt.Errorf("rulesets: %v | rules: %v", rsErr, rErr)
+	rulesetCounts := map[string]int{}
+	totalRulesFromRulesets := 0
+	for _, row := range rulesetsRaw {
+		name := firstNonEmpty(mapString(row, "name"), mapString(row, "href"), mapString(row, "id"))
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		count := rulesetRuleCount(row)
+		rulesetCounts[name] = count
+		totalRulesFromRulesets += count
+	}
+	rulesetsCount := len(rulesetCounts)
+	rulesTotal := totalRulesFromRulesets
+	if rulesTotal == 0 {
+		if n, err := countCollectionWithFallback(baseURL, []string{
+			"/sec_policy/active/rules",
+			"/sec_policy/draft/rules",
+			"/rules",
+		}); err == nil {
+			rulesTotal = n
+		}
 	}
 	if rsErr != nil {
-		return rulesets, rules, fmt.Errorf("rulesets: %v", rsErr)
+		return rulesetsCount, rulesTotal, rulesetCounts, rsErr
 	}
-	if rErr != nil {
-		return rulesets, rules, fmt.Errorf("rules: %v", rErr)
+	return rulesetsCount, rulesTotal, rulesetCounts, nil
+}
+
+func rulesetRuleCount(row map[string]interface{}) int {
+	for _, key := range []string{"rules_count", "num_rules", "rule_count", "rules_total"} {
+		if v, ok := row[key]; ok {
+			if n := intFromAny(v); n >= 0 {
+				return n
+			}
+		}
 	}
-	return rulesets, rules, nil
+	if arr, ok := row["rules"].([]interface{}); ok {
+		return len(arr)
+	}
+	if arr, ok := row["sec_rules"].([]interface{}); ok {
+		return len(arr)
+	}
+	return 0
+}
+
+func fetchCollectionWithFallback(baseURL string, paths []string) ([]map[string]interface{}, error) {
+	var lastErr error
+	for _, p := range paths {
+		items, err := fetchCollectionEndpoint(baseURL + p)
+		if err == nil {
+			return items, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no candidate endpoints configured")
+	}
+	return nil, lastErr
+}
+
+func fetchCollectionEndpoint(endpoint string) ([]map[string]interface{}, error) {
+	const pageSize = 500
+	const maxPages = 500
+	out := make([]map[string]interface{}, 0, pageSize)
+	seen := make(map[string]struct{}, pageSize)
+	for page := 0; page < maxPages; page++ {
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return nil, err
+		}
+		q := u.Query()
+		q.Set("max_results", strconv.Itoa(pageSize))
+		q.Set("skip", strconv.Itoa(page*pageSize))
+		u.RawQuery = q.Encode()
+		batch, err := fetchCollectionPage(u.String())
+		if err != nil {
+			if page == 0 {
+				return nil, err
+			}
+			return out, nil
+		}
+		if len(batch) == 0 {
+			break
+		}
+		newCount := 0
+		for _, rec := range batch {
+			key := strings.TrimSpace(mapString(rec, "href"))
+			if key == "" {
+				key = strings.TrimSpace(mapString(rec, "name"))
+			}
+			if key == "" {
+				key = strings.TrimSpace(mapString(rec, "id"))
+			}
+			if key == "" {
+				key = fmt.Sprintf("page=%d,index=%d", page, newCount)
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, rec)
+			newCount++
+		}
+		if len(batch) < pageSize || newCount == 0 {
+			break
+		}
+	}
+	return out, nil
 }
 
 func countCollectionWithFallback(baseURL string, paths []string) (int, error) {
@@ -4164,6 +4388,18 @@ func minInt(a, b int) int {
 	return b
 }
 
+func intMapEqual(a, b map[string]int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		if bv, ok := b[k]; !ok || bv != av {
+			return false
+		}
+	}
+	return true
+}
+
 func getIllumioStats() DashboardStats {
 	var stats DashboardStats
 	nowUTC := time.Now().UTC()
@@ -4252,14 +4488,15 @@ func getIllumioStats() DashboardStats {
 	stats.Rules.Enabled = rulesEnabled
 	if rulesEnabled {
 		currentRulesets, currentRules, hasDaily := policyDailySnapshot(nowUTC)
-		if !hasDaily {
-			rulesetsCount, rulesCount, rErr := getPolicyCounts(baseURL)
+		hasRulesetDaily := policyRulesetDailyExists(nowUTC)
+		if !hasDaily || !hasRulesetDaily {
+			rulesetsCount, rulesCount, rulesetCounts, rErr := getPolicySnapshot(baseURL)
 			log.Printf("[COLLECTOR] Policy rulesets=%d rules=%d err=%v", rulesetsCount, rulesCount, rErr)
 			if rErr != nil {
 				stats.Rules.Status = FetchStatus{Success: false, Error: "Policy: " + rErr.Error()}
 			} else {
 				stats.Rules.Status = FetchStatus{Success: true}
-				updatePolicyDailyHistory(nowUTC, rulesetsCount, rulesCount)
+				updatePolicyDailyHistory(nowUTC, rulesetsCount, rulesCount, rulesetCounts)
 			}
 			currentRulesets, currentRules, _ = policyDailySnapshot(nowUTC)
 		} else {
@@ -9051,6 +9288,48 @@ func loadBlockedHostHistory() {
 	}
 }
 
+func loadPolicyRulesetHistory() {
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	policyRulesetDaily = map[string]map[string]int{}
+	var records []dailyPolicyRulesetRecord
+	if blockedPortStoreIsSQLite() {
+		ok, err := sqliteKVGetJSON(stateKeyPolicyRulesetDaily, &records)
+		if err != nil {
+			log.Printf("[HISTORY] failed loading policy ruleset history from sqlite: %v", err)
+			return
+		}
+		if !ok {
+			return
+		}
+	} else {
+		path := dataFilePath("policy_ruleset_daily_history.json")
+		file, err := os.Open(path)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				log.Printf("[HISTORY] failed loading policy ruleset history: %v", err)
+			}
+			return
+		}
+		defer file.Close()
+		if err := json.NewDecoder(file).Decode(&records); err != nil {
+			log.Printf("[HISTORY] failed decoding policy ruleset history: %v", err)
+			return
+		}
+	}
+	for _, rec := range records {
+		day := strings.TrimSpace(rec.Day)
+		name := strings.TrimSpace(rec.Ruleset)
+		if day == "" || name == "" {
+			continue
+		}
+		if policyRulesetDaily[day] == nil {
+			policyRulesetDaily[day] = map[string]int{}
+		}
+		policyRulesetDaily[day][name] = rec.RuleCount
+	}
+}
+
 func loadVENHistory() {
 	venHistoryMu.Lock()
 	defer venHistoryMu.Unlock()
@@ -9496,11 +9775,19 @@ func pruneBlockedHistory(nowUTC time.Time, keepDays int) {
 			changed = true
 		}
 	}
+	for day := range policyRulesetDaily {
+		parsed, err := parseDayKeyInLocation(day, loc)
+		if err != nil || parsed.Before(cutoff) {
+			delete(policyRulesetDaily, day)
+			changed = true
+		}
+	}
 	historyMu.Unlock()
 	if changed {
 		saveBlockedHistory()
 		saveBlockedPortHistory()
 		saveBlockedHostHistory()
+		savePolicyRulesetHistory()
 	}
 }
 
@@ -9611,6 +9898,41 @@ func saveBlockedHostHistory() {
 			log.Printf("[HISTORY] failed to save blocked host history (sqlite): %v", err)
 		}
 		return
+	}
+}
+
+func savePolicyRulesetHistory() {
+	historyMu.Lock()
+	records := make([]dailyPolicyRulesetRecord, 0)
+	for day, byRuleset := range policyRulesetDaily {
+		for name, count := range byRuleset {
+			day = strings.TrimSpace(day)
+			name = strings.TrimSpace(name)
+			if day == "" || name == "" {
+				continue
+			}
+			records = append(records, dailyPolicyRulesetRecord{
+				Day:       day,
+				Ruleset:   name,
+				RuleCount: count,
+			})
+		}
+	}
+	historyMu.Unlock()
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Day == records[j].Day {
+			return records[i].Ruleset < records[j].Ruleset
+		}
+		return records[i].Day < records[j].Day
+	})
+	if blockedPortStoreIsSQLite() {
+		if err := sqliteKVSetJSON(stateKeyPolicyRulesetDaily, records); err != nil {
+			log.Printf("[HISTORY] failed to save policy ruleset history (sqlite): %v", err)
+		}
+		return
+	}
+	if err := writeJSONFileAtomic(dataFilePath("policy_ruleset_daily_history.json"), records); err != nil {
+		log.Printf("[HISTORY] failed to save policy ruleset history: %v", err)
 	}
 }
 

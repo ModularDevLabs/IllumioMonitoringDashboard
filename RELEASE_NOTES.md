@@ -43,12 +43,17 @@ Experimental feature branch updates (not merged to stable main):
   - `rules_metrics_enabled` (default `false`)
   - collects total `rulesets` and total `rules` once per day
   - persists in daily history with retention governed by `history_days`
+  - stores per-ruleset daily rule counts for drilldown trends
 - Added Trend View policy section:
   - `Policy Rulesets (Daily)`
   - `Policy Rules (Daily)`
 - Added drilldown metrics for policy growth:
   - `policy_rulesets`
   - `policy_rules`
+  - `policy_ruleset` (targeted ruleset trend)
+- Drilldown enhancement:
+  - `policy_rulesets` drilldown now lists rulesets with current total rules
+  - each ruleset row is clickable to open `policy_ruleset` daily trend
 
 ## v1.2.4 - 2026-03-18
 

@@ -375,6 +375,23 @@
             </div>
         </div>
 
+        <div class="row d-none" id="policy-overview-row">
+            <div class="col-md-6">
+                <div class="card p-3 text-center metric-link" data-metric="policy_rulesets">
+                    <h6>Policy Rulesets</h6>
+                    <h2 class="text-success" id="policy-rulesets-total">0</h2>
+                    <div class="small text-muted">Click to view rulesets and per-ruleset counts</div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card p-3 text-center metric-link" data-metric="policy_rules">
+                    <h6>Policy Rules</h6>
+                    <h2 class="text-primary" id="policy-rules-total">0</h2>
+                    <div class="small text-muted">Daily policy rule growth trend</div>
+                </div>
+            </div>
+        </div>
+
         <div class="row">
             <div class="col-12">
                 <div class="card p-3">
@@ -604,6 +621,16 @@
                 document.getElementById('v-err').innerText = d.ven_status.error?.length || 0;
                 document.getElementById('v-err-list').innerText = 'Click to view workload names';
                 document.getElementById('tamp').innerText = d.tampering.workloads?.length || d.tampering.count || 0;
+                const policyRow = document.getElementById('policy-overview-row');
+                const policyEnabled = d.rules?.enabled === true;
+                if (policyRow) {
+                    if (policyEnabled) policyRow.classList.remove('d-none');
+                    else policyRow.classList.add('d-none');
+                }
+                const rsEl = document.getElementById('policy-rulesets-total');
+                const rEl = document.getElementById('policy-rules-total');
+                if (rsEl) rsEl.innerText = Number(d.rules?.rulesets || 0);
+                if (rEl) rEl.innerText = Number(d.rules?.rules || 0);
 
                 renderBlockedTargets(d.blocked.targets || []);
                 document.getElementById('ts').innerText = 'Last Updated: ' + new Date(d.timestamp).toLocaleString();

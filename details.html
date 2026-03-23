@@ -712,22 +712,41 @@
                 document.getElementById('trend-raw').innerText = '24h (5m)';
                 document.getElementById('trend-sum').innerText = 'Daily';
             }
-            document.getElementById('count').innerText = `${d.count} workload(s)`;
-            const list = document.getElementById('items');
-            list.classList.remove('d-none');
-            list.innerHTML = '';
-            if (!d.items || d.items.length === 0) {
-                const li = document.createElement('li');
-                li.className = 'list-group-item text-muted';
-                li.innerText = 'No results for this metric in the latest collection cycle.';
-                list.appendChild(li);
+            if (d.metric === 'policy_rulesets') {
+                document.getElementById('count').innerText = `${d.count} ruleset(s)`;
+            } else if (d.metric === 'policy_rules' || d.metric === 'policy_ruleset') {
+                const dailyPoints = (d.trend_daily || d.trend || []).length;
+                document.getElementById('count').innerText = `${dailyPoints} daily point(s)`;
             } else {
-                d.items.forEach((name) => {
+                document.getElementById('count').innerText = `${d.count} workload(s)`;
+            }
+            const list = document.getElementById('items');
+            list.innerHTML = '';
+            if (d.metric === 'policy_ruleset') {
+                list.classList.add('d-none');
+            } else {
+                list.classList.remove('d-none');
+                if (!d.items || d.items.length === 0) {
                     const li = document.createElement('li');
-                    li.className = 'list-group-item mono';
-                    li.innerText = name;
+                    li.className = 'list-group-item text-muted';
+                    li.innerText = 'No results for this metric in the latest collection cycle.';
                     list.appendChild(li);
-                });
+                } else {
+                    d.items.forEach((name, idx) => {
+                        const li = document.createElement('li');
+                        li.className = 'list-group-item mono';
+                        li.innerText = name;
+                        if (d.metric === 'policy_rulesets' && Array.isArray(d.item_targets) && d.item_targets[idx]) {
+                            li.style.cursor = 'pointer';
+                            li.title = 'Click to view this ruleset trend';
+                            li.addEventListener('click', () => {
+                                const t = encodeURIComponent(String(d.item_targets[idx]));
+                                window.location.href = `/details?metric=policy_ruleset&target=${t}`;
+                            });
+                        }
+                        list.appendChild(li);
+                    });
+                }
             }
             if (d.metric === 'ven_warning' || d.metric === 'ven_error' || String(d.metric || '').startsWith('mode_')) {
                 trend24h = d.trend_24h || d.trend || [];
@@ -763,6 +782,10 @@
                 document.getElementById('trend-raw').innerText = '24h (5m)';
                 document.getElementById('trend-sum').innerText = 'Daily';
                 renderTrend(trendPoints, d.title, { hideList: false, showControls: true });
+            } else if (d.metric === 'policy_rulesets' || d.metric === 'policy_rules' || d.metric === 'policy_ruleset') {
+                document.getElementById('trend-controls').classList.add('d-none');
+                trendPoints = d.trend_daily || d.trend || [];
+                renderTrend(trendPoints, d.title, { hideList: false, showControls: false });
             } else {
                 document.getElementById('trend-controls').classList.add('d-none');
                 trendPoints = d.trend || [];

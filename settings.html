@@ -224,7 +224,7 @@
                             <div class="mb-2">
                                 <label class="form-label form-label-sm small text-muted mb-1" for="rules-metrics-enabled">
                                     Policy Rulesets/Rules Daily Metrics
-                                    <span class="help-tip" title="Very low storage impact: typically ~20-80 KB/year (2 daily integers embedded in daily history records).">?</span>
+                                    <span class="help-tip" title="Stores daily totals plus per-ruleset daily counts for drilldown trends. Rough growth: ~ (rulesets x days x 40-100 bytes). Example: 500 rulesets ~= 7-18 MB/year.">?</span>
                                 </label>
                                 <select class="form-select form-select-sm" id="rules-metrics-enabled">
                                     <option value="false">Disabled (default)</option>

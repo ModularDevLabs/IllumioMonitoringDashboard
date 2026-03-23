@@ -262,7 +262,7 @@ These are planning estimates for SQLite state growth and vary by traffic cardina
 
 | Feature | Rough growth estimate |
 |---|---|
-| `rules_metrics_enabled` | ~20-80 KB/year total (2 daily integers embedded in daily history records) |
+| `rules_metrics_enabled` | Daily totals + per-ruleset daily counts: ~`rulesets * days * 40-100 bytes` (for example ~7-18 MB/year for 500 rulesets) |
 | `blocked_port_daily_enabled` | ~0.1-1.0 MB/year per target (typical port cardinality) |
 | `blocked_host_metrics_enabled` + `daily_only` | ~40-90 bytes per host/day -> ~0.4-0.9 GB/year per 10k hosts per target |
 | `blocked_host_metrics_enabled` + `rolling_24h_only` | ~15-30 bytes per host/5m snapshot over rolling 24h window -> ~1.3-2.6 GB/year-equivalent per 10k hosts per target |
@@ -426,7 +426,7 @@ Use `/settings` to manage webhook alerting:
 - `GET /api/drilldown?metric=<metric>`:
   - Drilldown list for a metric
   - metrics: `ven_warning`, `ven_error`, `mode_idle`, `mode_visibility_only`, `mode_selective`, `mode_full`, `mode_unmanaged`, `tampering`
-  - additional daily policy metrics (when enabled): `policy_rulesets`, `policy_rules`
+  - additional daily policy metrics (when enabled): `policy_rulesets`, `policy_rules`, `policy_ruleset` (requires `target=<ruleset name>`)
   - for `metric=blocked_target`, optional flags:
     - `include_ports=1`: include persisted daily blocked port/proto aggregates
     - `include_live_ports=1`: accepted for compatibility; ignored (drilldown uses persisted history only)
