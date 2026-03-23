@@ -295,6 +295,7 @@
                         <button class="btn btn-outline-secondary btn-sm" id="btn-add-target" type="button">Add Target</button>
                         <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic" type="button">Save Targets/Exclusions</button>
                         <button class="btn btn-outline-success btn-sm" id="btn-refresh-now" type="button">Refresh Now</button>
+                        <button class="btn btn-outline-success btn-sm" id="btn-refresh-policy" type="button">Refresh Policy Metrics</button>
                         <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-history" type="button">Reconcile Blocked History</button>
                         <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-tampering-history" type="button">Reconcile Tampering History</button>
                     </div>
@@ -887,6 +888,22 @@
             showMsg('msg-traffic', 'Refresh started.', 'success');
         }
 
+        async function refreshPolicyMetricsNow() {
+            const r = await fetch('/api/refresh/policy-metrics', { method: 'POST' });
+            if (!r.ok) {
+                showMsg('msg-traffic', `Policy refresh failed (${r.status})`, 'danger');
+                return;
+            }
+            const d = await r.json().catch(() => ({}));
+            if (!d.started) {
+                showMsg('msg-traffic', d.message || 'Policy metrics refresh did not start.', 'warning');
+                return;
+            }
+            const rs = Number(d.rulesets || 0).toLocaleString();
+            const rls = Number(d.rules || 0).toLocaleString();
+            showMsg('msg-traffic', `Policy metrics refreshed (rulesets=${rs}, rules=${rls}).`, 'success');
+        }
+
         function formatTS(ts) {
             if (!ts) return '';
             const d = new Date(ts);
@@ -1083,6 +1100,7 @@
         document.getElementById('btn-save-hosting').addEventListener('click', saveHostingSettings);
         document.getElementById('btn-save-credentials').addEventListener('click', saveCredentialSettings);
         document.getElementById('btn-refresh-now').addEventListener('click', refreshNow);
+        document.getElementById('btn-refresh-policy').addEventListener('click', refreshPolicyMetricsNow);
         document.getElementById('btn-reconcile-history').addEventListener('click', triggerFullReconcile);
         document.getElementById('btn-reconcile-tampering-history').addEventListener('click', triggerTamperingReconcile);
         document.getElementById('btn-save-alerts').addEventListener('click', saveAlertSettings);

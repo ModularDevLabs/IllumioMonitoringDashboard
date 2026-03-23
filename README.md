@@ -393,6 +393,7 @@ Use `/settings` to manage traffic/data controls:
 4. Click **Refresh Now** to apply immediately
 5. Set daily blocked history retention days (saved to `config.json`)
 6. If enabling `rules_metrics_enabled`, policy totals populate on the next collector cycle (5 minutes) unless you click **Refresh Now**.
+7. To force policy totals immediately without a full cycle, click **Refresh Policy Metrics** in Settings.
 
 ### Hosting Settings
 
@@ -450,6 +451,8 @@ Use `/settings` to manage webhook alerting:
   - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "blocked_host_metrics_enabled": false, "blocked_host_retention_mode": "rolling_24h_plus_daily", "rules_metrics_enabled": false, "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
 - `POST /api/refresh`:
   - Trigger immediate collection cycle
+- `POST /api/refresh/policy-metrics`:
+  - Force-refresh latest policy totals immediately (rulesets/rules), persist current day snapshot, and update current in-memory stats
 - `POST /api/reconcile/blocked-history`:
   - Trigger asynchronous full blocked-history reconciliation over stored day keys
   - If a reconcile run is already in progress, request is ignored and response indicates current state

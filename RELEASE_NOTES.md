@@ -51,6 +51,10 @@ Experimental feature branch updates (not merged to stable main):
   - protection KPIs for total rulesets/rules
   - policy metrics status KPI
   - `Policy Growth Trend (Daily)` chart
+- Added manual policy refresh control:
+  - Settings button: `Refresh Policy Metrics`
+  - API: `POST /api/refresh/policy-metrics`
+  - forces immediate rulesets/rules snapshot update (no wait for next 5m cycle)
 - Added drilldown metrics for policy growth:
   - `policy_rulesets`
   - `policy_rules`

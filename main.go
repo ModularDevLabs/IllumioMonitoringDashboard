@@ -622,6 +622,7 @@ func main() {
 	http.HandleFunc("/api/config/credentials", withRequestTiming("api.config.credentials", withTrustedOrigin("api.config.credentials", handleConfigCredentials)))
 	http.HandleFunc("/api/config/alerts", withRequestTiming("api.config.alerts", withTrustedOrigin("api.config.alerts", handleConfigAlerts)))
 	http.HandleFunc("/api/refresh", withRequestTiming("api.refresh", withTrustedOrigin("api.refresh", handleRefreshNow)))
+	http.HandleFunc("/api/refresh/policy-metrics", withRequestTiming("api.refresh.policy_metrics", withTrustedOrigin("api.refresh.policy_metrics", handleRefreshPolicyMetricsNow)))
 	http.HandleFunc("/api/reconcile/blocked-history", withRequestTiming("api.reconcile.blocked_history", withTrustedOrigin("api.reconcile.blocked_history", handleReconcileBlockedHistory)))
 	http.HandleFunc("/api/reconcile/blocked-history/status", withRequestTiming("api.reconcile.blocked_history_status", handleReconcileBlockedHistoryStatus))
 	http.HandleFunc("/api/reconcile/tampering-history", withRequestTiming("api.reconcile.tampering_history", withTrustedOrigin("api.reconcile.tampering_history", handleReconcileTamperingHistory)))
@@ -1558,6 +1559,37 @@ func handleRefreshNow(w http.ResponseWriter, r *http.Request) {
 	go runCollectionCycle()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"started": true})
+}
+
+func handleRefreshPolicyMetricsNow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !configuredRulesMetricsEnabled() {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"started": false,
+			"message": "policy metrics are disabled; enable 'Policy Rulesets/Rules Daily Metrics' first",
+		})
+		return
+	}
+	rulesetsCount, rulesCount, err := refreshPolicyMetricsNow()
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"started": false,
+			"message": "policy metrics refresh failed",
+			"error":   err.Error(),
+		})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"started":  true,
+		"message":  "policy metrics refreshed",
+		"rulesets": rulesetsCount,
+		"rules":    rulesCount,
+	})
 }
 
 func handleReconcileBlockedHistory(w http.ResponseWriter, r *http.Request) {
@@ -4662,6 +4694,38 @@ func getIllumioStats() DashboardStats {
 	reconcilePreviousDayBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
 
 	return stats
+}
+
+func refreshPolicyMetricsNow() (int, int, error) {
+	configMutex.RLock()
+	pceURL := strings.TrimSpace(config.PCEURL)
+	orgID := strings.TrimSpace(config.OrgID)
+	if orgID == "" {
+		orgID = "1"
+	}
+	configMutex.RUnlock()
+	if pceURL == "" {
+		return 0, 0, errors.New("pce_url is empty")
+	}
+	baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), orgID)
+	nowUTC := time.Now().UTC()
+	rulesetsCount, rulesCount, rulesetCounts, err := getPolicySnapshot(baseURL)
+	if err != nil {
+		return 0, 0, err
+	}
+	updatePolicyDailyHistory(nowUTC, rulesetsCount, rulesCount, rulesetCounts)
+
+	statsMutex.Lock()
+	s := currentStats
+	s.Rules.Enabled = configuredRulesMetricsEnabled()
+	s.Rules.Rulesets = rulesetsCount
+	s.Rules.Rules = rulesCount
+	s.Rules.Status = FetchStatus{Success: true}
+	currentStats = s
+	statsMutex.Unlock()
+
+	log.Printf("[COLLECTOR] manual policy refresh rulesets=%d rules=%d", rulesetsCount, rulesCount)
+	return rulesetsCount, rulesCount, nil
 }
 
 func collectionWindow(nowUTC time.Time) (time.Time, time.Time, bool) {
