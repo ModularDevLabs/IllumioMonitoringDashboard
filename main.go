@@ -10456,7 +10456,7 @@ func updateVENDailyHistory(
 		prev.ErrorMax = errorCount
 		changed = true
 	}
-	if tamperingCount != prev.TamperingMax {
+	if tamperingCount > prev.TamperingMax {
 		prev.TamperingMax = tamperingCount
 		changed = true
 	}
