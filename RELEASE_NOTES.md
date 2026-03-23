@@ -23,6 +23,10 @@ Experimental feature branch updates (not merged to stable main):
   - Tier 3: blocked hostname enrichment is deferred next
   - late-cycle fallback can switch to count-only blocked query path when necessary
 
+### Tampering Daily Chart Consistency (rc8)
+- Fixed tampering daily data feed to use deduped **today-so-far** workload set counts from current-day 5m buckets.
+- Preserved daily **max-only** behavior while correcting the source metric so daily tampering no longer reflects stale/inflated historical rolling artifacts.
+
 ### Blocked Target Scope
 - Added `traffic_targets[].kind = "all"` support:
   - runs environment-wide blocked query with blank source/destination filters

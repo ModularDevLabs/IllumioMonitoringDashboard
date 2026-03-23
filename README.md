@@ -24,6 +24,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 - Tampering monitoring:
   - Unique tampered VEN/workload names with `agent.tampering` events (last 24h)
   - Event counts in 5m/24h windows are deduped by stable event signature before trend aggregation
+  - Daily tampering chart uses deduped today-so-far workload set input and retains max-only daily behavior
   - Deduped names for drilldown
   - Tampering trend charts include moving-average overlays and anomaly detection (24h/5m series)
 - Blocked traffic analytics:
@@ -619,7 +620,7 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 - `config.json`: runtime configuration
 - `blocked_daily_history.json`: persisted daily blocked totals per target (JSON backend)
 - `blocked_port_daily_history.json`: persisted daily blocked totals per target per `port/proto` (JSON backend)
-- `ven_daily_history.json`: persisted daily VEN warning/error max values (JSON backend)
+- `ven_daily_history.json`: persisted daily VEN warning/error/tampering max values (JSON backend)
 - `rolling_state.json`: persisted rolling state (JSON backend)
 - `alert_state.json`: persisted alert transition state (JSON backend)
 - `anomaly_history.jsonl`: persisted anomaly transition events (JSON backend)
