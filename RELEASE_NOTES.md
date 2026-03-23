@@ -47,6 +47,10 @@ Experimental feature branch updates (not merged to stable main):
 - Added Trend View policy section:
   - `Policy Rulesets (Daily)`
   - `Policy Rules (Daily)`
+- Added Executive View policy coverage (when enabled):
+  - protection KPIs for total rulesets/rules
+  - policy metrics status KPI
+  - `Policy Growth Trend (Daily)` chart
 - Added drilldown metrics for policy growth:
   - `policy_rulesets`
   - `policy_rules`

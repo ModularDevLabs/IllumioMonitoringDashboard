@@ -610,3 +610,7 @@ Planned additions after board PDF mode:
 - SLO badges (freshness, pipeline success rate, partial/fail rate)
 - Anomaly outcomes panel (triggered vs resolved + MTTR)
 - Board export bundle (combined executive/report artifacts)
+Executive View also includes policy KPIs/charts when enabled:
+- `Policy Rulesets` KPI
+- `Policy Rules` KPI
+- `Policy Growth Trend (Daily)` chart (rulesets + rules)

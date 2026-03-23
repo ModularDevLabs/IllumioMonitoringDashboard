@@ -250,6 +250,12 @@
             <ul class="list" id="actions-list"></ul>
         </div>
     </div>
+
+    <div class="panel non-board d-none" id="policy-trend-panel">
+        <h2>Policy Growth Trend (Daily)</h2>
+        <div class="muted">Total rulesets and rules over time (enabled via settings).</div>
+        <div class="chart-wrap"><canvas id="policy-daily-chart"></canvas></div>
+    </div>
 </div>
 <div class="version-badge">v."{{.VersionLabel}}"</div>
 
@@ -257,6 +263,7 @@
 <script>
     const THEME_KEY = 'illumio_theme';
     let chart = null;
+    let policyChart = null;
     let nextRefreshAt = null;
     let timer = null;
     let lastSnapshotTS = null;
@@ -368,6 +375,61 @@
         UICommon.makeChartZoomable(chart, 'Blocked Flows (Daily)');
     }
 
+    function renderPolicyChart(rulesetsSeries, rulesSeries) {
+        if (boardMode) return;
+        const panel = document.getElementById('policy-trend-panel');
+        const canvas = document.getElementById('policy-daily-chart');
+        if (!panel || !canvas) return;
+        const hasData = (rulesetsSeries && rulesetsSeries.length) || (rulesSeries && rulesSeries.length);
+        if (!hasData) {
+            panel.classList.add('d-none');
+            if (policyChart) {
+                policyChart.destroy();
+                policyChart = null;
+            }
+            return;
+        }
+        panel.classList.remove('d-none');
+        const labelsMap = new Map();
+        (rulesetsSeries || []).forEach((p) => labelsMap.set(dateKey(p.timestamp), true));
+        (rulesSeries || []).forEach((p) => labelsMap.set(dateKey(p.timestamp), true));
+        const labels = Array.from(labelsMap.keys()).sort();
+        const rulesetsByDay = new Map((rulesetsSeries || []).map((p) => [dateKey(p.timestamp), Number(p.value || 0)]));
+        const rulesByDay = new Map((rulesSeries || []).map((p) => [dateKey(p.timestamp), Number(p.value || 0)]));
+
+        const ctx = canvas.getContext('2d');
+        if (policyChart) policyChart.destroy();
+        policyChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels.map((k) => new Date(k + 'T12:00:00Z').toLocaleDateString()),
+                datasets: [{
+                    label: 'Policy Rulesets (Daily)',
+                    data: labels.map((k) => rulesetsByDay.get(k) ?? null),
+                    borderColor: '#20c997',
+                    backgroundColor: 'rgba(32, 201, 151, 0.15)',
+                    tension: 0.22,
+                    fill: false,
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    pointHitRadius: 8
+                }, {
+                    label: 'Policy Rules (Daily)',
+                    data: labels.map((k) => rulesByDay.get(k) ?? null),
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13, 110, 253, 0.15)',
+                    tension: 0.22,
+                    fill: false,
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    pointHitRadius: 8
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { beginAtZero: true } } }
+        });
+        UICommon.makeChartZoomable(policyChart, 'Policy Growth (Daily)');
+    }
+
     function actionItems(stats, blockedSeries, tamperDaily, periodDays) {
         const out = [];
         const blockedTargets = filteredBlockedTargets(stats);
@@ -410,6 +472,9 @@
             `Blocked ${fmt(periodTotal)} flows across ${periodDays}d.`,
             bestTarget ? `Highest protected target: ${bestTarget.name} (${fmt(bestTarget.count)} in 24h).` : 'Protected target activity available once targets return data.'
         ];
+        if (stats.rules?.enabled) {
+            wins.push(`Policy footprint: ${fmt(stats.rules.rulesets)} rulesets, ${fmt(stats.rules.rules)} rules.`);
+        }
         const risks = [];
         if (anomalous.length) risks.push(`${anomalous.length} blocked-target anomaly trigger(s) active.`);
         const err = (stats.ven_status?.error || []).length;
@@ -500,6 +565,9 @@
         lines.push(`Protection outcomes: ${fmt(blocked24h)} blocked flows in the last 24h; ${fmt(blockedPeriod)} blocked flows across the selected ${periodDays}-day window (${blockedDeltaPeriod >= 0 ? '+' : ''}${blockedDeltaPeriod.toFixed(1)}% vs prior ${periodDays}-day window).`);
         lines.push(`Top protected targets (24h): ${topTargets.length ? topTargets.join(', ') : 'n/a'}.`);
         lines.push(`Risk signals: ${anomalous} anomalous blocked targets, ${venWarn} VEN warnings, ${venErr} VEN errors, ${tampered} tampered VENs in the last 24h.`);
+        if (stats.rules?.enabled) {
+            lines.push(`Policy growth: ${fmt(stats.rules.rulesets)} rulesets and ${fmt(stats.rules.rules)} rules (daily policy trend enabled).`);
+        }
         lines.push(`Pipeline confidence: ${pipelineBad === 0 ? 'healthy' : `${pipelineBad} collector stage(s) failing or partial`}.`);
         lines.push('');
         lines.push('Recommended actions:');
@@ -549,6 +617,14 @@
         const targetDetails = targetDetailsAll.filter((_, idx) => !isAllBlockedTarget(allBlockedTargets[idx]));
         const blockedDaily = aggregateDailyBlocked(targetDetails.filter(Boolean));
         const tamper = await fetch('/api/drilldown?metric=tampering&ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.ok ? r.json() : null).catch(() => null);
+        let policyRulesets = null;
+        let policyRules = null;
+        if (stats.rules?.enabled) {
+            [policyRulesets, policyRules] = await Promise.all([
+                fetch('/api/drilldown?metric=policy_rulesets&ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.ok ? r.json() : null).catch(() => null),
+                fetch('/api/drilldown?metric=policy_rules&ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.ok ? r.json() : null).catch(() => null)
+            ]);
+        }
 
         lastSnapshotTS = stats.timestamp;
         updateMeta();
@@ -570,6 +646,10 @@
         addKPI(protection, `Blocked Flows (${selectedPeriodDays}d)`, fmt(periodTotal), `${blockedDeltaPeriod >= 0 ? '+' : ''}${blockedDeltaPeriod.toFixed(1)}% vs prior ${selectedPeriodDays}d`);
         addKPI(protection, 'Blocked Flows (30d)', fmt(thirtyDay), 'Aggregated daily totals');
         addKPI(protection, 'Most Active Target (24h)', bestTarget ? `${bestTarget.name}: ${fmt(bestTarget.count)}` : 'n/a', 'Highest blocked flow target');
+        if (stats.rules?.enabled) {
+            addKPI(protection, 'Policy Rulesets', fmt(stats.rules?.rulesets || 0), 'Current total rulesets');
+            addKPI(protection, 'Policy Rules', fmt(stats.rules?.rules || 0), 'Current total rules');
+        }
 
         const anomalous = blockedTargets.filter((t) => t.anomalous).length;
         const venWarn = (stats.ven_status?.warning || []).length;
@@ -583,6 +663,9 @@
         addKPI(risk, 'Tampered VENs', fmt(tampered), 'Unique impacted names (24h)', tampered > 0 ? 'risk-bad' : 'risk-good');
         addKPI(risk, 'Pipeline Confidence', pipelineBad === 0 ? 'Healthy' : `${pipelineBad} failing stage(s)`, 'Collector/API stage status', pipelineBad === 0 ? 'risk-good' : 'risk-warn');
         addKPI(risk, 'Blocked Port Daily', targets.blocked_port_daily_enabled === false ? 'Disabled' : 'Enabled', 'Controls blocked-port daily aggregation', targets.blocked_port_daily_enabled === false ? 'risk-warn' : 'risk-good');
+        if (stats.rules?.enabled) {
+            addKPI(risk, 'Policy Metrics', stats.rules?.status?.success ? 'Enabled' : 'Fetch Error', stats.rules?.status?.error || 'Daily policy growth tracking', stats.rules?.status?.success ? 'risk-good' : 'risk-warn');
+        }
 
         const actions = actionItems(stats, blockedDaily, tamper?.trend_daily || [], selectedPeriodDays);
         if (actionsRoot) {
@@ -596,6 +679,7 @@
         renderValueRanking(blockedTargets, targetDetails, selectedPeriodDays);
         renderNarrativeSummary(buildNarrativeSummary(stats, blockedDaily, actions, selectedPeriodDays));
         renderChart(blockedDaily);
+        renderPolicyChart(policyRulesets?.trend_daily || policyRulesets?.trend || [], policyRules?.trend_daily || policyRules?.trend || []);
 
         if (boardMode && queryAutoprint()) {
             setTimeout(() => window.print(), 250);
