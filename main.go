@@ -3337,10 +3337,23 @@ func policyRulesetDailyTrendSeries(ruleset string, keepDays int) []TrendPoint {
 }
 
 func policyRulesetSummaryItems(nowUTC time.Time) ([]string, []string) {
-	loc := configuredDayLocation()
-	dayKey := nowUTC.In(loc).Format("2006-01-02")
+	_ = nowUTC
 	historyMu.Lock()
-	dayMap := policyRulesetDaily[dayKey]
+	dayMap := map[string]int{}
+	latestDay := ""
+	for day, byRuleset := range policyRulesetDaily {
+		if len(byRuleset) == 0 {
+			continue
+		}
+		if latestDay == "" || day > latestDay {
+			latestDay = day
+		}
+	}
+	if latestDay != "" {
+		for k, v := range policyRulesetDaily[latestDay] {
+			dayMap[k] = v
+		}
+	}
 	historyMu.Unlock()
 	type row struct {
 		name  string

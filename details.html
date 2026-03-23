@@ -337,6 +337,7 @@
         function renderTrend(points, title, opts = {}) {
             const hideList = !!opts.hideList;
             const showControls = !!opts.showControls;
+            const forceDaily = !!opts.forceDaily;
             const wrap = document.getElementById('trend-wrap');
             const list = document.getElementById('items');
             const controls = document.getElementById('trend-controls');
@@ -381,7 +382,7 @@
                 list.classList.remove('d-none');
             }
 
-            const isDaily = trendMode === 'sum';
+            const isDaily = forceDaily || trendMode === 'sum';
             const labels = points.map((p) => isDaily
                 ? new Date(p.timestamp).toLocaleDateString()
                 : new Date(p.timestamp).toLocaleTimeString());
@@ -392,7 +393,7 @@
             const tickColor = isDarkTheme() ? '#e7edf3' : '#333';
             const gridColor = isDarkTheme() ? 'rgba(220,228,235,0.22)' : 'rgba(0,0,0,0.10)';
             const datasets = [{
-                label: trendMode === 'sum'
+                label: isDaily
                     ? (title || 'Trend') + ' (daily)'
                     : (title || 'Trend') + ' (24h, 5m)',
                 data: values,
@@ -722,7 +723,7 @@
             }
             const list = document.getElementById('items');
             list.innerHTML = '';
-            if (d.metric === 'policy_ruleset') {
+            if (d.metric === 'policy_ruleset' || d.metric === 'policy_rules') {
                 list.classList.add('d-none');
             } else {
                 list.classList.remove('d-none');
@@ -785,7 +786,7 @@
             } else if (d.metric === 'policy_rulesets' || d.metric === 'policy_rules' || d.metric === 'policy_ruleset') {
                 document.getElementById('trend-controls').classList.add('d-none');
                 trendPoints = d.trend_daily || d.trend || [];
-                renderTrend(trendPoints, d.title, { hideList: false, showControls: false });
+                renderTrend(trendPoints, d.title, { hideList: d.metric !== 'policy_rulesets', showControls: false, forceDaily: true });
             } else {
                 document.getElementById('trend-controls').classList.add('d-none');
                 trendPoints = d.trend || [];
