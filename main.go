@@ -3433,6 +3433,27 @@ func tamperingTrendSeries() []TrendPoint {
 	return points
 }
 
+func tamperingTodaySoFarUniqueCount(nowUTC time.Time) int {
+	loc := configuredDayLocation()
+	dayStartUTC := localDayStart(nowUTC, loc).UTC()
+	rollingMu.Lock()
+	defer rollingMu.Unlock()
+	seen := make(map[string]struct{})
+	for _, b := range rollingCache.Buckets {
+		if b.EndUTC.Before(dayStartUTC) || b.EndUTC.After(nowUTC) {
+			continue
+		}
+		for n := range b.TamperingWorkloads {
+			name := strings.TrimSpace(n)
+			if name == "" {
+				continue
+			}
+			seen[name] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
 func venDailyTrendSeries(kind string, keepDays int) []TrendPoint {
 	if keepDays <= 0 {
 		keepDays = 365
@@ -4829,10 +4850,11 @@ func getIllumioStats() DashboardStats {
 	)
 	stats.Tampering.Workloads = rollingWorkloads
 	stats.Tampering.Count = len(rollingWorkloads)
+	tamperingTodayCount := tamperingTodaySoFarUniqueCount(nowUTC)
 	updateVENDailyHistory(nowUTC,
 		len(stats.VENStatus.Warning),
 		len(stats.VENStatus.Error),
-		stats.Tampering.Count,
+		tamperingTodayCount,
 		stats.Workloads.EnforcementModes["idle"],
 		stats.Workloads.EnforcementModes["visibility_only"],
 		stats.Workloads.EnforcementModes["selective"],
@@ -10434,7 +10456,7 @@ func updateVENDailyHistory(
 		prev.ErrorMax = errorCount
 		changed = true
 	}
-	if tamperingCount > prev.TamperingMax {
+	if tamperingCount != prev.TamperingMax {
 		prev.TamperingMax = tamperingCount
 		changed = true
 	}
