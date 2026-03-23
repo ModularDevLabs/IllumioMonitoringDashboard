@@ -71,6 +71,9 @@ const maxHistoryDays = 3650
 const slowRequestLogThreshold = 200 * time.Millisecond
 const blockedTargetWorkerCount = 4
 const blockedTargetStartStagger = 150 * time.Millisecond
+const defaultAPIMaxRPM = 450
+const minimumAPIRPMOnThrottle = 300
+const defaultAPIBurst = 30
 const perfSampleWindowSize = 256
 const defaultLogFileName = "illumiomonitoringdashboard.log"
 
@@ -116,6 +119,7 @@ type Config struct {
 	BlockedHostMetricsEnabled   *bool           `json:"blocked_host_metrics_enabled,omitempty"`
 	BlockedHostRetentionMode    string          `json:"blocked_host_retention_mode,omitempty"`
 	RulesMetricsEnabled         *bool           `json:"rules_metrics_enabled,omitempty"`
+	APIMaxRPM                   int             `json:"api_max_rpm,omitempty"`
 	DiagnosticsEnabled          bool            `json:"diagnostics_enabled,omitempty"`
 }
 
@@ -538,7 +542,227 @@ var (
 	metricsDB                   *sql.DB
 	perfMu                      sync.Mutex
 	perfByRoute                 = map[string][]float64{}
+	apiRateLimiter              = newAPIRateController(defaultAPIMaxRPM, minimumAPIRPMOnThrottle, defaultAPIBurst)
 )
+
+type apiRateController struct {
+	mu            sync.Mutex
+	targetRPM     int
+	currentRPM    int
+	minRPM        int
+	burstTokens   float64
+	tokens        float64
+	lastRefill    time.Time
+	recoverAfter  time.Time
+	backoffUntil  time.Time
+	cycleStart    time.Time
+	cycleDeadline time.Time
+	cycleUsed     int
+}
+
+func newAPIRateController(targetRPM, minRPM, burst int) *apiRateController {
+	target := normalizeAPIMaxRPM(targetRPM)
+	min := normalizeAPIMinRPM(minRPM, target)
+	if burst <= 0 {
+		burst = defaultAPIBurst
+	}
+	now := time.Now()
+	return &apiRateController{
+		targetRPM:    target,
+		currentRPM:   target,
+		minRPM:       min,
+		burstTokens:  float64(burst),
+		tokens:       float64(burst),
+		lastRefill:   now,
+		recoverAfter: now,
+	}
+}
+
+func (c *apiRateController) applyConfig(targetRPM int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	target := normalizeAPIMaxRPM(targetRPM)
+	c.targetRPM = target
+	c.minRPM = normalizeAPIMinRPM(minimumAPIRPMOnThrottle, target)
+	if c.currentRPM > target {
+		c.currentRPM = target
+	}
+	if c.currentRPM < c.minRPM {
+		c.currentRPM = c.minRPM
+	}
+}
+
+func (c *apiRateController) beginCycle(now, deadline time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cycleStart = now.UTC()
+	c.cycleDeadline = deadline.UTC()
+	c.cycleUsed = 0
+}
+
+func (c *apiRateController) endCycle(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cycleStart.IsZero() {
+		return
+	}
+	duration := now.Sub(c.cycleStart)
+	if duration <= 0 {
+		duration = time.Second
+	}
+	perMin := float64(c.cycleUsed) / duration.Minutes()
+	log.Printf("[API-RATE] cycle usage requests=%d duration=%s avg_rpm=%.1f current_rpm=%d target_rpm=%d", c.cycleUsed, duration.Truncate(time.Millisecond), perMin, c.currentRPM, c.targetRPM)
+}
+
+func (c *apiRateController) refillLocked(now time.Time) {
+	if c.lastRefill.IsZero() {
+		c.lastRefill = now
+		return
+	}
+	elapsed := now.Sub(c.lastRefill).Seconds()
+	if elapsed <= 0 {
+		return
+	}
+	if c.currentRPM < c.targetRPM && !c.recoverAfter.IsZero() && now.After(c.recoverAfter) {
+		c.currentRPM += 10
+		if c.currentRPM > c.targetRPM {
+			c.currentRPM = c.targetRPM
+		}
+		c.recoverAfter = now.Add(20 * time.Second)
+		log.Printf("[API-RATE] adaptive recovery current_rpm=%d target_rpm=%d", c.currentRPM, c.targetRPM)
+	}
+	ratePerSecond := float64(c.currentRPM) / 60.0
+	c.tokens += elapsed * ratePerSecond
+	if c.tokens > c.burstTokens {
+		c.tokens = c.burstTokens
+	}
+	c.lastRefill = now
+}
+
+func (c *apiRateController) waitTurn() {
+	for {
+		now := time.Now()
+		c.mu.Lock()
+		c.refillLocked(now)
+		if now.Before(c.backoffUntil) {
+			wait := c.backoffUntil.Sub(now)
+			c.mu.Unlock()
+			if wait > 0 {
+				time.Sleep(wait)
+			}
+			continue
+		}
+		if c.tokens >= 1.0 {
+			c.tokens -= 1.0
+			c.cycleUsed++
+			c.mu.Unlock()
+			return
+		}
+		missing := 1.0 - c.tokens
+		rps := float64(c.currentRPM) / 60.0
+		if rps < 0.1 {
+			rps = 0.1
+		}
+		wait := time.Duration((missing / rps) * float64(time.Second))
+		if wait < 15*time.Millisecond {
+			wait = 15 * time.Millisecond
+		}
+		c.mu.Unlock()
+		time.Sleep(wait)
+	}
+}
+
+func (c *apiRateController) noteRateLimit(wait time.Duration) {
+	if wait < time.Second {
+		wait = 2 * time.Second
+	}
+	if wait > 2*time.Minute {
+		wait = 2 * time.Minute
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.currentRPM -= 60
+	if c.currentRPM < c.minRPM {
+		c.currentRPM = c.minRPM
+	}
+	until := time.Now().Add(wait)
+	if until.After(c.backoffUntil) {
+		c.backoffUntil = until
+	}
+	c.recoverAfter = until.Add(30 * time.Second)
+	log.Printf("[API-RATE] 429 adaptive throttle wait=%s current_rpm=%d min_rpm=%d", wait, c.currentRPM, c.minRPM)
+}
+
+func (c *apiRateController) cyclePressure() (time.Duration, int, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now().UTC()
+	remaining := time.Duration(0)
+	if !c.cycleDeadline.IsZero() {
+		remaining = c.cycleDeadline.Sub(now)
+		if remaining < 0 {
+			remaining = 0
+		}
+	}
+	throttled := c.currentRPM < c.targetRPM
+	return remaining, c.currentRPM, throttled
+}
+
+func shouldDeferTier2Enrichment() bool {
+	remaining, rpm, throttled := apiRateLimiter.cyclePressure()
+	if remaining == 0 {
+		return false
+	}
+	if remaining < 45*time.Second {
+		return true
+	}
+	if throttled && rpm <= 340 && remaining < 2*time.Minute {
+		return true
+	}
+	return false
+}
+
+func shouldDeferTier3Enrichment() bool {
+	remaining, rpm, throttled := apiRateLimiter.cyclePressure()
+	if remaining == 0 {
+		return false
+	}
+	if remaining < 90*time.Second {
+		return true
+	}
+	if throttled && rpm <= 380 && remaining < 3*time.Minute {
+		return true
+	}
+	return false
+}
+
+func shouldUseBlockedCountOnlyFallback() bool {
+	remaining, rpm, throttled := apiRateLimiter.cyclePressure()
+	if remaining == 0 {
+		return false
+	}
+	return throttled && rpm <= 320 && remaining < 30*time.Second
+}
+
+func parseRetryAfter(raw string) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(raw); err == nil {
+		if secs < 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if ts, err := http.ParseTime(raw); err == nil {
+		d := time.Until(ts)
+		if d > 0 {
+			return d
+		}
+	}
+	return 0
+}
 
 func dashboardVersionLabel() string {
 	if v := strings.TrimSpace(buildVersion); v != "" {
@@ -585,6 +809,7 @@ func main() {
 	} else {
 		fmt.Printf("Loaded configuration for PCE: %s\n", config.PCEURL)
 	}
+	apiRateLimiter.applyConfig(configuredAPIMaxRPM())
 	enforceSQLiteBackendConfig()
 	initDataDir()
 	initBlockedPortStore()
@@ -692,6 +917,8 @@ func backgroundCollector() {
 func runCollectionCycle() {
 	isRefreshing.Store(true)
 	log.Println("[COLLECTOR] Starting PCE data collection cycle...")
+	cycleStart := time.Now().UTC()
+	apiRateLimiter.beginCycle(cycleStart, cycleStart.Add(5*time.Minute))
 
 	newStats := getIllumioStats()
 
@@ -700,6 +927,7 @@ func runCollectionCycle() {
 	statsMutex.Unlock()
 	saveRollingState()
 	processWebhookAlerts(newStats)
+	apiRateLimiter.endCycle(time.Now().UTC())
 
 	isRefreshing.Store(false)
 	log.Println("[COLLECTOR] Cycle complete.")
@@ -5531,6 +5759,16 @@ func configuredHistoryDays() int {
 	return configuredHistoryDaysLocked()
 }
 
+func configuredAPIMaxRPM() int {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredAPIMaxRPMLocked()
+}
+
+func configuredAPIMaxRPMLocked() int {
+	return normalizeAPIMaxRPM(config.APIMaxRPM)
+}
+
 func configuredHistoryDaysLocked() int {
 	days := config.HistoryDays
 	if days <= 0 {
@@ -6769,21 +7007,44 @@ func collectBlockedTargetPaced(
 		Result: BlockedTargetResult{Name: target.Name, Kind: target.Kind},
 	}
 	verbose := verboseBlockedLoggingEnabled()
+	hostMetricsEnabled := configuredBlockedHostMetricsEnabled()
+	collectTier2 := portDailyEnabled && !shouldDeferTier2Enrichment()
+	collectTier3 := hostMetricsEnabled && !shouldDeferTier3Enrichment()
 	queryBaseline := forceBaseline || baseline || !hasTargetBaseline(target.Name)
+	useCountOnlyFallback := !queryBaseline && shouldUseBlockedCountOnlyFallback()
+	needsDetailedQuery := collectTier2 || collectTier3 || (!queryBaseline && !useCountOnlyFallback)
+	warnParts := make([]string, 0, 2)
+	if portDailyEnabled && !collectTier2 {
+		warnParts = append(warnParts, "deferred blocked port/proto enrichment due API budget pressure")
+	}
+	if hostMetricsEnabled && !collectTier3 {
+		warnParts = append(warnParts, "deferred blocked host enrichment due API budget pressure")
+	}
+	if useCountOnlyFallback {
+		warnParts = append(warnParts, "used count-only blocked query fallback due cycle deadline pressure")
+	}
 	var qRes trafficQueryResult
 	var err error
 	if queryBaseline {
 		if verbose {
 			log.Printf("[BLOCKED] baseline query target=%s window=%s..%s", target.Name, nowUTC.Add(-24*time.Hour).UTC().Format(time.RFC3339), nowUTC.UTC().Format(time.RFC3339))
 		}
-		if configuredBlockedHostMetricsEnabled() || portDailyEnabled {
+		if hostMetricsEnabled && !collectTier3 {
+			if err := sqliteClearBlockedHost5mTarget(target.Name); err != nil {
+				log.Printf("[BLOCKED] baseline host snapshot reset failed target=%s err=%v", target.Name, err)
+			}
+		}
+		if needsDetailedQuery {
 			var portCounts map[string]int
+			var hostCounts map[string]hostTrafficCount
 			var samples []blockedFlowSample
-			qRes, portCounts, _, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
-			res.CurrentPorts = portCounts
+			qRes, portCounts, hostCounts, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+			if collectTier2 {
+				res.CurrentPorts = portCounts
+			}
 			res.CurrentSamples = samples
 			if err == nil {
-				if configuredBlockedHostMetricsEnabled() {
+				if collectTier3 {
 					if err := sqliteClearBlockedHost5mTarget(target.Name); err != nil {
 						log.Printf("[BLOCKED] baseline host snapshot reset failed target=%s err=%v", target.Name, err)
 					}
@@ -6791,10 +7052,19 @@ func collectBlockedTargetPaced(
 				if err := sqliteClearBlockedFlowSeenTarget(target.Name); err != nil {
 					log.Printf("[BLOCKED] baseline flow-seen reset failed target=%s err=%v", target.Name, err)
 				}
-				res.CurrentCount, _, res.CurrentHosts = applyBlockedFlowSamples(target.Name, nowUTC, samples)
+				currentCount, _, dedupHosts := applyBlockedFlowSamples(target.Name, nowUTC, samples)
+				res.CurrentCount = currentCount
+				if collectTier3 {
+					if len(dedupHosts) > 0 {
+						res.CurrentHosts = dedupHosts
+					} else {
+						res.CurrentHosts = hostCounts
+					}
+				}
 			}
 		} else {
 			qRes, err = getBlockedCountForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+			res.CurrentCount = qRes.Count
 		}
 		res.BaselineCount = qRes.Count
 		res.NewlyBaselined = err == nil
@@ -6802,16 +7072,30 @@ func collectBlockedTargetPaced(
 		if verbose {
 			log.Printf("[BLOCKED] delta query target=%s window=%s..%s include_ports=%t", target.Name, blockedDeltaStart.UTC().Format(time.RFC3339), nowUTC.UTC().Format(time.RFC3339), portDailyEnabled)
 		}
-		var portCounts map[string]int
-		var samples []blockedFlowSample
-		qRes, portCounts, _, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
-		res.CurrentPorts = portCounts
-		res.CurrentSamples = samples
-		res.RawCount = qRes.Count
-		res.CurrentCount, _, res.CurrentHosts = applyBlockedFlowSamples(target.Name, nowUTC, samples)
+		if needsDetailedQuery {
+			var portCounts map[string]int
+			var samples []blockedFlowSample
+			qRes, portCounts, _, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+			if collectTier2 {
+				res.CurrentPorts = portCounts
+			}
+			res.CurrentSamples = samples
+			res.RawCount = qRes.Count
+			res.CurrentCount, _, res.CurrentHosts = applyBlockedFlowSamples(target.Name, nowUTC, samples)
+			if !collectTier3 {
+				res.CurrentHosts = nil
+			}
+		} else {
+			qRes, err = getBlockedCountForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+			res.RawCount = qRes.Count
+			res.CurrentCount = qRes.Count
+		}
 	}
 	res.Result.Count = qRes.Count
-	res.WarningMessage = strings.TrimSpace(qRes.Warning)
+	if warn := strings.TrimSpace(qRes.Warning); warn != "" {
+		warnParts = append(warnParts, warn)
+	}
+	res.WarningMessage = strings.Join(warnParts, " | ")
 	if err != nil {
 		res.Result.Status = FetchStatus{Success: false, Error: err.Error()}
 		if verbose {
@@ -8348,13 +8632,13 @@ func apiCallRaw(url, method string, payload interface{}) ([]byte, error) {
 
 func apiCallRawWithClient(client *http.Client, url, method string, payload interface{}) ([]byte, error) {
 	reloadConfigIfFileChanged()
-	var body io.Reader
+	var payloadBytes []byte
 	if payload != nil {
 		b, err := json.Marshal(payload)
 		if err != nil {
 			return nil, fmt.Errorf("encode request payload: %w", err)
 		}
-		body = bytes.NewBuffer(b)
+		payloadBytes = b
 	}
 
 	configMutex.RLock()
@@ -8362,34 +8646,60 @@ func apiCallRawWithClient(client *http.Client, url, method string, payload inter
 	apiSecret := config.APISecret
 	configMutex.RUnlock()
 
-	log.Printf("[API] %s %s", method, url)
-	req, err := http.NewRequest(method, url, body)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	req.SetBasicAuth(apiKey, apiSecret)
-	req.Header.Set("Accept", "application/json")
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
 	if client == nil {
 		client = httpClient
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	const maxAttempts = 5
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		apiRateLimiter.waitTurn()
+		var body io.Reader
+		if payloadBytes != nil {
+			body = bytes.NewReader(payloadBytes)
+		}
+		log.Printf("[API] %s %s", method, url)
+		req, err := http.NewRequest(method, url, body)
+		if err != nil {
+			return nil, fmt.Errorf("build request: %w", err)
+		}
+		req.SetBasicAuth(apiKey, apiSecret)
+		req.Header.Set("Accept", "application/json")
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response body: %w", err)
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			break
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("read response body: %w", readErr)
+			break
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			wait := parseRetryAfter(resp.Header.Get("Retry-After"))
+			if wait == 0 {
+				wait = time.Duration(2*attempt) * time.Second
+			}
+			apiRateLimiter.noteRateLimit(wait)
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+			if attempt < maxAttempts {
+				continue
+			}
+			break
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		}
+		return respBody, nil
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	if lastErr == nil {
+		lastErr = errors.New("request failed after retries")
 	}
-	return respBody, nil
+	return nil, lastErr
 }
 
 func resolveHrefToURL(href string) string {
@@ -8468,6 +8778,7 @@ func loadConfigFile() (Config, time.Time, bool) {
 	cfg.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(cfg.BlockedPortStoreBackend)
 	cfg.BlockedRollingDedupeBackend = normalizeBlockedRollingDedupeBackend(cfg.BlockedRollingDedupeBackend)
 	cfg.BlockedHostRetentionMode = normalizeBlockedHostRetentionMode(cfg.BlockedHostRetentionMode)
+	cfg.APIMaxRPM = normalizeAPIMaxRPM(cfg.APIMaxRPM)
 	cfg.HistoryDays = normalizeHistoryDays(cfg.HistoryDays)
 	cfg.TrafficTargets = sanitizeTargets(cfg.TrafficTargets)
 	cfg.SourceExclusions = sanitizeTargets(cfg.SourceExclusions)
@@ -8491,6 +8802,35 @@ func normalizeHistoryDays(days int) int {
 	return days
 }
 
+func normalizeAPIMaxRPM(v int) int {
+	if v <= 0 {
+		return defaultAPIMaxRPM
+	}
+	if v < 120 {
+		return 120
+	}
+	if v > 490 {
+		return 490
+	}
+	return v
+}
+
+func normalizeAPIMinRPM(v int, max int) int {
+	if max <= 0 {
+		max = defaultAPIMaxRPM
+	}
+	if v <= 0 {
+		v = minimumAPIRPMOnThrottle
+	}
+	if v > max {
+		v = max
+	}
+	if v < 60 {
+		v = 60
+	}
+	return v
+}
+
 func reloadConfigIfFileChanged() {
 	st, err := os.Stat(configFileName)
 	if err != nil {
@@ -8512,6 +8852,7 @@ func reloadConfigIfFileChanged() {
 	config = cfg
 	configModTime = modTime
 	configMutex.Unlock()
+	apiRateLimiter.applyConfig(cfg.APIMaxRPM)
 	log.Printf("[CONFIG] reloaded config.json from disk")
 }
 
