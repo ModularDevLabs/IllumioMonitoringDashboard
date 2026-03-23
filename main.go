@@ -114,6 +114,7 @@ type Config struct {
 	BlockedRollingDedupeBackend string          `json:"blocked_rolling_dedupe_backend,omitempty"`
 	BlockedHostMetricsEnabled   *bool           `json:"blocked_host_metrics_enabled,omitempty"`
 	BlockedHostRetentionMode    string          `json:"blocked_host_retention_mode,omitempty"`
+	RulesMetricsEnabled         *bool           `json:"rules_metrics_enabled,omitempty"`
 	DiagnosticsEnabled          bool            `json:"diagnostics_enabled,omitempty"`
 }
 
@@ -167,6 +168,12 @@ type DashboardStats struct {
 		Workloads []string    `json:"workloads,omitempty"`
 		Status    FetchStatus `json:"status"`
 	} `json:"tampering"`
+	Rules struct {
+		Enabled  bool        `json:"enabled"`
+		Rulesets int         `json:"rulesets"`
+		Rules    int         `json:"rules"`
+		Status   FetchStatus `json:"status"`
+	} `json:"rules"`
 	Blocked struct {
 		PROD          int                   `json:"prod"`
 		NONPROD       int                   `json:"nonprod"`
@@ -413,6 +420,8 @@ type venDailySnapshot struct {
 	WarningMax       int `json:"warning_max"`
 	ErrorMax         int `json:"error_max"`
 	TamperingMax     int `json:"tampering_max,omitempty"`
+	RulesetsMax      int `json:"rulesets_max,omitempty"`
+	RulesMax         int `json:"rules_max,omitempty"`
 	ModeIdleMax      int `json:"mode_idle_max,omitempty"`
 	ModeVisMax       int `json:"mode_vis_max,omitempty"`
 	ModeSelectiveMax int `json:"mode_selective_max,omitempty"`
@@ -425,6 +434,8 @@ type venDailyRecord struct {
 	WarningMax       int    `json:"warning_max"`
 	ErrorMax         int    `json:"error_max"`
 	TamperingMax     int    `json:"tampering_max,omitempty"`
+	RulesetsMax      int    `json:"rulesets_max,omitempty"`
+	RulesMax         int    `json:"rules_max,omitempty"`
 	ModeIdleMax      int    `json:"mode_idle_max,omitempty"`
 	ModeVisMax       int    `json:"mode_vis_max,omitempty"`
 	ModeSelectiveMax int    `json:"mode_selective_max,omitempty"`
@@ -648,6 +659,7 @@ func initPendingStats() {
 	stats.VENStatus.Status = pending
 	stats.Workloads.Status = pending
 	stats.Tampering.Status = pending
+	stats.Rules.Status = pending
 	stats.Blocked.Status = pending
 	stats.Blocked.PRODStatus = pending
 	stats.Blocked.NONPRODStatus = pending
@@ -816,6 +828,16 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.TrendDaily = modeDailyTrendSeries(mode, configuredHistoryDays())
 		resp.Trend = resp.Trend24h
 	}
+	if metric == "policy_rulesets" {
+		resp.Trend24h = nil
+		resp.TrendDaily = rulesetsDailyTrendSeries(configuredHistoryDays())
+		resp.Trend = resp.TrendDaily
+	}
+	if metric == "policy_rules" {
+		resp.Trend24h = nil
+		resp.TrendDaily = rulesDailyTrendSeries(configuredHistoryDays())
+		resp.Trend = resp.TrendDaily
+	}
 	if metric == "blocked_target" && target != "" {
 		baseURL := ""
 		configMutex.RLock()
@@ -932,6 +954,10 @@ func handleExportDrilldownCSV(w http.ResponseWriter, r *http.Request) {
 	} else if metric == "tampering" {
 		trend24h = tamperingTrendSeries()
 		trendDaily = tamperingDailyTrendSeries(configuredHistoryDays())
+	} else if metric == "policy_rulesets" {
+		trendDaily = rulesetsDailyTrendSeries(configuredHistoryDays())
+	} else if metric == "policy_rules" {
+		trendDaily = rulesDailyTrendSeries(configuredHistoryDays())
 	} else {
 		trend24h = trend
 	}
@@ -1037,6 +1063,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		blockedRollingDedupeBackend := configuredBlockedRollingDedupeBackendLocked()
 		blockedHostMetricsEnabled := configuredBlockedHostMetricsEnabledLocked()
 		blockedHostRetentionMode := configuredBlockedHostRetentionModeLocked()
+		rulesMetricsEnabled := configuredRulesMetricsEnabledLocked()
 		diagnosticsEnabled := configuredDiagnosticsEnabledLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := config.WebhookEnabled && webhookURL != ""
@@ -1083,6 +1110,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"blocked_rolling_dedupe_backend": blockedRollingDedupeBackend,
 			"blocked_host_metrics_enabled":   blockedHostMetricsEnabled,
 			"blocked_host_retention_mode":    blockedHostRetentionMode,
+			"rules_metrics_enabled":          rulesMetricsEnabled,
 			"diagnostics_enabled":            diagnosticsEnabled,
 			"webhook_url":                    webhookURL,
 			"webhook_enabled":                webhookEnabled,
@@ -1122,6 +1150,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			BlockedRollingDedupeBackend *string         `json:"blocked_rolling_dedupe_backend"`
 			BlockedHostMetricsEnabled   *bool           `json:"blocked_host_metrics_enabled"`
 			BlockedHostRetentionMode    *string         `json:"blocked_host_retention_mode"`
+			RulesMetricsEnabled         *bool           `json:"rules_metrics_enabled"`
 			DiagnosticsEnabled          *bool           `json:"diagnostics_enabled"`
 			WebhookURL                  *string         `json:"webhook_url"`
 			WebhookEnabled              *bool           `json:"webhook_enabled"`
@@ -1226,6 +1255,10 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		if req.BlockedHostRetentionMode != nil {
 			config.BlockedHostRetentionMode = normalizeBlockedHostRetentionMode(*req.BlockedHostRetentionMode)
 		}
+		if req.RulesMetricsEnabled != nil {
+			v := *req.RulesMetricsEnabled
+			config.RulesMetricsEnabled = &v
+		}
 		if req.DiagnosticsEnabled != nil {
 			config.DiagnosticsEnabled = *req.DiagnosticsEnabled
 		}
@@ -1277,6 +1310,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		blockedRollingDedupeBackend := configuredBlockedRollingDedupeBackendLocked()
 		blockedHostMetricsEnabled := configuredBlockedHostMetricsEnabledLocked()
 		blockedHostRetentionMode := configuredBlockedHostRetentionModeLocked()
+		rulesMetricsEnabled := configuredRulesMetricsEnabledLocked()
 		diagnosticsEnabled := configuredDiagnosticsEnabledLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := configuredWebhookEnabledLocked()
@@ -1322,6 +1356,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"blocked_rolling_dedupe_backend": blockedRollingDedupeBackend,
 			"blocked_host_metrics_enabled":   blockedHostMetricsEnabled,
 			"blocked_host_retention_mode":    blockedHostRetentionMode,
+			"rules_metrics_enabled":          rulesMetricsEnabled,
 			"diagnostics_enabled":            diagnosticsEnabled,
 			"webhook_url":                    webhookURL,
 			"webhook_enabled":                webhookEnabled,
@@ -2730,6 +2765,10 @@ func drilldownData(metric, target string, stats DashboardStats) (string, []strin
 		return "Unmanaged Workloads", append([]string(nil), stats.Workloads.ModeMembers["unmanaged"]...), modeTrendSeries("unmanaged")
 	case "tampering":
 		return "Tampered VENs/Workloads (Deduped)", append([]string(nil), stats.Tampering.Workloads...), tamperingTrendSeries()
+	case "policy_rulesets":
+		return "Policy Rulesets (Daily)", nil, rulesetsDailyTrendSeries(configuredHistoryDays())
+	case "policy_rules":
+		return "Policy Rules (Daily)", nil, rulesDailyTrendSeries(configuredHistoryDays())
 	case "blocked_target":
 		target = strings.TrimSpace(target)
 		if target == "" {
@@ -3185,6 +3224,84 @@ func tamperingDailyTrendSeries(keepDays int) []TrendPoint {
 	}
 	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
 	return points
+}
+
+func rulesetsDailyTrendSeries(keepDays int) []TrendPoint {
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	loc := configuredDayLocation()
+	cutoff := localDayStart(time.Now(), loc).AddDate(0, 0, -keepDays)
+	venHistoryMu.Lock()
+	defer venHistoryMu.Unlock()
+	points := make([]TrendPoint, 0, len(venDaily))
+	for day, snap := range venDaily {
+		d, err := parseDayKeyInLocation(day, loc)
+		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		points = append(points, TrendPoint{
+			Timestamp: d.Add(12 * time.Hour).UTC(),
+			Value:     snap.RulesetsMax,
+		})
+	}
+	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
+	return points
+}
+
+func rulesDailyTrendSeries(keepDays int) []TrendPoint {
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	loc := configuredDayLocation()
+	cutoff := localDayStart(time.Now(), loc).AddDate(0, 0, -keepDays)
+	venHistoryMu.Lock()
+	defer venHistoryMu.Unlock()
+	points := make([]TrendPoint, 0, len(venDaily))
+	for day, snap := range venDaily {
+		d, err := parseDayKeyInLocation(day, loc)
+		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		points = append(points, TrendPoint{
+			Timestamp: d.Add(12 * time.Hour).UTC(),
+			Value:     snap.RulesMax,
+		})
+	}
+	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
+	return points
+}
+
+func policyDailySnapshot(nowUTC time.Time) (rulesets int, rules int, exists bool) {
+	loc := configuredDayLocation()
+	dayKey := nowUTC.In(loc).Format("2006-01-02")
+	venHistoryMu.Lock()
+	snap, ok := venDaily[dayKey]
+	venHistoryMu.Unlock()
+	return snap.RulesetsMax, snap.RulesMax, ok
+}
+
+func updatePolicyDailyHistory(nowUTC time.Time, rulesets int, rules int) {
+	loc := configuredDayLocation()
+	dayKey := nowUTC.In(loc).Format("2006-01-02")
+	save := false
+	venHistoryMu.Lock()
+	snap := venDaily[dayKey]
+	if rulesets > snap.RulesetsMax {
+		snap.RulesetsMax = rulesets
+		save = true
+	}
+	if rules > snap.RulesMax {
+		snap.RulesMax = rules
+		save = true
+	}
+	if save {
+		venDaily[dayKey] = snap
+	}
+	venHistoryMu.Unlock()
+	if save {
+		saveVENHistory()
+	}
 }
 
 func blockedTargetExists(target string, stats DashboardStats) bool {
@@ -3791,6 +3908,92 @@ func getAllVENsWithFilters(baseURL string, extraFilters map[string]string) ([]ma
 	return all, nil
 }
 
+func getPolicyCounts(baseURL string) (int, int, error) {
+	rulesets, rsErr := countCollectionWithFallback(baseURL, []string{
+		"/sec_policy/active/rule_sets",
+		"/sec_policy/draft/rule_sets",
+		"/rule_sets",
+	})
+	rules, rErr := countCollectionWithFallback(baseURL, []string{
+		"/sec_policy/active/rules",
+		"/sec_policy/draft/rules",
+		"/rules",
+	})
+	if rsErr != nil && rErr != nil {
+		return 0, 0, fmt.Errorf("rulesets: %v | rules: %v", rsErr, rErr)
+	}
+	if rsErr != nil {
+		return rulesets, rules, fmt.Errorf("rulesets: %v", rsErr)
+	}
+	if rErr != nil {
+		return rulesets, rules, fmt.Errorf("rules: %v", rErr)
+	}
+	return rulesets, rules, nil
+}
+
+func countCollectionWithFallback(baseURL string, paths []string) (int, error) {
+	var lastErr error
+	for _, p := range paths {
+		n, err := countCollectionEndpoint(baseURL + p)
+		if err == nil {
+			return n, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no candidate endpoints configured")
+	}
+	return 0, lastErr
+}
+
+func countCollectionEndpoint(endpoint string) (int, error) {
+	const pageSize = 500
+	const maxPages = 500
+	seen := make(map[string]struct{}, pageSize)
+	for page := 0; page < maxPages; page++ {
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return 0, err
+		}
+		q := u.Query()
+		q.Set("max_results", strconv.Itoa(pageSize))
+		q.Set("skip", strconv.Itoa(page*pageSize))
+		u.RawQuery = q.Encode()
+		batch, err := fetchCollectionPage(u.String())
+		if err != nil {
+			if page == 0 {
+				return 0, err
+			}
+			return len(seen), nil
+		}
+		if len(batch) == 0 {
+			break
+		}
+		newCount := 0
+		for _, rec := range batch {
+			key := strings.TrimSpace(mapString(rec, "href"))
+			if key == "" {
+				key = strings.TrimSpace(mapString(rec, "name"))
+			}
+			if key == "" {
+				key = strings.TrimSpace(mapString(rec, "id"))
+			}
+			if key == "" {
+				key = fmt.Sprintf("page=%d,index=%d", page, newCount)
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			newCount++
+		}
+		if len(batch) < pageSize || newCount == 0 {
+			break
+		}
+	}
+	return len(seen), nil
+}
+
 func stringFromMap(m map[string]interface{}, keys ...string) string {
 	cur := interface{}(m)
 	for _, k := range keys {
@@ -4044,6 +4247,28 @@ func getIllumioStats() DashboardStats {
 		stats.Tampering.Status = FetchStatus{Success: true, Error: "Events partial: " + tErr.Error()}
 	} else {
 		stats.Tampering.Status = FetchStatus{Success: true}
+	}
+	rulesEnabled := configuredRulesMetricsEnabled()
+	stats.Rules.Enabled = rulesEnabled
+	if rulesEnabled {
+		currentRulesets, currentRules, hasDaily := policyDailySnapshot(nowUTC)
+		if !hasDaily {
+			rulesetsCount, rulesCount, rErr := getPolicyCounts(baseURL)
+			log.Printf("[COLLECTOR] Policy rulesets=%d rules=%d err=%v", rulesetsCount, rulesCount, rErr)
+			if rErr != nil {
+				stats.Rules.Status = FetchStatus{Success: false, Error: "Policy: " + rErr.Error()}
+			} else {
+				stats.Rules.Status = FetchStatus{Success: true}
+				updatePolicyDailyHistory(nowUTC, rulesetsCount, rulesCount)
+			}
+			currentRulesets, currentRules, _ = policyDailySnapshot(nowUTC)
+		} else {
+			stats.Rules.Status = FetchStatus{Success: true}
+		}
+		stats.Rules.Rulesets = currentRulesets
+		stats.Rules.Rules = currentRules
+	} else {
+		stats.Rules.Status = FetchStatus{Success: true, Error: "Disabled in settings"}
 	}
 
 	targets := configuredTrafficTargets()
@@ -5047,6 +5272,19 @@ func configuredBlockedHostRetentionMode() string {
 
 func configuredBlockedHostRetentionModeLocked() string {
 	return normalizeBlockedHostRetentionMode(config.BlockedHostRetentionMode)
+}
+
+func configuredRulesMetricsEnabled() bool {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredRulesMetricsEnabledLocked()
+}
+
+func configuredRulesMetricsEnabledLocked() bool {
+	if config.RulesMetricsEnabled == nil {
+		return false
+	}
+	return *config.RulesMetricsEnabled
 }
 
 func configuredBlockedRollingDedupeBackend() string {
@@ -8847,6 +9085,8 @@ func loadVENHistory() {
 			WarningMax:       rec.WarningMax,
 			ErrorMax:         rec.ErrorMax,
 			TamperingMax:     rec.TamperingMax,
+			RulesetsMax:      rec.RulesetsMax,
+			RulesMax:         rec.RulesMax,
 			ModeIdleMax:      rec.ModeIdleMax,
 			ModeVisMax:       rec.ModeVisMax,
 			ModeSelectiveMax: rec.ModeSelectiveMax,
@@ -9407,6 +9647,8 @@ func saveVENHistory() {
 			WarningMax:       snap.WarningMax,
 			ErrorMax:         snap.ErrorMax,
 			TamperingMax:     snap.TamperingMax,
+			RulesetsMax:      snap.RulesetsMax,
+			RulesMax:         snap.RulesMax,
 			ModeIdleMax:      snap.ModeIdleMax,
 			ModeVisMax:       snap.ModeVisMax,
 			ModeSelectiveMax: snap.ModeSelectiveMax,
@@ -9620,6 +9862,14 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 	if !writeRow("Tampered VENs (Deduped)", strconv.Itoa(tamperedCount)) {
 		return
 	}
+	if snapshot.Rules.Enabled {
+		if !writeRow("Policy Rulesets (Today)", strconv.Itoa(snapshot.Rules.Rulesets)) {
+			return
+		}
+		if !writeRow("Policy Rules (Today)", strconv.Itoa(snapshot.Rules.Rules)) {
+			return
+		}
+	}
 	for _, t := range snapshot.Blocked.Targets {
 		if !writeRow(fmt.Sprintf("Blocked %s (24h)", t.Name), strconv.Itoa(t.Count)) {
 			return
@@ -9672,6 +9922,18 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 	for _, p := range venDailyTrendSeries("error", configuredHistoryDays()) {
 		if !writeRow("VEN Error Daily", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
 			return
+		}
+	}
+	if snapshot.Rules.Enabled {
+		for _, p := range rulesetsDailyTrendSeries(configuredHistoryDays()) {
+			if !writeRow("Policy Rulesets Daily", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
+				return
+			}
+		}
+		for _, p := range rulesDailyTrendSeries(configuredHistoryDays()) {
+			if !writeRow("Policy Rules Daily", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
+				return
+			}
 		}
 	}
 	for _, t := range snapshot.Blocked.Targets {

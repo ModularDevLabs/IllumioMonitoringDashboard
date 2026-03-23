@@ -38,6 +38,18 @@ Experimental feature branch updates (not merged to stable main):
 - Added `Collapse/Expand` control for `Blocked Ports (Daily Aggregate)` in blocked-target drilldown.
 - Standardized top banner title text across main/supporting pages to reduce visual context switching.
 
+### Policy Growth Metrics (Opt-In)
+- Added optional daily policy-growth tracking:
+  - `rules_metrics_enabled` (default `false`)
+  - collects total `rulesets` and total `rules` once per day
+  - persists in daily history with retention governed by `history_days`
+- Added Trend View policy section:
+  - `Policy Rulesets (Daily)`
+  - `Policy Rules (Daily)`
+- Added drilldown metrics for policy growth:
+  - `policy_rulesets`
+  - `policy_rules`
+
 ## v1.2.4 - 2026-03-18
 
 Stable release focused on tampering-data correctness, reconciliation reliability, and operator controls.

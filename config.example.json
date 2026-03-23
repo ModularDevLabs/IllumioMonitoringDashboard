@@ -12,6 +12,7 @@
   "blocked_rolling_dedupe_backend": "sqlite",
   "blocked_host_metrics_enabled": false,
   "blocked_host_retention_mode": "rolling_24h_plus_daily",
+  "rules_metrics_enabled": false,
   "diagnostics_enabled": false,
   "blocked_ma_window": 12,
   "blocked_anomaly_pct": 50,

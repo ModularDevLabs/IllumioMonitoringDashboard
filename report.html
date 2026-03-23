@@ -206,6 +206,10 @@
             <summary class="enforcement-summary" id="ven-summary">VEN Status Trends</summary>
             <div class="chart-grid" id="charts-ven"></div>
         </details>
+        <details class="enforcement-block mt-2" id="policy-details">
+            <summary class="enforcement-summary" id="policy-summary">Policy Growth Trends</summary>
+            <div class="chart-grid" id="charts-policy"></div>
+        </details>
         <div id="blocked-groups" class="mt-2"></div>
         <details class="enforcement-block mt-2" id="enforcement-details">
             <summary class="enforcement-summary" id="enforcement-summary">Enforcement Mode Trends</summary>
@@ -427,11 +431,13 @@
     function captureExpansionState() {
         const anomalyDetails = document.getElementById('anomaly-details');
         const venDetails = document.getElementById('ven-details');
+        const policyDetails = document.getElementById('policy-details');
         const enforcementDetails = document.getElementById('enforcement-details');
 
         expansionState.sections = {
             anomaly: !!(anomalyDetails && anomalyDetails.open),
             ven: !!(venDetails && venDetails.open),
+            policy: !!(policyDetails && policyDetails.open),
             enforcement: !!(enforcementDetails && enforcementDetails.open)
         };
 
@@ -446,12 +452,15 @@
     function finalizeSectionSummariesAndExpansion() {
         const anomalyCount = chartCountByContainer['anomaly-outcomes'] || 0;
         const venCount = chartCountByContainer['charts-ven'] || 0;
+        const policyCount = chartCountByContainer['charts-policy'] || 0;
         const enforcementCount = chartCountByContainer['charts-enforcement'] || 0;
         const anomalySummary = document.getElementById('anomaly-summary');
         const venSummary = document.getElementById('ven-summary');
+        const policySummary = document.getElementById('policy-summary');
         const enforcementSummary = document.getElementById('enforcement-summary');
         if (anomalySummary) anomalySummary.textContent = `Anomaly Outcomes (${anomalyCount})`;
         if (venSummary) venSummary.textContent = `VEN Status Trends (${venCount})`;
+        if (policySummary) policySummary.textContent = `Policy Growth Trends (${policyCount})`;
         if (enforcementSummary) enforcementSummary.textContent = `Enforcement Mode Trends (${enforcementCount})`;
 
         blockedGroupsMeta.forEach((g) => {
@@ -462,12 +471,14 @@
 
         const anomalyDetails = document.getElementById('anomaly-details');
         const venDetails = document.getElementById('ven-details');
+        const policyDetails = document.getElementById('policy-details');
         const enforcementDetails = document.getElementById('enforcement-details');
 
         if (!expansionState.initialized) {
             if (chartMode === 'both') {
                 if (anomalyDetails) anomalyDetails.open = false;
                 if (venDetails) venDetails.open = false;
+                if (policyDetails) policyDetails.open = false;
                 if (enforcementDetails) enforcementDetails.open = false;
                 blockedGroupsMeta.forEach((g) => {
                     const d = document.getElementById(g.detailsId);
@@ -477,6 +488,7 @@
             }
             if (anomalyDetails) anomalyDetails.open = anomalyCount > 0;
             if (venDetails) venDetails.open = venCount > 0;
+            if (policyDetails) policyDetails.open = policyCount > 0;
             if (enforcementDetails) enforcementDetails.open = enforcementCount > 0;
             blockedGroupsMeta.forEach((g) => {
                 const d = document.getElementById(g.detailsId);
@@ -492,6 +504,10 @@
         if (venDetails) {
             const desired = expansionState.sections.ven;
             venDetails.open = venCount > 0 && desired;
+        }
+        if (policyDetails) {
+            const desired = expansionState.sections.policy;
+            policyDetails.open = policyCount > 0 && desired;
         }
         if (enforcementDetails) {
             const desired = expansionState.sections.enforcement;
@@ -561,6 +577,7 @@
         document.getElementById('anomaly-outcomes').innerHTML = '';
         document.getElementById('anomaly-notes').textContent = '';
         document.getElementById('charts-ven').innerHTML = '';
+        document.getElementById('charts-policy').innerHTML = '';
         document.getElementById('blocked-groups').innerHTML = '';
         document.getElementById('charts-enforcement').innerHTML = '';
         blockedGroupSeq = 0;
@@ -614,6 +631,10 @@
         addSummaryItem(summary, 'VEN Warnings', (stats.ven_status.warning || []).length);
         addSummaryItem(summary, 'VEN Errors', (stats.ven_status.error || []).length);
         addSummaryItem(summary, 'Tampered VENs (Deduped)', tamperedCount);
+        if (stats.rules?.enabled) {
+            addSummaryItem(summary, 'Policy Rulesets (Today)', Number(stats.rules.rulesets || 0));
+            addSummaryItem(summary, 'Policy Rules (Today)', Number(stats.rules.rules || 0));
+        }
         addSummaryItem(summary, `Anomalous Blocked Targets (${blockedAnomalyPct}% over MA)`, anomalousTargets.length);
         (stats.blocked.targets || []).forEach((t) => addSummaryItem(summary, `Blocked ${t.name} (24h)`, t.count || 0));
 
@@ -667,6 +688,28 @@
                 'charts-ven',
                 [{ label: `MA (${Number(cfg.daily_ma_window || 7)})`, points: filterDaily(tampDD.trend_ma_daily || []), color: '#17a2b8' }]
             );
+        }
+        if (stats.rules?.enabled) {
+            const [policyRulesetsDD, policyRulesDD] = await Promise.all([
+                fetchJSON('/api/drilldown?metric=policy_rulesets').catch(() => null),
+                fetchJSON('/api/drilldown?metric=policy_rules').catch(() => null)
+            ]);
+            if (policyRulesetsDD) {
+                renderLineChart(
+                    'Policy Rulesets (Daily)',
+                    filterDaily(policyRulesetsDD.trend_daily || policyRulesetsDD.trend || []),
+                    '#20c997',
+                    'charts-policy'
+                );
+            }
+            if (policyRulesDD) {
+                renderLineChart(
+                    'Policy Rules (Daily)',
+                    filterDaily(policyRulesDD.trend_daily || policyRulesDD.trend || []),
+                    '#0d6efd',
+                    'charts-policy'
+                );
+            }
         }
 
         const targets = stats.blocked.targets || [];

@@ -212,6 +212,14 @@
                                 </select>
                                 <div class="small text-muted mt-1">Choose 24h-only, 24h+daily, or daily-only hostname retention for blocked host drilldown/history.</div>
                             </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="rules-metrics-enabled">Policy Rulesets/Rules Daily Metrics</label>
+                                <select class="form-select form-select-sm" id="rules-metrics-enabled">
+                                    <option value="false">Disabled (default)</option>
+                                    <option value="true">Enabled</option>
+                                </select>
+                                <div class="small text-muted mt-1">When enabled, collects total rulesets and total rules once per day and adds policy growth charts in Trend View.</div>
+                            </div>
                             <div class="d-flex flex-wrap gap-2 mt-2">
                                 <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic-storage" type="button">Save Retention/Storage</button>
                             </div>
@@ -487,6 +495,7 @@
         let blockedRollingDedupeBackend = 'sqlite';
         let blockedHostMetricsEnabled = false;
         let blockedHostRetentionMode = 'rolling_24h_plus_daily';
+        let rulesMetricsEnabled = false;
         let blockedMAWindow = 12;
         let blockedAnomalyPct = 50;
         let blockedAnomalyBaseline = '5m';
@@ -585,6 +594,7 @@
             blockedRollingDedupeBackend = String(d.blocked_rolling_dedupe_backend || 'sqlite').trim().toLowerCase() === 'memory' ? 'memory' : 'sqlite';
             blockedHostMetricsEnabled = d.blocked_host_metrics_enabled === true;
             blockedHostRetentionMode = normalizeBlockedHostRetentionModeClient(d.blocked_host_retention_mode || 'rolling_24h_plus_daily');
+            rulesMetricsEnabled = d.rules_metrics_enabled === true;
             blockedMAWindow = Number(d.blocked_ma_window || 12);
             blockedAnomalyPct = Number(d.blocked_anomaly_pct || 50);
             blockedAnomalyBaseline = String(d.blocked_anomaly_baseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
@@ -610,6 +620,7 @@
             document.getElementById('blocked-rolling-dedupe-backend').value = blockedRollingDedupeBackend;
             document.getElementById('blocked-host-metrics-enabled').value = blockedHostMetricsEnabled ? 'true' : 'false';
             document.getElementById('blocked-host-retention-mode').value = blockedHostRetentionMode;
+            document.getElementById('rules-metrics-enabled').value = rulesMetricsEnabled ? 'true' : 'false';
             document.getElementById('blocked-ma-window').value = blockedMAWindow;
             document.getElementById('blocked-anomaly-pct').value = blockedAnomalyPct;
             document.getElementById('blocked-anomaly-baseline').value = blockedAnomalyBaseline;
@@ -739,11 +750,13 @@
                 const parsedBlockedRollingDedupeBackend = String(document.getElementById('blocked-rolling-dedupe-backend').value || blockedRollingDedupeBackend || 'sqlite').trim().toLowerCase() === 'memory' ? 'memory' : 'sqlite';
                 const parsedBlockedHostMetricsEnabled = String(document.getElementById('blocked-host-metrics-enabled').value || (blockedHostMetricsEnabled ? 'true' : 'false')) === 'true';
                 const parsedBlockedHostRetentionMode = normalizeBlockedHostRetentionModeClient(document.getElementById('blocked-host-retention-mode').value || blockedHostRetentionMode || 'rolling_24h_plus_daily');
+                const parsedRulesMetricsEnabled = String(document.getElementById('rules-metrics-enabled').value || (rulesMetricsEnabled ? 'true' : 'false')) === 'true';
                 payload.history_days = Math.floor(parsedDays);
                 payload.blocked_port_daily_enabled = parsedBlockedPortDailyEnabled;
                 payload.blocked_rolling_dedupe_backend = parsedBlockedRollingDedupeBackend;
                 payload.blocked_host_metrics_enabled = parsedBlockedHostMetricsEnabled;
                 payload.blocked_host_retention_mode = parsedBlockedHostRetentionMode;
+                payload.rules_metrics_enabled = parsedRulesMetricsEnabled;
             }
             if (saveAnomalyDefaults || (!saveRetentionStorage && !saveAnomalyDefaults)) {
                 let parsedMAWindow = Number(document.getElementById('blocked-ma-window').value || blockedMAWindow || 12);

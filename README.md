@@ -186,6 +186,7 @@ Runtime state is stored in a shared data directory:
   "blocked_port_daily_enabled": true,
   "blocked_port_store_backend": "sqlite",
   "blocked_rolling_dedupe_backend": "sqlite",
+  "rules_metrics_enabled": false,
   "diagnostics_enabled": false,
   "blocked_ma_window": 12,
   "blocked_anomaly_pct": 50,
@@ -227,6 +228,7 @@ Runtime state is stored in a shared data directory:
 | `blocked_rolling_dedupe_backend` | 24h blocked 5m rolling dedupe backend | `sqlite` | `sqlite` (recommended) or `memory`; controls unique-flow dedupe state used by 24h blocked rolling charts |
 | `blocked_host_metrics_enabled` | Enable blocked hostname inbound/outbound aggregation | `false` | When enabled, stores per-host blocked counts for blocked target drilldown tables |
 | `blocked_host_retention_mode` | Hostname retention mode | `rolling_24h_plus_daily` | `rolling_24h_only` keeps only 24h 5m snapshots; `rolling_24h_plus_daily` keeps 24h + daily host rollups; `daily_only` keeps daily host rollups only |
+| `rules_metrics_enabled` | Enable daily policy growth collection (rulesets/rules) | `false` | When enabled, collector runs one policy-count query per day and Trend View shows Policy Growth daily charts |
 | `diagnostics_enabled` | Enable diagnostics endpoint | `false` | When `true`, enables `GET /api/diagnostics/perf` for troubleshooting |
 | `blocked_ma_window` | Global 5m moving-average window points | `12` | Range `2..288` |
 | `blocked_anomaly_pct` | Global blocked anomaly threshold percent | `50` | Range `1..10000` |
@@ -344,6 +346,7 @@ Click these cards/badges to open detailed lists:
 - `GET /executive` is an executive summary page focused on outcomes vs risk signals
 - Report/trend pages include:
   - VEN trend charts (`24h (5m)` and `Daily`)
+  - Policy growth trend charts (`Daily`): total rulesets and total rules (when enabled)
   - Blocked trend charts per target in collapsible groups
   - Enforcement mode trend charts in a collapsible group
   - Click any chart to open a larger expanded view
@@ -394,6 +397,7 @@ Use `/settings` to manage webhook alerting:
 - `GET /api/drilldown?metric=<metric>`:
   - Drilldown list for a metric
   - metrics: `ven_warning`, `ven_error`, `mode_idle`, `mode_visibility_only`, `mode_selective`, `mode_full`, `mode_unmanaged`, `tampering`
+  - additional daily policy metrics (when enabled): `policy_rulesets`, `policy_rules`
   - for `metric=blocked_target`, optional flags:
     - `include_ports=1`: include persisted daily blocked port/proto aggregates
     - `include_live_ports=1`: accepted for compatibility; ignored (drilldown uses persisted history only)
@@ -413,7 +417,7 @@ Use `/settings` to manage webhook alerting:
   - Current `bind_address` and `public_base_url`
 - `PUT /api/config/targets`:
   - Save traffic/data settings
-  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "blocked_host_metrics_enabled": false, "blocked_host_retention_mode": "rolling_24h_plus_daily", "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
+  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "blocked_host_metrics_enabled": false, "blocked_host_retention_mode": "rolling_24h_plus_daily", "rules_metrics_enabled": false, "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
 - `POST /api/refresh`:
   - Trigger immediate collection cycle
 - `POST /api/reconcile/blocked-history`:
