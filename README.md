@@ -228,7 +228,7 @@ Runtime state is stored in a shared data directory:
 | `blocked_rolling_dedupe_backend` | 24h blocked 5m rolling dedupe backend | `sqlite` | `sqlite` (recommended) or `memory`; controls unique-flow dedupe state used by 24h blocked rolling charts |
 | `blocked_host_metrics_enabled` | Enable blocked hostname inbound/outbound aggregation | `false` | When enabled, stores per-host blocked counts for blocked target drilldown tables |
 | `blocked_host_retention_mode` | Hostname retention mode | `rolling_24h_plus_daily` | `rolling_24h_only` keeps only 24h 5m snapshots; `rolling_24h_plus_daily` keeps 24h + daily host rollups; `daily_only` keeps daily host rollups only |
-| `rules_metrics_enabled` | Enable daily policy growth collection (rulesets/rules) | `false` | When enabled, collector runs one policy-count query per day and Trend View shows Policy Growth daily charts |
+| `rules_metrics_enabled` | Enable daily policy growth collection (rulesets/rules) | `false` | When enabled, collector runs one policy-count query per day and Trend View shows Policy Growth daily charts. Data appears after the next collector cycle or immediately after `Refresh Now`. |
 | `diagnostics_enabled` | Enable diagnostics endpoint | `false` | When `true`, enables `GET /api/diagnostics/perf` for troubleshooting |
 | `blocked_ma_window` | Global 5m moving-average window points | `12` | Range `2..288` |
 | `blocked_anomaly_pct` | Global blocked anomaly threshold percent | `50` | Range `1..10000` |
@@ -392,6 +392,7 @@ Use `/settings` to manage traffic/data controls:
 3. Save targets (writes `config.json`)
 4. Click **Refresh Now** to apply immediately
 5. Set daily blocked history retention days (saved to `config.json`)
+6. If enabling `rules_metrics_enabled`, policy totals populate on the next collector cycle (5 minutes) unless you click **Refresh Now**.
 
 ### Hosting Settings
 
