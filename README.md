@@ -256,6 +256,35 @@ Runtime state is stored in a shared data directory:
 | `webhook_slack_icon_emoji` | Optional Slack emoji override | empty | Some endpoints ignore override |
 | `webhook_teams_title_prefix` | Optional Teams title prefix | empty | Added to MessageCard title |
 
+### Storage Growth Estimates (Rough)
+
+These are planning estimates for SQLite state growth and vary by traffic cardinality, host churn, and naming entropy.
+
+| Feature | Rough growth estimate |
+|---|---|
+| `rules_metrics_enabled` | ~20-80 KB/year total (2 daily integers embedded in daily history records) |
+| `blocked_port_daily_enabled` | ~0.1-1.0 MB/year per target (typical port cardinality) |
+| `blocked_host_metrics_enabled` + `daily_only` | ~40-90 bytes per host/day -> ~0.4-0.9 GB/year per 10k hosts per target |
+| `blocked_host_metrics_enabled` + `rolling_24h_only` | ~15-30 bytes per host/5m snapshot over rolling 24h window -> ~1.3-2.6 GB/year-equivalent per 10k hosts per target |
+| `blocked_host_metrics_enabled` + `rolling_24h_plus_daily` | Combined effect of the above -> ~1.7-3.5 GB/year-equivalent per 10k hosts per target |
+
+Practical sizing formula:
+- `daily_only`: `hosts * days * 40-90 bytes`
+- `rolling_24h_only`: `hosts * 288 snapshots * 15-30 bytes` steady-state footprint
+- multiply by number of targets that retain host rows
+
+### Resource Sizing (Rough)
+
+| Deployment size | Suggested compute | Suggested storage |
+|---|---|---|
+| Small (<=1k workloads, <=3 targets, host metrics off) | 1 vCPU, 1-2 GB RAM | 2-5 GB disk |
+| Medium (1k-10k workloads, <=8 targets, host metrics daily-only) | 2 vCPU, 4 GB RAM | 10-30 GB disk |
+| Large (10k+ workloads, many targets, host metrics rolling+daily) | 4 vCPU, 8+ GB RAM | 50+ GB disk |
+
+Guidance:
+- If API latency is high or reconciliation is used often, prefer the next tier up.
+- If `blocked_host_metrics_enabled` is on for many targets, disk growth is the primary limiter.
+
 ### Optional traffic target configuration
 
 `traffic_targets` defines blocked-traffic targets shown in UI and chart.
