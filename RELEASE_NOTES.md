@@ -4,6 +4,25 @@
 
 Experimental feature branch updates (not merged to stable main):
 
+### Adaptive API Rate Control
+- Added global API token-bucket limiter for all PCE API requests:
+  - default cap: `450 RPM`
+  - configurable via `config.json` key: `api_max_rpm`
+- Added adaptive HTTP `429` handling:
+  - parses and respects `Retry-After` when returned by PCE
+  - temporarily reduces active RPM budget under throttling
+  - gradually recovers budget back toward configured max
+- Added cycle-level API usage telemetry:
+  - `[API-RATE]` logs include per-cycle request totals, average RPM, and current/target budget
+
+### Cycle-Aware Query Scheduling
+- Added cycle deadline pressure checks for blocked traffic collection so high-volume environments remain stable within 5-minute collector windows.
+- Added graceful degradation tiers under budget pressure:
+  - Tier 1: blocked totals remain primary and continue refreshing
+  - Tier 2: blocked port/proto enrichment is deferred first
+  - Tier 3: blocked hostname enrichment is deferred next
+  - late-cycle fallback can switch to count-only blocked query path when necessary
+
 ### Blocked Target Scope
 - Added `traffic_targets[].kind = "all"` support:
   - runs environment-wide blocked query with blank source/destination filters

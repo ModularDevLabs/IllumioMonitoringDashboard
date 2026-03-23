@@ -30,7 +30,13 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Configurable targets (labels and/or label groups)
 - Configurable source exclusions (can be empty)
   - Async traffic flow query support
-  - Pacing/staggering of per-target blocked queries to reduce burst pressure on API rate limits
+  - Global adaptive API token-bucket limiter (default `450 RPM`) across all PCE requests
+  - Dynamic `429` handling (`Retry-After` + adaptive throttle-down/recovery)
+  - Cycle-aware blocked-query scheduling with deadline pressure handling in each 5-minute cycle
+  - Graceful degradation tiers under API pressure:
+    - Tier 1: blocked totals preserved
+    - Tier 2: blocked `port/proto` enrichment deferred first
+    - Tier 3: blocked hostname enrichment deferred next
   - 5-minute blocked queries can reuse shared async results for both count and port/proto aggregation
   - Daily blocked history is accumulated from 5-minute deltas (counts and ports), reducing separate daily snapshot query pressure
   - Counts combine blocked source + blocked destination queries per target
@@ -183,6 +189,7 @@ Runtime state is stored in a shared data directory:
   "public_base_url": "https://illumio-dashboard.internal",
   "data_dir": "/path/to/shared/state",
   "history_days": 365,
+  "api_max_rpm": 450,
   "blocked_port_daily_enabled": true,
   "blocked_port_store_backend": "sqlite",
   "blocked_rolling_dedupe_backend": "sqlite",
@@ -223,6 +230,7 @@ Runtime state is stored in a shared data directory:
 | `public_base_url` | External URL used in generated links/webhooks | `http://localhost:18443` | No trailing slash needed |
 | `data_dir` | Shared state directory | `$HOME/.illumio-monitoring-dashboard` | Override via env `ILLUMIO_DASH_DATA_DIR` |
 | `history_days` | Retention days for daily history files | `365` | Range `1..3650` |
+| `api_max_rpm` | Global API request budget cap (requests/minute) | `450` | Range `120..490`; applies to all outbound PCE API calls |
 | `blocked_port_daily_enabled` | Enable daily blocked `port/proto` aggregation | `true` | Controls blocked target drilldown blocked-ports table and daily port history collection |
 | `blocked_port_store_backend` | History/state backend | `sqlite` | `sqlite` or `json`; when `sqlite`, persisted history/state is stored in `metrics.db` |
 | `blocked_rolling_dedupe_backend` | 24h blocked 5m rolling dedupe backend | `sqlite` | `sqlite` (recommended) or `memory`; controls unique-flow dedupe state used by 24h blocked rolling charts |
@@ -541,6 +549,15 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 ## Operational Notes
 
 - Collector interval: 5 minutes
+- API request budgeting:
+  - Global token-bucket limiter governs all PCE requests.
+  - Default cap is `450 RPM` (configurable with `api_max_rpm`).
+  - On HTTP `429`, collector honors `Retry-After` when present, applies adaptive throttle-down, then gradually recovers.
+  - During heavy-cycle pressure, blocked enrichment is prioritized:
+    - blocked totals first
+    - blocked port/proto next
+    - blocked hostname enrichment last
+  - Cycle usage is logged with `[API-RATE]` entries (requests, average RPM, current/target RPM).
 - Lightweight server-side request timing logs are enabled:
   - logs requests slower than `200ms`
   - also logs any request with HTTP status `>=400`
