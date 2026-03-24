@@ -304,7 +304,6 @@ Guidance:
     { "name": "LG-E-PROD-ENVS", "kind": "label_group", "blocked_ma_window": 12, "blocked_anomaly_pct": 50 },
     { "name": "LG-E-NONPROD-ENVS", "kind": "label_group" },
     { "name": "E-WEB", "kind": "label" },
-    { "name": "A-RXCONNECT, LG-E-PROD-ENVS", "kind": "auto" },
     { "name": "SOME-NAME", "kind": "auto" }
   ]
 }
@@ -326,10 +325,6 @@ Optional source exclusions (leave empty to disable exclusions):
 - `label`: resolve only as label
 - `auto`: try label first, then label group
 - `all`: run environment-wide blocked query with blank source/destination filters (name optional; defaults to `ALL-BLOCKED-TRAFFIC`)
-
-Multi-label targets:
-- Provide comma-separated names in one target `name` (for example `A-RXCONNECT, LG-E-PROD-ENVS`).
-- Single-name behavior remains unchanged.
 
 Optional per-target blocked anomaly overrides:
 - `blocked_ma_window`: MA window points for this target only (2-288)

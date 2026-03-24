@@ -40,11 +40,6 @@ Experimental feature branch updates (not merged to stable main):
 - Updated daily tampering value semantics to represent unique impacted workload/VEN counts for the calendar day (not sum of 5m points).
 - Added tampering reconcile method-version marker so prior day keys are replayed once when methodology changes, ensuring stored historical daily values are re-baselined under the current method.
 
-### Multi-Label Traffic Targets
-- Added support for comma-separated multi-label target names in `traffic_targets[].name`.
-- Example: `A-RXCONNECT, LG-E-PROD-ENVS`
-- Combined selectors are now supported in blocked target query include filters.
-
 ### Blocked Target Scope
 - Added `traffic_targets[].kind = "all"` support:
   - runs environment-wide blocked query with blank source/destination filters
