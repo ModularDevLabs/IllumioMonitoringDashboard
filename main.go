@@ -65,6 +65,7 @@ const stateKeyBlockedHistoryReconcile = "blocked_history_reconcile_v1"
 const blockedHistoryReconcileFileName = "blocked_history_reconcile.json"
 const stateKeyTamperingHistoryReconcile = "tampering_history_reconcile_v1"
 const tamperingHistoryReconcileFileName = "tampering_history_reconcile.json"
+const tamperingReconcileMethodVersion = "daily_unique_workloads_v2"
 
 const pceTimeFormat = "2006-01-02T15:04:05.000Z"
 const maxHistoryDays = 3650
@@ -396,6 +397,7 @@ type tamperingHistoryReconcileMarker struct {
 	CompletedAt     time.Time         `json:"completed_at,omitempty"` // legacy
 	DayFingerprint  string            `json:"day_fingerprint,omitempty"`
 	LastCompletedAt time.Time         `json:"last_completed_at,omitempty"`
+	MethodVersion   string            `json:"method_version,omitempty"`
 }
 
 type blockedHistoryReconcileStatus struct {
@@ -2078,6 +2080,9 @@ func maybeStartStartupTamperingHistoryReconcile() {
 		log.Printf("[TAMPER-HISTORY] startup reconcile skipped: all %d day markers present", len(dayKeys))
 		return
 	}
+	if ok && strings.TrimSpace(marker.MethodVersion) != tamperingReconcileMethodVersion {
+		log.Printf("[TAMPER-HISTORY] reconcile method changed old=%q new=%q; scheduling full prior-day replay", strings.TrimSpace(marker.MethodVersion), tamperingReconcileMethodVersion)
+	}
 	log.Printf("[TAMPER-HISTORY] startup reconcile pending days=%d/%d", len(pending), len(dayKeys))
 	startTamperingHistoryReconcileAsync("startup", pending)
 }
@@ -2211,6 +2216,9 @@ func (m tamperingHistoryReconcileMarker) HasDay(day string) bool {
 	if day == "" || len(m.CompletedByDay) == 0 {
 		return false
 	}
+	if strings.TrimSpace(m.MethodVersion) != tamperingReconcileMethodVersion {
+		return false
+	}
 	_, ok := m.CompletedByDay[day]
 	return ok
 }
@@ -2219,6 +2227,7 @@ func (m *tamperingHistoryReconcileMarker) MarkDaysComplete(dayKeys []string, at 
 	if m.SchemaVersion <= 0 {
 		m.SchemaVersion = 1
 	}
+	m.MethodVersion = tamperingReconcileMethodVersion
 	if m.CompletedByDay == nil {
 		m.CompletedByDay = map[string]string{}
 	}
@@ -9231,6 +9240,7 @@ func loadTamperingHistoryReconcileMarker() (tamperingHistoryReconcileMarker, boo
 		if marker.CompletedByDay == nil {
 			marker.CompletedByDay = map[string]string{}
 		}
+		marker.MethodVersion = strings.TrimSpace(marker.MethodVersion)
 		return marker, true
 	}
 	if blockedPortStoreIsSQLite() {
@@ -9265,6 +9275,9 @@ func saveTamperingHistoryReconcileMarker(marker tamperingHistoryReconcileMarker)
 	}
 	if marker.CompletedByDay == nil {
 		marker.CompletedByDay = map[string]string{}
+	}
+	if strings.TrimSpace(marker.MethodVersion) == "" {
+		marker.MethodVersion = tamperingReconcileMethodVersion
 	}
 	if blockedPortStoreIsSQLite() {
 		return sqliteKVSetJSON(stateKeyTamperingHistoryReconcile, marker)
