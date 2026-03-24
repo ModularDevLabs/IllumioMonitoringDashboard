@@ -7654,6 +7654,9 @@ func getBlockedCountTargetLabelHRefs(baseURL string, target TrafficTarget) ([]st
 }
 
 func performAsyncTrafficQueryWindowWithInclude(baseURL string, includeAny []interface{}, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
+	if includeAny == nil {
+		includeAny = []interface{}{}
+	}
 	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
 	for _, h := range sourceExcludeHRefs {
 		if strings.TrimSpace(h) == "" {
@@ -7734,6 +7737,9 @@ func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceE
 }
 
 func performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL string, includeAny []interface{}, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
+	if includeAny == nil {
+		includeAny = []interface{}{}
+	}
 	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
 	for _, h := range sourceExcludeHRefs {
 		if strings.TrimSpace(h) == "" {
@@ -7808,6 +7814,9 @@ func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []st
 }
 
 func performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL string, includeAny []interface{}, allScope bool, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
+	if includeAny == nil {
+		includeAny = []interface{}{}
+	}
 	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
 	for _, h := range sourceExcludeHRefs {
 		if strings.TrimSpace(h) == "" {
