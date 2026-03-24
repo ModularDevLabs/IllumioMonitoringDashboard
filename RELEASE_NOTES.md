@@ -27,6 +27,14 @@ Experimental feature branch updates (not merged to stable main):
 - Fixed tampering daily data feed to use deduped **today-so-far** workload set counts from current-day 5m buckets.
 - Preserved daily **max-only** behavior while correcting the source metric so daily tampering no longer reflects stale/inflated historical rolling artifacts.
 
+### Policy Drilldown Range Controls
+- Added daily range selector support in policy drilldowns:
+  - `7d`, `30d`, `90d`, `180d`, `365d`
+- Applies to:
+  - `policy_rulesets`
+  - `policy_rules`
+  - `policy_ruleset`
+
 ### Blocked Target Scope
 - Added `traffic_targets[].kind = "all"` support:
   - runs environment-wide blocked query with blank source/destination filters

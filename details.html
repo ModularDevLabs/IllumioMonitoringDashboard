@@ -274,7 +274,11 @@
         function applyTheme(theme) {
             UICommon.setTheme(theme, THEME_KEY, 'btn-theme');
             if (trendPoints && trendPoints.length > 0) {
-                renderTrend(trendPoints, document.getElementById('title').innerText, { hideList: currentMetric === 'blocked_target', showControls: true });
+                renderTrend(trendPoints, document.getElementById('title').innerText, {
+                    hideList: currentMetric === 'blocked_target',
+                    showControls: true,
+                    forceDaily: isPolicyDailyMetric(currentMetric)
+                });
             }
         }
 
@@ -362,14 +366,21 @@
             }
             wrap.classList.remove('d-none');
             if (showControls) {
-                controls.classList.remove('d-none');
-                updateTrendButtons();
-                if (trendMode === 'sum') {
+                if (forceDaily) {
+                    controls.classList.add('d-none');
                     range.classList.remove('d-none');
                     updateRangeButtons();
                     points = filteredDaily(points);
                 } else {
-                    range.classList.add('d-none');
+                    controls.classList.remove('d-none');
+                    updateTrendButtons();
+                    if (trendMode === 'sum') {
+                        range.classList.remove('d-none');
+                        updateRangeButtons();
+                        points = filteredDaily(points);
+                    } else {
+                        range.classList.add('d-none');
+                    }
                 }
             } else {
                 controls.classList.add('d-none');
@@ -618,6 +629,10 @@
             return 'rolling_24h_plus_daily';
         }
 
+        function isPolicyDailyMetric(metric) {
+            return metric === 'policy_rulesets' || metric === 'policy_rules' || metric === 'policy_ruleset';
+        }
+
         function bindTrendControls() {
             document.getElementById('trend-raw').addEventListener('click', () => {
                 trendMode = 'raw';
@@ -634,9 +649,13 @@
                 if (!btn) return;
                 btn.addEventListener('click', () => {
                     dayRange = d;
-                    if (trendMode === 'sum') {
+                    if (trendMode === 'sum' || isPolicyDailyMetric(currentMetric)) {
                         trendPoints = trendDaily;
-                        renderTrend(trendPoints, document.getElementById('title').innerText, { hideList: currentMetric === 'blocked_target', showControls: true });
+                        renderTrend(trendPoints, document.getElementById('title').innerText, {
+                            hideList: currentMetric === 'blocked_target',
+                            showControls: true,
+                            forceDaily: isPolicyDailyMetric(currentMetric)
+                        });
                     } else {
                         renderBlockedPortsTable();
                         renderBlockedHostsTable();
@@ -784,9 +803,10 @@
                 document.getElementById('trend-sum').innerText = 'Daily';
                 renderTrend(trendPoints, d.title, { hideList: false, showControls: true });
             } else if (d.metric === 'policy_rulesets' || d.metric === 'policy_rules' || d.metric === 'policy_ruleset') {
-                document.getElementById('trend-controls').classList.add('d-none');
-                trendPoints = d.trend_daily || d.trend || [];
-                renderTrend(trendPoints, d.title, { hideList: d.metric !== 'policy_rulesets', showControls: false, forceDaily: true });
+                trendMode = 'sum';
+                trendDaily = d.trend_daily || d.trend || [];
+                trendPoints = trendDaily;
+                renderTrend(trendPoints, d.title, { hideList: d.metric !== 'policy_rulesets', showControls: true, forceDaily: true });
             } else {
                 document.getElementById('trend-controls').classList.add('d-none');
                 trendPoints = d.trend || [];
