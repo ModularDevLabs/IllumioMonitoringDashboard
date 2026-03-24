@@ -5298,7 +5298,7 @@ func updateRollingAndBuildView(
 		}
 		resetBlockedFlowDedupeLocked(targets)
 		if tamperingOK {
-			rollingCache.BaselineTampering = tamperingCount
+			rollingCache.BaselineTampering = len(tamperingNames)
 			for _, n := range tamperingNames {
 				rollingCache.BaselineWorkloads[n] = struct{}{}
 			}
@@ -5335,7 +5335,7 @@ func updateRollingAndBuildView(
 			BlockedByTarget:    map[string]int{},
 		}
 		if tamperingOK {
-			bucket.TamperingCount = tamperingCount
+			bucket.TamperingCount = len(tamperingNames)
 			for _, n := range tamperingNames {
 				bucket.TamperingWorkloads[n] = struct{}{}
 			}
@@ -10456,7 +10456,7 @@ func updateVENDailyHistory(
 		prev.ErrorMax = errorCount
 		changed = true
 	}
-	if tamperingCount > prev.TamperingMax {
+	if tamperingCount != prev.TamperingMax {
 		prev.TamperingMax = tamperingCount
 		changed = true
 	}
