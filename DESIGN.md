@@ -39,6 +39,7 @@ Provide a single-binary, cross-platform Illumio monitoring tool with a local web
   - drilldown/report/trend pages
   - JSON APIs and CSV export endpoints
 - Background collector goroutine runs every 5 minutes and refreshes in-memory state.
+- Outbound PCE API calls are governed by a global adaptive token-bucket limiter (`api_max_rpm`, default `450 RPM`).
 - Persistent storage:
   - `config.json` (local app directory)
   - Shared runtime data directory (default `$HOME/.illumio-monitoring-dashboard`, override via `ILLUMIO_DASH_DATA_DIR` or `config.data_dir`)
@@ -120,7 +121,14 @@ Provide a single-binary, cross-platform Illumio monitoring tool with a local web
 - Large-PCE pagination support for workloads, VENs, labels, and label groups.
 - Label/label-group lookup diagnostics include scanned object counts.
 - Async blocked traffic querying with timeout/retry/fallback result extraction.
-- Per-target blocked query pacing/staggering to reduce request bursts every 5-minute cycle.
+- Global API budget scheduler:
+  - token-bucket rate cap across all PCE endpoints
+  - adaptive `429` handling with `Retry-After` and gradual recovery
+  - cycle-aware pressure logic for 5-minute collector windows
+- Graceful degradation under API pressure:
+  - Tier 1 keeps blocked totals current
+  - Tier 2 defers blocked `port/proto` enrichment
+  - Tier 3 defers blocked hostname enrichment
 - Query-result reuse path for blocked count + blocked ports in daily/history aggregation flows.
 - Partial-success status surfaced in UI rather than full pipeline failure.
 

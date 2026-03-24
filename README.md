@@ -24,13 +24,20 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 - Tampering monitoring:
   - Unique tampered VEN/workload names with `agent.tampering` events (last 24h)
   - Event counts in 5m/24h windows are deduped by stable event signature before trend aggregation
+  - Daily tampering chart uses deduped today-so-far workload set input and retains max-only daily behavior
   - Deduped names for drilldown
   - Tampering trend charts include moving-average overlays and anomaly detection (24h/5m series)
 - Blocked traffic analytics:
   - Configurable targets (labels and/or label groups)
-  - Configurable source exclusions (default `LG-SCANNERS`)
+- Configurable source exclusions (can be empty)
   - Async traffic flow query support
-  - Pacing/staggering of per-target blocked queries to reduce burst pressure on API rate limits
+  - Global adaptive API token-bucket limiter (default `450 RPM`) across all PCE requests
+  - Dynamic `429` handling (`Retry-After` + adaptive throttle-down/recovery)
+  - Cycle-aware blocked-query scheduling with deadline pressure handling in each 5-minute cycle
+  - Graceful degradation tiers under API pressure:
+    - Tier 1: blocked totals preserved
+    - Tier 2: blocked `port/proto` enrichment deferred first
+    - Tier 3: blocked hostname enrichment deferred next
   - 5-minute blocked queries can reuse shared async results for both count and port/proto aggregation
   - Daily blocked history is accumulated from 5-minute deltas (counts and ports), reducing separate daily snapshot query pressure
   - Counts combine blocked source + blocked destination queries per target
@@ -183,9 +190,11 @@ Runtime state is stored in a shared data directory:
   "public_base_url": "https://illumio-dashboard.internal",
   "data_dir": "/path/to/shared/state",
   "history_days": 365,
+  "api_max_rpm": 450,
   "blocked_port_daily_enabled": true,
   "blocked_port_store_backend": "sqlite",
   "blocked_rolling_dedupe_backend": "sqlite",
+  "rules_metrics_enabled": false,
   "diagnostics_enabled": false,
   "blocked_ma_window": 12,
   "blocked_anomaly_pct": 50,
@@ -222,9 +231,13 @@ Runtime state is stored in a shared data directory:
 | `public_base_url` | External URL used in generated links/webhooks | `http://localhost:18443` | No trailing slash needed |
 | `data_dir` | Shared state directory | `$HOME/.illumio-monitoring-dashboard` | Override via env `ILLUMIO_DASH_DATA_DIR` |
 | `history_days` | Retention days for daily history files | `365` | Range `1..3650` |
+| `api_max_rpm` | Global API request budget cap (requests/minute) | `450` | Range `120..490`; applies to all outbound PCE API calls |
 | `blocked_port_daily_enabled` | Enable daily blocked `port/proto` aggregation | `true` | Controls blocked target drilldown blocked-ports table and daily port history collection |
 | `blocked_port_store_backend` | History/state backend | `sqlite` | `sqlite` or `json`; when `sqlite`, persisted history/state is stored in `metrics.db` |
 | `blocked_rolling_dedupe_backend` | 24h blocked 5m rolling dedupe backend | `sqlite` | `sqlite` (recommended) or `memory`; controls unique-flow dedupe state used by 24h blocked rolling charts |
+| `blocked_host_metrics_enabled` | Enable blocked hostname inbound/outbound aggregation | `false` | When enabled, stores per-host blocked counts for blocked target drilldown tables |
+| `blocked_host_retention_mode` | Hostname retention mode | `rolling_24h_plus_daily` | `rolling_24h_only` keeps only 24h 5m snapshots; `rolling_24h_plus_daily` keeps 24h + daily host rollups; `daily_only` keeps daily host rollups only |
+| `rules_metrics_enabled` | Enable daily policy growth collection (rulesets/rules) | `false` | When enabled, collector runs one policy-count query per day and Trend View shows Policy Growth daily charts. Data appears after the next collector cycle or immediately after `Refresh Now`. |
 | `diagnostics_enabled` | Enable diagnostics endpoint | `false` | When `true`, enables `GET /api/diagnostics/perf` for troubleshooting |
 | `blocked_ma_window` | Global 5m moving-average window points | `12` | Range `2..288` |
 | `blocked_anomaly_pct` | Global blocked anomaly threshold percent | `50` | Range `1..10000` |
@@ -243,7 +256,7 @@ Runtime state is stored in a shared data directory:
 | `tampering_anomaly_min_coverage_pct` | Tampering minimum daily baseline coverage before anomaly checks | blocked min coverage fallback | Range `1..100` |
 | `tampering_daily_anomaly_pct` | Tampering threshold when baseline=`daily` | tampering anomaly fallback | Range `1..10000` |
 | `traffic_targets[]` | Blocked traffic targets | built-in defaults | Each item has `name`, `kind`, optional per-target MA/anomaly overrides |
-| `traffic_source_exclusions[]` | Source exclusions for blocked queries | `LG-SCANNERS` (auto) | Each item has `name`, `kind` |
+| `traffic_source_exclusions[]` | Source exclusions for blocked queries | empty | Each item has `name`, `kind`; field can be cleared to disable exclusions |
 | `webhook_enabled` | Enable webhook alert sends | `false` | Requires valid `webhook_url` |
 | `webhook_url` | Webhook endpoint | empty | Used for alert transitions + test webhook |
 | `webhook_provider` | Payload format | `generic` | `generic`, `slack`, `teams` |
@@ -251,6 +264,35 @@ Runtime state is stored in a shared data directory:
 | `webhook_slack_username` | Optional Slack username override | empty | Some endpoints ignore override |
 | `webhook_slack_icon_emoji` | Optional Slack emoji override | empty | Some endpoints ignore override |
 | `webhook_teams_title_prefix` | Optional Teams title prefix | empty | Added to MessageCard title |
+
+### Storage Growth Estimates (Rough)
+
+These are planning estimates for SQLite state growth and vary by traffic cardinality, host churn, and naming entropy.
+
+| Feature | Rough growth estimate |
+|---|---|
+| `rules_metrics_enabled` | Daily totals + per-ruleset daily counts: ~`rulesets * days * 40-100 bytes` (for example ~7-18 MB/year for 500 rulesets) |
+| `blocked_port_daily_enabled` | ~0.1-1.0 MB/year per target (typical port cardinality) |
+| `blocked_host_metrics_enabled` + `daily_only` | ~40-90 bytes per host/day -> ~0.4-0.9 GB/year per 10k hosts per target |
+| `blocked_host_metrics_enabled` + `rolling_24h_only` | ~15-30 bytes per host/5m snapshot over rolling 24h window -> ~1.3-2.6 GB/year-equivalent per 10k hosts per target |
+| `blocked_host_metrics_enabled` + `rolling_24h_plus_daily` | Combined effect of the above -> ~1.7-3.5 GB/year-equivalent per 10k hosts per target |
+
+Practical sizing formula:
+- `daily_only`: `hosts * days * 40-90 bytes`
+- `rolling_24h_only`: `hosts * 288 snapshots * 15-30 bytes` steady-state footprint
+- multiply by number of targets that retain host rows
+
+### Resource Sizing (Rough)
+
+| Deployment size | Suggested compute | Suggested storage |
+|---|---|---|
+| Small (<=1k workloads, <=3 targets, host metrics off) | 1 vCPU, 1-2 GB RAM | 2-5 GB disk |
+| Medium (1k-10k workloads, <=8 targets, host metrics daily-only) | 2 vCPU, 4 GB RAM | 10-30 GB disk |
+| Large (10k+ workloads, many targets, host metrics rolling+daily) | 4 vCPU, 8+ GB RAM | 50+ GB disk |
+
+Guidance:
+- If API latency is high or reconciliation is used often, prefer the next tier up.
+- If `blocked_host_metrics_enabled` is on for many targets, disk growth is the primary limiter.
 
 ### Optional traffic target configuration
 
@@ -267,7 +309,7 @@ Runtime state is stored in a shared data directory:
 }
 ```
 
-Optional source exclusions:
+Optional source exclusions (leave empty to disable exclusions):
 
 ```json
 {
@@ -282,6 +324,8 @@ Optional source exclusions:
 - `label_group`: resolve only as label group
 - `label`: resolve only as label
 - `auto`: try label first, then label group
+- `all`: run environment-wide blocked query with blank source/destination filters (name optional; defaults to `ALL-BLOCKED-TRAFFIC`)
+- Multi-label target: use comma-separated names in one target (for example `A-Daily, E-Production`) to match flows scoped by all listed labels.
 
 Optional per-target blocked anomaly overrides:
 - `blocked_ma_window`: MA window points for this target only (2-288)
@@ -323,10 +367,17 @@ Click these cards/badges to open detailed lists:
     - `24h (5m)` recent trend
     - `Daily` retained trend (bounded by `history_days`)
   - Blocked target drilldowns include `24h (5m)` and `Daily` trend toggle
-  - Blocked target drilldowns include `Blocked Ports (Daily Aggregate)` table:
+- Blocked target drilldowns include `Blocked Ports (Daily Aggregate)` table:
     - all observed blocked `port/proto` values (not top-only)
     - totals are summed from flow `num_connections`
     - aggregation follows selected daily range (`7d/30d/90d/180d/365d`)
+    - includes `Collapse/Expand` toggle to hide/show port table quickly during analysis
+  - Blocked target drilldowns include `Blocked Hostnames` table (when enabled):
+    - shows `hostname`, `outbound`, `inbound`, `total`
+    - `rolling_24h_only`: table uses rolling 24h 5m snapshots
+    - `rolling_24h_plus_daily`: table uses retained daily host rollups by selected day range
+    - `daily_only`: table uses daily host rollups by selected day range (no rolling 24h host snapshot storage)
+    - host keys prefer workload `hostname` over workload `name` to avoid collisions across similarly named workloads
 
 ### Trend View / Report
 
@@ -334,6 +385,7 @@ Click these cards/badges to open detailed lists:
 - `GET /executive` is an executive summary page focused on outcomes vs risk signals
 - Report/trend pages include:
   - VEN trend charts (`24h (5m)` and `Daily`)
+  - Policy growth trend charts (`Daily`): total rulesets and total rules (when enabled)
   - Blocked trend charts per target in collapsible groups
   - Enforcement mode trend charts in a collapsible group
   - Click any chart to open a larger expanded view
@@ -346,10 +398,12 @@ Click these cards/badges to open detailed lists:
 Use `/settings` to manage traffic/data controls:
 
 1. Add target rows
-2. Choose target `kind` (`auto`, `label_group`, `label`)
+2. Choose target `kind` (`auto`, `label_group`, `label`, `all`)
 3. Save targets (writes `config.json`)
 4. Click **Refresh Now** to apply immediately
 5. Set daily blocked history retention days (saved to `config.json`)
+6. If enabling `rules_metrics_enabled`, policy totals populate on the next collector cycle (5 minutes) unless you click **Refresh Now**.
+7. To force policy totals immediately without a full cycle, click **Refresh Policy Metrics** in Settings.
 
 ### Hosting Settings
 
@@ -384,9 +438,15 @@ Use `/settings` to manage webhook alerting:
 - `GET /api/drilldown?metric=<metric>`:
   - Drilldown list for a metric
   - metrics: `ven_warning`, `ven_error`, `mode_idle`, `mode_visibility_only`, `mode_selective`, `mode_full`, `mode_unmanaged`, `tampering`
+  - additional daily policy metrics (when enabled): `policy_rulesets`, `policy_rules`, `policy_ruleset` (requires `target=<ruleset name>`)
   - for `metric=blocked_target`, optional flags:
     - `include_ports=1`: include persisted daily blocked port/proto aggregates
     - `include_live_ports=1`: accepted for compatibility; ignored (drilldown uses persisted history only)
+  - for `metric=blocked_target` response (when enabled/configured):
+    - `blocked_host_metrics_enabled`
+    - `blocked_host_retention_mode`
+    - `blocked_hosts_24h`: rolling 24h hostname aggregates (inbound/outbound); if snapshots are empty on first run, drilldown performs a live 24h fallback query
+    - `blocked_hosts_daily`: daily hostname snapshots (when retention mode includes daily)
 - `GET /api/export/drilldown.csv?metric=<metric>[&target=<target>]`:
   - Export drilldown list + trend points (`24h (5m)` and `Daily` when available) to CSV
 - `GET /api/config/targets`:
@@ -398,9 +458,11 @@ Use `/settings` to manage webhook alerting:
   - Current `bind_address` and `public_base_url`
 - `PUT /api/config/targets`:
   - Save traffic/data settings
-  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
+  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "blocked_host_metrics_enabled": false, "blocked_host_retention_mode": "rolling_24h_plus_daily", "rules_metrics_enabled": false, "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
 - `POST /api/refresh`:
   - Trigger immediate collection cycle
+- `POST /api/refresh/policy-metrics`:
+  - Force-refresh latest policy totals immediately (rulesets/rules), persist current day snapshot, and update current in-memory stats
 - `POST /api/reconcile/blocked-history`:
   - Trigger asynchronous full blocked-history reconciliation over stored day keys
   - If a reconcile run is already in progress, request is ignored and response indicates current state
@@ -489,6 +551,15 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 ## Operational Notes
 
 - Collector interval: 5 minutes
+- API request budgeting:
+  - Global token-bucket limiter governs all PCE requests.
+  - Default cap is `450 RPM` (configurable with `api_max_rpm`).
+  - On HTTP `429`, collector honors `Retry-After` when present, applies adaptive throttle-down, then gradually recovers.
+  - During heavy-cycle pressure, blocked enrichment is prioritized:
+    - blocked totals first
+    - blocked port/proto next
+    - blocked hostname enrichment last
+  - Cycle usage is logged with `[API-RATE]` entries (requests, average RPM, current/target RPM).
 - Lightweight server-side request timing logs are enabled:
   - logs requests slower than `200ms`
   - also logs any request with HTTP status `>=400`
@@ -511,7 +582,7 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
     - `alert_state.json`
     - `anomaly_history.jsonl`
   - SQLite backend file:
-    - `metrics.db` (rolling state, blocked/VEN daily history, blocked port daily + 5m snapshots, alert state, anomaly history)
+    - `metrics.db` (rolling state, blocked/VEN daily history, blocked port daily + 5m snapshots, blocked host daily + 5m snapshots, alert state, anomaly history)
   - On startup, legacy local state files are auto-migrated into the shared data directory if destination files are absent.
   - Retention is pruned based on `history_days`.
   - Blocked-history reconcile behavior:
@@ -550,7 +621,7 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 - `config.json`: runtime configuration
 - `blocked_daily_history.json`: persisted daily blocked totals per target (JSON backend)
 - `blocked_port_daily_history.json`: persisted daily blocked totals per target per `port/proto` (JSON backend)
-- `ven_daily_history.json`: persisted daily VEN warning/error max values (JSON backend)
+- `ven_daily_history.json`: persisted daily VEN warning/error/tampering max values (JSON backend)
 - `rolling_state.json`: persisted rolling state (JSON backend)
 - `alert_state.json`: persisted alert transition state (JSON backend)
 - `anomaly_history.jsonl`: persisted anomaly transition events (JSON backend)
@@ -562,3 +633,7 @@ Planned additions after board PDF mode:
 - SLO badges (freshness, pipeline success rate, partial/fail rate)
 - Anomaly outcomes panel (triggered vs resolved + MTTR)
 - Board export bundle (combined executive/report artifacts)
+Executive View also includes policy KPIs/charts when enabled:
+- `Policy Rulesets` KPI
+- `Policy Rules` KPI
+- `Policy Growth Trend (Daily)` chart (rulesets + rules)

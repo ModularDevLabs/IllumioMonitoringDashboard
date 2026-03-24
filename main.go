@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,23 +53,31 @@ const defaultBindAddress = ":18443"
 const defaultPublicBaseURL = "http://localhost:18443"
 const defaultBlockedPortStoreBackend = "sqlite"
 const defaultBlockedRollingDedupeBackend = "sqlite"
+const defaultBlockedHostRetentionMode = "rolling_24h_plus_daily"
+const allBlockedTargetDefaultName = "ALL-BLOCKED-TRAFFIC"
 const stateKeyBlockedDaily = "blocked_daily_records_v1"
 const stateKeyVENDaily = "ven_daily_records_v1"
 const stateKeyRolling = "rolling_state_v1"
 const stateKeyAlert = "alert_state_v1"
 const stateKeyAnomalyHistory = "anomaly_history_v1"
+const stateKeyPolicyRulesetDaily = "policy_ruleset_daily_v1"
 const stateKeyBlockedHistoryReconcile = "blocked_history_reconcile_v1"
 const blockedHistoryReconcileFileName = "blocked_history_reconcile.json"
 const stateKeyTamperingHistoryReconcile = "tampering_history_reconcile_v1"
 const tamperingHistoryReconcileFileName = "tampering_history_reconcile.json"
+const tamperingReconcileMethodVersion = "daily_unique_workloads_v2"
 
 const pceTimeFormat = "2006-01-02T15:04:05.000Z"
 const maxHistoryDays = 3650
 const slowRequestLogThreshold = 200 * time.Millisecond
 const blockedTargetWorkerCount = 4
 const blockedTargetStartStagger = 150 * time.Millisecond
+const defaultAPIMaxRPM = 450
+const minimumAPIRPMOnThrottle = 300
+const defaultAPIBurst = 30
 const perfSampleWindowSize = 256
 const defaultLogFileName = "illumiomonitoringdashboard.log"
+const maxMultiLabelClauses = 2000
 
 type Config struct {
 	PCEURL                      string          `json:"pce_url"`
@@ -109,6 +118,10 @@ type Config struct {
 	WebhookTeamsTitlePrefix     string          `json:"webhook_teams_title_prefix,omitempty"`
 	BlockedPortStoreBackend     string          `json:"blocked_port_store_backend,omitempty"`
 	BlockedRollingDedupeBackend string          `json:"blocked_rolling_dedupe_backend,omitempty"`
+	BlockedHostMetricsEnabled   *bool           `json:"blocked_host_metrics_enabled,omitempty"`
+	BlockedHostRetentionMode    string          `json:"blocked_host_retention_mode,omitempty"`
+	RulesMetricsEnabled         *bool           `json:"rules_metrics_enabled,omitempty"`
+	APIMaxRPM                   int             `json:"api_max_rpm,omitempty"`
 	DiagnosticsEnabled          bool            `json:"diagnostics_enabled,omitempty"`
 }
 
@@ -162,6 +175,12 @@ type DashboardStats struct {
 		Workloads []string    `json:"workloads,omitempty"`
 		Status    FetchStatus `json:"status"`
 	} `json:"tampering"`
+	Rules struct {
+		Enabled  bool        `json:"enabled"`
+		Rulesets int         `json:"rulesets"`
+		Rules    int         `json:"rules"`
+		Status   FetchStatus `json:"status"`
+	} `json:"rules"`
 	Blocked struct {
 		PROD          int                   `json:"prod"`
 		NONPROD       int                   `json:"nonprod"`
@@ -187,6 +206,7 @@ type DrilldownResponse struct {
 	Title                   string           `json:"title"`
 	Count                   int              `json:"count"`
 	Items                   []string         `json:"items"`
+	ItemTargets             []string         `json:"item_targets,omitempty"`
 	Trend                   []TrendPoint     `json:"trend,omitempty"`
 	Trend24h                []TrendPoint     `json:"trend_24h,omitempty"`
 	TrendDaily              []TrendPoint     `json:"trend_daily,omitempty"`
@@ -206,6 +226,10 @@ type DrilldownResponse struct {
 	BaselineCapturedUTC     *time.Time       `json:"baseline_captured_utc,omitempty"`
 	BlockedPortsDaily       []BlockedPortDay `json:"blocked_ports_daily,omitempty"`
 	BlockedPortDailyEnabled bool             `json:"blocked_port_daily_enabled"`
+	BlockedHostsDaily       []BlockedHostDay `json:"blocked_hosts_daily,omitempty"`
+	BlockedHosts24h         []HostCount      `json:"blocked_hosts_24h,omitempty"`
+	BlockedHostMetrics      bool             `json:"blocked_host_metrics_enabled"`
+	BlockedHostRetention    string           `json:"blocked_host_retention_mode,omitempty"`
 }
 
 type TrendPoint struct {
@@ -226,6 +250,17 @@ type PortCount struct {
 type BlockedPortDay struct {
 	Timestamp time.Time   `json:"timestamp"`
 	Ports     []PortCount `json:"ports,omitempty"`
+}
+
+type HostCount struct {
+	Hostname string `json:"hostname"`
+	Inbound  int    `json:"inbound"`
+	Outbound int    `json:"outbound"`
+}
+
+type BlockedHostDay struct {
+	Timestamp time.Time   `json:"timestamp"`
+	Hosts     []HostCount `json:"hosts,omitempty"`
 }
 
 type rollingBucket struct {
@@ -254,7 +289,7 @@ type rollingState struct {
 	Buckets []rollingBucket
 
 	// In-memory only: per-target flow signatures seen within the active 24h rolling horizon.
-	BlockedFlowLastSeen map[string]map[string]time.Time
+	BlockedFlowLastSeen map[string]map[string]blockedFlowSeenState
 }
 
 type persistedTargetBaseline struct {
@@ -301,6 +336,11 @@ type trafficQueryResult struct {
 type blockedFlowSample struct {
 	Signature       string
 	LastDetectedUTC time.Time
+	SourceKey       string
+	SourceHost      string
+	DestinationKey  string
+	DestinationHost string
+	Connections     int
 }
 
 type dailyBlockedRecord struct {
@@ -316,6 +356,35 @@ type dailyBlockedPortRecord struct {
 	Count  int    `json:"count"`
 }
 
+type hostTrafficCount struct {
+	Inbound  int
+	Outbound int
+}
+
+type blockedFlowSeenState struct {
+	LastSeenUTC time.Time
+	Connections int
+}
+
+type flowWorkloadIdentity struct {
+	Key     string
+	Display string
+}
+
+type dailyBlockedHostRecord struct {
+	Day      string `json:"day"`
+	Target   string `json:"target"`
+	Hostname string `json:"hostname"`
+	Inbound  int    `json:"inbound"`
+	Outbound int    `json:"outbound"`
+}
+
+type dailyPolicyRulesetRecord struct {
+	Day      string `json:"day"`
+	Ruleset  string `json:"ruleset"`
+	RuleCount int   `json:"rule_count"`
+}
+
 type blockedHistoryReconcileMarker struct {
 	SchemaVersion     int               `json:"schema_version"`
 	CompletedByTarget map[string]string `json:"completed_by_target,omitempty"`
@@ -329,6 +398,7 @@ type tamperingHistoryReconcileMarker struct {
 	CompletedAt     time.Time         `json:"completed_at,omitempty"` // legacy
 	DayFingerprint  string            `json:"day_fingerprint,omitempty"`
 	LastCompletedAt time.Time         `json:"last_completed_at,omitempty"`
+	MethodVersion   string            `json:"method_version,omitempty"`
 }
 
 type blockedHistoryReconcileStatus struct {
@@ -365,6 +435,8 @@ type venDailySnapshot struct {
 	WarningMax       int `json:"warning_max"`
 	ErrorMax         int `json:"error_max"`
 	TamperingMax     int `json:"tampering_max,omitempty"`
+	RulesetsMax      int `json:"rulesets_max,omitempty"`
+	RulesMax         int `json:"rules_max,omitempty"`
 	ModeIdleMax      int `json:"mode_idle_max,omitempty"`
 	ModeVisMax       int `json:"mode_vis_max,omitempty"`
 	ModeSelectiveMax int `json:"mode_selective_max,omitempty"`
@@ -377,6 +449,8 @@ type venDailyRecord struct {
 	WarningMax       int    `json:"warning_max"`
 	ErrorMax         int    `json:"error_max"`
 	TamperingMax     int    `json:"tampering_max,omitempty"`
+	RulesetsMax      int    `json:"rulesets_max,omitempty"`
+	RulesMax         int    `json:"rules_max,omitempty"`
 	ModeIdleMax      int    `json:"mode_idle_max,omitempty"`
 	ModeVisMax       int    `json:"mode_vis_max,omitempty"`
 	ModeSelectiveMax int    `json:"mode_selective_max,omitempty"`
@@ -418,6 +492,7 @@ type blockedTargetCycleResult struct {
 	RawCount       int
 	CurrentCount   int
 	CurrentPorts   map[string]int
+	CurrentHosts   map[string]hostTrafficCount
 	CurrentSamples []blockedFlowSample
 	BaselineCount  int
 	NewlyBaselined bool
@@ -426,6 +501,8 @@ type blockedTargetCycleResult struct {
 }
 
 var (
+	buildVersion = ""
+
 	config        Config
 	configMutex   sync.RWMutex
 	configModTime time.Time
@@ -433,25 +510,28 @@ var (
 	statsMutex    sync.RWMutex
 	isRefreshing  atomic.Bool
 
-	rollingMu               sync.Mutex
-	rollingCache            rollingState
-	historyMu               sync.Mutex
-	blockedDaily            = map[string]map[string]int{}
-	blockedPortsDaily       = map[string]map[string]map[string]int{}
-	venHistoryMu            sync.Mutex
-	venDaily                = map[string]venDailySnapshot{}
-	alertMu                 sync.Mutex
-	alertState              = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
-	anomalyHistoryMu        sync.Mutex
-	anomalyHistory          = make([]anomalyHistoryEvent, 0)
-	reconcileMu             sync.Mutex
-	reconcileDayKey         string
-	reconcileDoneByT        = map[string]bool{}
-	fullReconcileInProgress atomic.Bool
-	reconcileStatusMu       sync.Mutex
-	reconcileStatus         blockedHistoryReconcileStatus
-	tamperingReconcileBusy  atomic.Bool
-	tamperingReconcileState tamperingHistoryReconcileStatus
+	rollingMu                sync.Mutex
+	rollingCache             rollingState
+	historyMu                sync.Mutex
+	blockedDaily             = map[string]map[string]int{}
+	blockedPortsDaily        = map[string]map[string]map[string]int{}
+	blockedHostsDaily        = map[string]map[string]map[string]hostTrafficCount{}
+	policyRulesetDaily       = map[string]map[string]int{}
+	venHistoryMu             sync.Mutex
+	venDaily                 = map[string]venDailySnapshot{}
+	alertMu                  sync.Mutex
+	alertState               = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
+	anomalyHistoryMu         sync.Mutex
+	anomalyHistory           = make([]anomalyHistoryEvent, 0)
+	reconcileMu              sync.Mutex
+	reconcileDayKey          string
+	reconcileDoneByT         = map[string]bool{}
+	fullReconcileInProgress  atomic.Bool
+	reconcileStatusMu        sync.Mutex
+	reconcileStatus          blockedHistoryReconcileStatus
+	tamperingReconcileBusy   atomic.Bool
+	tamperingReconcileState  tamperingHistoryReconcileStatus
+	startupHostReseedPending atomic.Bool
 
 	httpClient                  = &http.Client{Timeout: 60 * time.Second}
 	tamperingHTTPClient         = &http.Client{Timeout: 60 * time.Second}
@@ -465,7 +545,264 @@ var (
 	metricsDB                   *sql.DB
 	perfMu                      sync.Mutex
 	perfByRoute                 = map[string][]float64{}
+	apiRateLimiter              = newAPIRateController(defaultAPIMaxRPM, minimumAPIRPMOnThrottle, defaultAPIBurst)
 )
+
+type apiRateController struct {
+	mu            sync.Mutex
+	targetRPM     int
+	currentRPM    int
+	minRPM        int
+	burstTokens   float64
+	tokens        float64
+	lastRefill    time.Time
+	recoverAfter  time.Time
+	backoffUntil  time.Time
+	cycleStart    time.Time
+	cycleDeadline time.Time
+	cycleUsed     int
+}
+
+func newAPIRateController(targetRPM, minRPM, burst int) *apiRateController {
+	target := normalizeAPIMaxRPM(targetRPM)
+	min := normalizeAPIMinRPM(minRPM, target)
+	if burst <= 0 {
+		burst = defaultAPIBurst
+	}
+	now := time.Now()
+	return &apiRateController{
+		targetRPM:    target,
+		currentRPM:   target,
+		minRPM:       min,
+		burstTokens:  float64(burst),
+		tokens:       float64(burst),
+		lastRefill:   now,
+		recoverAfter: now,
+	}
+}
+
+func (c *apiRateController) applyConfig(targetRPM int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	target := normalizeAPIMaxRPM(targetRPM)
+	c.targetRPM = target
+	c.minRPM = normalizeAPIMinRPM(minimumAPIRPMOnThrottle, target)
+	if c.currentRPM > target {
+		c.currentRPM = target
+	}
+	if c.currentRPM < c.minRPM {
+		c.currentRPM = c.minRPM
+	}
+}
+
+func (c *apiRateController) beginCycle(now, deadline time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cycleStart = now.UTC()
+	c.cycleDeadline = deadline.UTC()
+	c.cycleUsed = 0
+}
+
+func (c *apiRateController) endCycle(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cycleStart.IsZero() {
+		return
+	}
+	duration := now.Sub(c.cycleStart)
+	if duration <= 0 {
+		duration = time.Second
+	}
+	perMin := float64(c.cycleUsed) / duration.Minutes()
+	log.Printf("[API-RATE] cycle usage requests=%d duration=%s avg_rpm=%.1f current_rpm=%d target_rpm=%d", c.cycleUsed, duration.Truncate(time.Millisecond), perMin, c.currentRPM, c.targetRPM)
+}
+
+func (c *apiRateController) refillLocked(now time.Time) {
+	if c.lastRefill.IsZero() {
+		c.lastRefill = now
+		return
+	}
+	elapsed := now.Sub(c.lastRefill).Seconds()
+	if elapsed <= 0 {
+		return
+	}
+	if c.currentRPM < c.targetRPM && !c.recoverAfter.IsZero() && now.After(c.recoverAfter) {
+		c.currentRPM += 10
+		if c.currentRPM > c.targetRPM {
+			c.currentRPM = c.targetRPM
+		}
+		c.recoverAfter = now.Add(20 * time.Second)
+		log.Printf("[API-RATE] adaptive recovery current_rpm=%d target_rpm=%d", c.currentRPM, c.targetRPM)
+	}
+	ratePerSecond := float64(c.currentRPM) / 60.0
+	c.tokens += elapsed * ratePerSecond
+	if c.tokens > c.burstTokens {
+		c.tokens = c.burstTokens
+	}
+	c.lastRefill = now
+}
+
+func (c *apiRateController) waitTurn() {
+	for {
+		now := time.Now()
+		c.mu.Lock()
+		c.refillLocked(now)
+		if now.Before(c.backoffUntil) {
+			wait := c.backoffUntil.Sub(now)
+			c.mu.Unlock()
+			if wait > 0 {
+				time.Sleep(wait)
+			}
+			continue
+		}
+		if c.tokens >= 1.0 {
+			c.tokens -= 1.0
+			c.cycleUsed++
+			c.mu.Unlock()
+			return
+		}
+		missing := 1.0 - c.tokens
+		rps := float64(c.currentRPM) / 60.0
+		if rps < 0.1 {
+			rps = 0.1
+		}
+		wait := time.Duration((missing / rps) * float64(time.Second))
+		if wait < 15*time.Millisecond {
+			wait = 15 * time.Millisecond
+		}
+		c.mu.Unlock()
+		time.Sleep(wait)
+	}
+}
+
+func (c *apiRateController) noteRateLimit(wait time.Duration) {
+	if wait < time.Second {
+		wait = 2 * time.Second
+	}
+	if wait > 2*time.Minute {
+		wait = 2 * time.Minute
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.currentRPM -= 60
+	if c.currentRPM < c.minRPM {
+		c.currentRPM = c.minRPM
+	}
+	until := time.Now().Add(wait)
+	if until.After(c.backoffUntil) {
+		c.backoffUntil = until
+	}
+	c.recoverAfter = until.Add(30 * time.Second)
+	log.Printf("[API-RATE] 429 adaptive throttle wait=%s current_rpm=%d min_rpm=%d", wait, c.currentRPM, c.minRPM)
+}
+
+func (c *apiRateController) cyclePressure() (time.Duration, int, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now().UTC()
+	remaining := time.Duration(0)
+	if !c.cycleDeadline.IsZero() {
+		remaining = c.cycleDeadline.Sub(now)
+		if remaining < 0 {
+			remaining = 0
+		}
+	}
+	throttled := c.currentRPM < c.targetRPM
+	return remaining, c.currentRPM, throttled
+}
+
+func shouldDeferTier2Enrichment() bool {
+	remaining, rpm, throttled := apiRateLimiter.cyclePressure()
+	if remaining == 0 {
+		return false
+	}
+	if remaining < 45*time.Second {
+		return true
+	}
+	if throttled && rpm <= 340 && remaining < 2*time.Minute {
+		return true
+	}
+	return false
+}
+
+func shouldDeferTier3Enrichment() bool {
+	remaining, rpm, throttled := apiRateLimiter.cyclePressure()
+	if remaining == 0 {
+		return false
+	}
+	if remaining < 90*time.Second {
+		return true
+	}
+	if throttled && rpm <= 380 && remaining < 3*time.Minute {
+		return true
+	}
+	return false
+}
+
+func shouldUseBlockedCountOnlyFallback() bool {
+	remaining, rpm, throttled := apiRateLimiter.cyclePressure()
+	if remaining == 0 {
+		return false
+	}
+	return throttled && rpm <= 320 && remaining < 30*time.Second
+}
+
+func parseRetryAfter(raw string) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(raw); err == nil {
+		if secs < 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if ts, err := http.ParseTime(raw); err == nil {
+		d := time.Until(ts)
+		if d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+func dashboardVersionLabel() string {
+	if v := strings.TrimSpace(buildVersion); v != "" {
+		return v
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unversioned"
+	}
+	var rev string
+	modified := false
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = strings.TrimSpace(s.Value)
+		case "vcs.modified":
+			modified = strings.EqualFold(strings.TrimSpace(s.Value), "true")
+		}
+	}
+	rev = strings.TrimSpace(rev)
+	if rev == "" {
+		return "unversioned"
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	if modified {
+		return rev + "-dirty"
+	}
+	return rev
+}
+
+func pageTemplateData() map[string]interface{} {
+	return map[string]interface{}{
+		"VersionLabel": dashboardVersionLabel(),
+	}
+}
 
 func main() {
 	initProcessLogging()
@@ -475,15 +812,19 @@ func main() {
 	} else {
 		fmt.Printf("Loaded configuration for PCE: %s\n", config.PCEURL)
 	}
+	apiRateLimiter.applyConfig(configuredAPIMaxRPM())
 	enforceSQLiteBackendConfig()
 	initDataDir()
 	initBlockedPortStore()
 	loadBlockedHistory()
 	loadBlockedPortHistory()
+	loadBlockedHostHistory()
 	loadVENHistory()
+	loadPolicyRulesetHistory()
 	loadRollingState()
 	loadAlertState()
 	loadAnomalyHistory()
+	startupHostReseedPending.Store(configuredBlockedHostMetricsEnabled())
 
 	initPendingStats()
 	maybeStartStartupBlockedHistoryReconcile()
@@ -509,6 +850,7 @@ func main() {
 	http.HandleFunc("/api/config/credentials", withRequestTiming("api.config.credentials", withTrustedOrigin("api.config.credentials", handleConfigCredentials)))
 	http.HandleFunc("/api/config/alerts", withRequestTiming("api.config.alerts", withTrustedOrigin("api.config.alerts", handleConfigAlerts)))
 	http.HandleFunc("/api/refresh", withRequestTiming("api.refresh", withTrustedOrigin("api.refresh", handleRefreshNow)))
+	http.HandleFunc("/api/refresh/policy-metrics", withRequestTiming("api.refresh.policy_metrics", withTrustedOrigin("api.refresh.policy_metrics", handleRefreshPolicyMetricsNow)))
 	http.HandleFunc("/api/reconcile/blocked-history", withRequestTiming("api.reconcile.blocked_history", withTrustedOrigin("api.reconcile.blocked_history", handleReconcileBlockedHistory)))
 	http.HandleFunc("/api/reconcile/blocked-history/status", withRequestTiming("api.reconcile.blocked_history_status", handleReconcileBlockedHistoryStatus))
 	http.HandleFunc("/api/reconcile/tampering-history", withRequestTiming("api.reconcile.tampering_history", withTrustedOrigin("api.reconcile.tampering_history", handleReconcileTamperingHistory)))
@@ -556,6 +898,7 @@ func initPendingStats() {
 	stats.VENStatus.Status = pending
 	stats.Workloads.Status = pending
 	stats.Tampering.Status = pending
+	stats.Rules.Status = pending
 	stats.Blocked.Status = pending
 	stats.Blocked.PRODStatus = pending
 	stats.Blocked.NONPRODStatus = pending
@@ -577,6 +920,8 @@ func backgroundCollector() {
 func runCollectionCycle() {
 	isRefreshing.Store(true)
 	log.Println("[COLLECTOR] Starting PCE data collection cycle...")
+	cycleStart := time.Now().UTC()
+	apiRateLimiter.beginCycle(cycleStart, cycleStart.Add(5*time.Minute))
 
 	newStats := getIllumioStats()
 
@@ -585,6 +930,7 @@ func runCollectionCycle() {
 	statsMutex.Unlock()
 	saveRollingState()
 	processWebhookAlerts(newStats)
+	apiRateLimiter.endCycle(time.Now().UTC())
 
 	isRefreshing.Store(false)
 	log.Println("[COLLECTOR] Cycle complete.")
@@ -626,9 +972,23 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown metric", http.StatusBadRequest)
 		return
 	}
-	sort.Strings(items)
+	if metric != "policy_rulesets" {
+		sort.Strings(items)
+	}
 
 	resp := DrilldownResponse{Metric: metric, Target: target, Title: title, Count: len(items), Items: items, Trend: trend}
+	if metric == "policy_rulesets" {
+		_, targets := policyRulesetSummaryItems(time.Now().UTC())
+		resp.ItemTargets = targets
+		resp.Trend24h = nil
+		resp.TrendDaily = rulesetsDailyTrendSeries(configuredHistoryDays())
+		resp.Trend = resp.TrendDaily
+	}
+	if metric == "policy_ruleset" {
+		resp.Trend24h = nil
+		resp.TrendDaily = policyRulesetDailyTrendSeries(target, configuredHistoryDays())
+		resp.Trend = resp.TrendDaily
+	}
 	if metric == "ven_warning" {
 		window := configuredVENMAWindow()
 		dailyWindow := configuredDailyMAWindow()
@@ -724,7 +1084,28 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.TrendDaily = modeDailyTrendSeries(mode, configuredHistoryDays())
 		resp.Trend = resp.Trend24h
 	}
+	if metric == "policy_rulesets" {
+		resp.Trend24h = nil
+		resp.TrendDaily = rulesetsDailyTrendSeries(configuredHistoryDays())
+		resp.Trend = resp.TrendDaily
+	}
+	if metric == "policy_rules" {
+		resp.Trend24h = nil
+		resp.TrendDaily = rulesDailyTrendSeries(configuredHistoryDays())
+		resp.Trend = resp.TrendDaily
+	}
 	if metric == "blocked_target" && target != "" {
+		baseURL := ""
+		configMutex.RLock()
+		pceURL := strings.TrimSuffix(strings.TrimSpace(config.PCEURL), "/")
+		orgID := strings.TrimSpace(config.OrgID)
+		configMutex.RUnlock()
+		if orgID == "" {
+			orgID = "1"
+		}
+		if pceURL != "" {
+			baseURL = fmt.Sprintf("%s/api/v2/orgs/%s", pceURL, orgID)
+		}
 		window := configuredBlockedMAWindow()
 		pct := configuredBlockedAnomalyPct()
 		baselineSource := configuredBlockedAnomalyBaselineSource()
@@ -736,8 +1117,28 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.Trend24h = blockedTrendSeries(target)
 		resp.TrendDaily = blockedDailyTrendSeries(target, configuredHistoryDays())
 		resp.BlockedPortDailyEnabled = configuredBlockedPortDailyEnabled()
+		resp.BlockedHostMetrics = configuredBlockedHostMetricsEnabled()
+		resp.BlockedHostRetention = configuredBlockedHostRetentionMode()
 		if resp.BlockedPortDailyEnabled && includePorts {
 			resp.BlockedPortsDaily = blockedPortDailySeries(target, configuredHistoryDays())
+		}
+		if resp.BlockedHostMetrics && includePorts && (resp.BlockedHostRetention == "rolling_24h_plus_daily" || resp.BlockedHostRetention == "daily_only") {
+			resp.BlockedHostsDaily = blockedHostDailySeries(target, configuredHistoryDays())
+		}
+		if resp.BlockedHostMetrics && includePorts && resp.BlockedHostRetention != "daily_only" {
+			resp.BlockedHosts24h = blockedHost24hAggregate(target)
+			if len(resp.BlockedHosts24h) == 0 && baseURL != "" {
+				if tt, ok := configuredTrafficTargetByName(target); ok {
+					sourceExclusions := configuredSourceExclusions()
+					sourceExcludeHRefs := resolveSourceExclusionHRefsBestEffort(baseURL, sourceExclusions)
+					if hosts, err := blockedHost24hLiveFallback(baseURL, tt, time.Now().UTC(), sourceExcludeHRefs); err != nil {
+						log.Printf("[DRILLDOWN] blocked host live fallback failed target=%s err=%v", target, err)
+					} else if len(hosts) > 0 {
+						resp.BlockedHosts24h = hosts
+						log.Printf("[DRILLDOWN] blocked host live fallback populated target=%s hosts=%d", target, len(hosts))
+					}
+				}
+			}
 		}
 		if includeLivePorts {
 			log.Printf("[DRILLDOWN] include_live_ports requested for target=%s but live query path is disabled; serving persisted history only", target)
@@ -809,6 +1210,12 @@ func handleExportDrilldownCSV(w http.ResponseWriter, r *http.Request) {
 	} else if metric == "tampering" {
 		trend24h = tamperingTrendSeries()
 		trendDaily = tamperingDailyTrendSeries(configuredHistoryDays())
+	} else if metric == "policy_rulesets" {
+		trendDaily = rulesetsDailyTrendSeries(configuredHistoryDays())
+	} else if metric == "policy_rules" {
+		trendDaily = rulesDailyTrendSeries(configuredHistoryDays())
+	} else if metric == "policy_ruleset" {
+		trendDaily = policyRulesetDailyTrendSeries(target, configuredHistoryDays())
 	} else {
 		trend24h = trend
 	}
@@ -912,6 +1319,9 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		publicBaseURL := configuredPublicBaseURLLocked()
 		blockedPortStoreBackend := configuredBlockedPortStoreBackendLocked()
 		blockedRollingDedupeBackend := configuredBlockedRollingDedupeBackendLocked()
+		blockedHostMetricsEnabled := configuredBlockedHostMetricsEnabledLocked()
+		blockedHostRetentionMode := configuredBlockedHostRetentionModeLocked()
+		rulesMetricsEnabled := configuredRulesMetricsEnabledLocked()
 		diagnosticsEnabled := configuredDiagnosticsEnabledLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := config.WebhookEnabled && webhookURL != ""
@@ -956,6 +1366,9 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"public_base_url":                publicBaseURL,
 			"blocked_port_store_backend":     blockedPortStoreBackend,
 			"blocked_rolling_dedupe_backend": blockedRollingDedupeBackend,
+			"blocked_host_metrics_enabled":   blockedHostMetricsEnabled,
+			"blocked_host_retention_mode":    blockedHostRetentionMode,
+			"rules_metrics_enabled":          rulesMetricsEnabled,
 			"diagnostics_enabled":            diagnosticsEnabled,
 			"webhook_url":                    webhookURL,
 			"webhook_enabled":                webhookEnabled,
@@ -993,6 +1406,9 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			PublicBaseURL               *string         `json:"public_base_url"`
 			BlockedPortStoreBackend     *string         `json:"blocked_port_store_backend"`
 			BlockedRollingDedupeBackend *string         `json:"blocked_rolling_dedupe_backend"`
+			BlockedHostMetricsEnabled   *bool           `json:"blocked_host_metrics_enabled"`
+			BlockedHostRetentionMode    *string         `json:"blocked_host_retention_mode"`
+			RulesMetricsEnabled         *bool           `json:"rules_metrics_enabled"`
 			DiagnosticsEnabled          *bool           `json:"diagnostics_enabled"`
 			WebhookURL                  *string         `json:"webhook_url"`
 			WebhookEnabled              *bool           `json:"webhook_enabled"`
@@ -1090,6 +1506,17 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		if req.BlockedRollingDedupeBackend != nil {
 			config.BlockedRollingDedupeBackend = normalizeBlockedRollingDedupeBackend(*req.BlockedRollingDedupeBackend)
 		}
+		if req.BlockedHostMetricsEnabled != nil {
+			v := *req.BlockedHostMetricsEnabled
+			config.BlockedHostMetricsEnabled = &v
+		}
+		if req.BlockedHostRetentionMode != nil {
+			config.BlockedHostRetentionMode = normalizeBlockedHostRetentionMode(*req.BlockedHostRetentionMode)
+		}
+		if req.RulesMetricsEnabled != nil {
+			v := *req.RulesMetricsEnabled
+			config.RulesMetricsEnabled = &v
+		}
 		if req.DiagnosticsEnabled != nil {
 			config.DiagnosticsEnabled = *req.DiagnosticsEnabled
 		}
@@ -1139,6 +1566,9 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		publicBaseURL := configuredPublicBaseURLLocked()
 		blockedPortStoreBackend := configuredBlockedPortStoreBackendLocked()
 		blockedRollingDedupeBackend := configuredBlockedRollingDedupeBackendLocked()
+		blockedHostMetricsEnabled := configuredBlockedHostMetricsEnabledLocked()
+		blockedHostRetentionMode := configuredBlockedHostRetentionModeLocked()
+		rulesMetricsEnabled := configuredRulesMetricsEnabledLocked()
 		diagnosticsEnabled := configuredDiagnosticsEnabledLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := configuredWebhookEnabledLocked()
@@ -1182,6 +1612,9 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"public_base_url":                publicBaseURL,
 			"blocked_port_store_backend":     blockedPortStoreBackend,
 			"blocked_rolling_dedupe_backend": blockedRollingDedupeBackend,
+			"blocked_host_metrics_enabled":   blockedHostMetricsEnabled,
+			"blocked_host_retention_mode":    blockedHostRetentionMode,
+			"rules_metrics_enabled":          rulesMetricsEnabled,
 			"diagnostics_enabled":            diagnosticsEnabled,
 			"webhook_url":                    webhookURL,
 			"webhook_enabled":                webhookEnabled,
@@ -1357,6 +1790,37 @@ func handleRefreshNow(w http.ResponseWriter, r *http.Request) {
 	go runCollectionCycle()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"started": true})
+}
+
+func handleRefreshPolicyMetricsNow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !configuredRulesMetricsEnabled() {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"started": false,
+			"message": "policy metrics are disabled; enable 'Policy Rulesets/Rules Daily Metrics' first",
+		})
+		return
+	}
+	rulesetsCount, rulesCount, err := refreshPolicyMetricsNow()
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"started": false,
+			"message": "policy metrics refresh failed",
+			"error":   err.Error(),
+		})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"started":  true,
+		"message":  "policy metrics refreshed",
+		"rulesets": rulesetsCount,
+		"rules":    rulesCount,
+	})
 }
 
 func handleReconcileBlockedHistory(w http.ResponseWriter, r *http.Request) {
@@ -1541,6 +2005,10 @@ func targetKeyForReconcile(t TrafficTarget) string {
 	return kind + ":" + name
 }
 
+func isAllTrafficTarget(t TrafficTarget) bool {
+	return strings.EqualFold(strings.TrimSpace(t.Kind), "all")
+}
+
 func (m blockedHistoryReconcileMarker) HasTarget(key string) bool {
 	if strings.TrimSpace(key) == "" {
 		return false
@@ -1612,6 +2080,9 @@ func maybeStartStartupTamperingHistoryReconcile() {
 		reconcileStatusMu.Unlock()
 		log.Printf("[TAMPER-HISTORY] startup reconcile skipped: all %d day markers present", len(dayKeys))
 		return
+	}
+	if ok && strings.TrimSpace(marker.MethodVersion) != tamperingReconcileMethodVersion {
+		log.Printf("[TAMPER-HISTORY] reconcile method changed old=%q new=%q; scheduling full prior-day replay", strings.TrimSpace(marker.MethodVersion), tamperingReconcileMethodVersion)
 	}
 	log.Printf("[TAMPER-HISTORY] startup reconcile pending days=%d/%d", len(pending), len(dayKeys))
 	startTamperingHistoryReconcileAsync("startup", pending)
@@ -1746,6 +2217,9 @@ func (m tamperingHistoryReconcileMarker) HasDay(day string) bool {
 	if day == "" || len(m.CompletedByDay) == 0 {
 		return false
 	}
+	if strings.TrimSpace(m.MethodVersion) != tamperingReconcileMethodVersion {
+		return false
+	}
 	_, ok := m.CompletedByDay[day]
 	return ok
 }
@@ -1754,6 +2228,7 @@ func (m *tamperingHistoryReconcileMarker) MarkDaysComplete(dayKeys []string, at 
 	if m.SchemaVersion <= 0 {
 		m.SchemaVersion = 1
 	}
+	m.MethodVersion = tamperingReconcileMethodVersion
 	if m.CompletedByDay == nil {
 		m.CompletedByDay = map[string]string{}
 	}
@@ -1846,7 +2321,7 @@ func handleDiagnosticsPerf(w http.ResponseWriter, r *http.Request) {
 		}
 		rowCounts := map[string]int64{}
 		if metricsDB != nil {
-			for _, tbl := range []string{"kv_state", "blocked_ports_daily", "blocked_ports_5m"} {
+			for _, tbl := range []string{"kv_state", "blocked_ports_daily", "blocked_ports_5m", "blocked_hosts_daily", "blocked_hosts_5m"} {
 				var n int64
 				if err := metricsDB.QueryRow(`SELECT COUNT(1) FROM ` + tbl).Scan(&n); err == nil {
 					rowCounts[tbl] = n
@@ -2586,6 +3061,17 @@ func drilldownData(metric, target string, stats DashboardStats) (string, []strin
 		return "Unmanaged Workloads", append([]string(nil), stats.Workloads.ModeMembers["unmanaged"]...), modeTrendSeries("unmanaged")
 	case "tampering":
 		return "Tampered VENs/Workloads (Deduped)", append([]string(nil), stats.Tampering.Workloads...), tamperingTrendSeries()
+	case "policy_rulesets":
+		items, _ := policyRulesetSummaryItems(time.Now().UTC())
+		return "Policy Rulesets (Daily)", items, rulesetsDailyTrendSeries(configuredHistoryDays())
+	case "policy_rules":
+		return "Policy Rules (Daily)", nil, rulesDailyTrendSeries(configuredHistoryDays())
+	case "policy_ruleset":
+		name := strings.TrimSpace(target)
+		if name == "" {
+			return "", nil, nil
+		}
+		return fmt.Sprintf("Policy Ruleset Trend - %s", name), nil, policyRulesetDailyTrendSeries(name, configuredHistoryDays())
 	case "blocked_target":
 		target = strings.TrimSpace(target)
 		if target == "" {
@@ -2957,6 +3443,27 @@ func tamperingTrendSeries() []TrendPoint {
 	return points
 }
 
+func tamperingTodaySoFarUniqueCount(nowUTC time.Time) int {
+	loc := configuredDayLocation()
+	dayStartUTC := localDayStart(nowUTC, loc).UTC()
+	rollingMu.Lock()
+	defer rollingMu.Unlock()
+	seen := make(map[string]struct{})
+	for _, b := range rollingCache.Buckets {
+		if b.EndUTC.Before(dayStartUTC) || b.EndUTC.After(nowUTC) {
+			continue
+		}
+		for n := range b.TamperingWorkloads {
+			name := strings.TrimSpace(n)
+			if name == "" {
+				continue
+			}
+			seen[name] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
 func venDailyTrendSeries(kind string, keepDays int) []TrendPoint {
 	if keepDays <= 0 {
 		keepDays = 365
@@ -3041,6 +3548,194 @@ func tamperingDailyTrendSeries(keepDays int) []TrendPoint {
 	}
 	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
 	return points
+}
+
+func rulesetsDailyTrendSeries(keepDays int) []TrendPoint {
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	loc := configuredDayLocation()
+	cutoff := localDayStart(time.Now(), loc).AddDate(0, 0, -keepDays)
+	venHistoryMu.Lock()
+	defer venHistoryMu.Unlock()
+	points := make([]TrendPoint, 0, len(venDaily))
+	for day, snap := range venDaily {
+		d, err := parseDayKeyInLocation(day, loc)
+		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		points = append(points, TrendPoint{
+			Timestamp: d.Add(12 * time.Hour).UTC(),
+			Value:     snap.RulesetsMax,
+		})
+	}
+	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
+	return points
+}
+
+func rulesDailyTrendSeries(keepDays int) []TrendPoint {
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	loc := configuredDayLocation()
+	cutoff := localDayStart(time.Now(), loc).AddDate(0, 0, -keepDays)
+	venHistoryMu.Lock()
+	defer venHistoryMu.Unlock()
+	points := make([]TrendPoint, 0, len(venDaily))
+	for day, snap := range venDaily {
+		d, err := parseDayKeyInLocation(day, loc)
+		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		points = append(points, TrendPoint{
+			Timestamp: d.Add(12 * time.Hour).UTC(),
+			Value:     snap.RulesMax,
+		})
+	}
+	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
+	return points
+}
+
+func policyRulesetDailyTrendSeries(ruleset string, keepDays int) []TrendPoint {
+	ruleset = strings.TrimSpace(ruleset)
+	if ruleset == "" {
+		return nil
+	}
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	loc := configuredDayLocation()
+	cutoff := localDayStart(time.Now(), loc).AddDate(0, 0, -keepDays)
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	points := make([]TrendPoint, 0, len(policyRulesetDaily))
+	for day, byRuleset := range policyRulesetDaily {
+		d, err := parseDayKeyInLocation(day, loc)
+		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		v, ok := byRuleset[ruleset]
+		if !ok {
+			continue
+		}
+		points = append(points, TrendPoint{
+			Timestamp: d.Add(12 * time.Hour).UTC(),
+			Value:     v,
+		})
+	}
+	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
+	return points
+}
+
+func policyRulesetSummaryItems(nowUTC time.Time) ([]string, []string) {
+	_ = nowUTC
+	historyMu.Lock()
+	dayMap := map[string]int{}
+	latestDay := ""
+	for day, byRuleset := range policyRulesetDaily {
+		if len(byRuleset) == 0 {
+			continue
+		}
+		if latestDay == "" || day > latestDay {
+			latestDay = day
+		}
+	}
+	if latestDay != "" {
+		for k, v := range policyRulesetDaily[latestDay] {
+			dayMap[k] = v
+		}
+	}
+	historyMu.Unlock()
+	type row struct {
+		name  string
+		count int
+	}
+	rows := make([]row, 0, len(dayMap))
+	for name, count := range dayMap {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		rows = append(rows, row{name: name, count: count})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].count == rows[j].count {
+			return strings.ToLower(rows[i].name) < strings.ToLower(rows[j].name)
+		}
+		return rows[i].count > rows[j].count
+	})
+	items := make([]string, 0, len(rows))
+	targets := make([]string, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, fmt.Sprintf("%s | total rules: %d", r.name, r.count))
+		targets = append(targets, r.name)
+	}
+	return items, targets
+}
+
+func policyDailySnapshot(nowUTC time.Time) (rulesets int, rules int, exists bool) {
+	loc := configuredDayLocation()
+	dayKey := nowUTC.In(loc).Format("2006-01-02")
+	venHistoryMu.Lock()
+	snap, ok := venDaily[dayKey]
+	venHistoryMu.Unlock()
+	return snap.RulesetsMax, snap.RulesMax, ok
+}
+
+func policyRulesetDailyExists(nowUTC time.Time) bool {
+	loc := configuredDayLocation()
+	dayKey := nowUTC.In(loc).Format("2006-01-02")
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	byRuleset, ok := policyRulesetDaily[dayKey]
+	return ok && len(byRuleset) > 0
+}
+
+func updatePolicyDailyHistory(nowUTC time.Time, rulesets int, rules int, rulesetCounts map[string]int) {
+	loc := configuredDayLocation()
+	dayKey := nowUTC.In(loc).Format("2006-01-02")
+	saveVEN := false
+	saveRulesets := false
+	venHistoryMu.Lock()
+	snap := venDaily[dayKey]
+	if snap.RulesetsMax != rulesets {
+		snap.RulesetsMax = rulesets
+		saveVEN = true
+	}
+	if snap.RulesMax != rules {
+		snap.RulesMax = rules
+		saveVEN = true
+	}
+	if saveVEN {
+		venDaily[dayKey] = snap
+	}
+	venHistoryMu.Unlock()
+	historyMu.Lock()
+	if policyRulesetDaily[dayKey] == nil {
+		policyRulesetDaily[dayKey] = map[string]int{}
+	}
+	dayMap := map[string]int{}
+	for name, count := range rulesetCounts {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if count < 0 {
+			count = 0
+		}
+		dayMap[name] = count
+	}
+	if !intMapEqual(policyRulesetDaily[dayKey], dayMap) {
+		policyRulesetDaily[dayKey] = dayMap
+		saveRulesets = true
+	}
+	historyMu.Unlock()
+	if saveVEN {
+		saveVENHistory()
+	}
+	if saveRulesets {
+		savePolicyRulesetHistory()
+	}
 }
 
 func blockedTargetExists(target string, stats DashboardStats) bool {
@@ -3137,7 +3832,8 @@ func blockedTodaySoFarCount(target string, todayStartUTC, nowUTC time.Time) int 
 	if rollingCache.BlockedFlowLastSeen != nil {
 		if targetSeen, ok := rollingCache.BlockedFlowLastSeen[target]; ok {
 			count := 0
-			for _, ts := range targetSeen {
+			for _, st := range targetSeen {
+				ts := st.LastSeenUTC
 				if ts.After(todayStartUTC) && !ts.After(nowUTC) {
 					count++
 				}
@@ -3187,6 +3883,100 @@ func blockedPortDailySeries(target string, keepDays int) []BlockedPortDay {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.Before(out[j].Timestamp) })
 	return out
+}
+
+func blockedHostDailySeries(target string, keepDays int) []BlockedHostDay {
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	loc := configuredDayLocation()
+	cutoff := localDayStart(time.Now(), loc).AddDate(0, 0, -keepDays)
+	target = strings.TrimSpace(target)
+
+	historyMu.Lock()
+	out := make([]BlockedHostDay, 0, len(blockedHostsDaily))
+	for day, targets := range blockedHostsDaily {
+		d, err := parseDayKeyInLocation(day, loc)
+		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		hostMap := targets[target]
+		if len(hostMap) == 0 {
+			continue
+		}
+		hosts := make([]HostCount, 0, len(hostMap))
+		for host, c := range hostMap {
+			host = strings.TrimSpace(host)
+			if host == "" {
+				continue
+			}
+			if c.Inbound <= 0 && c.Outbound <= 0 {
+				continue
+			}
+			hosts = append(hosts, HostCount{Hostname: host, Inbound: c.Inbound, Outbound: c.Outbound})
+		}
+		sort.Slice(hosts, func(i, j int) bool {
+			ti := hosts[i].Inbound + hosts[i].Outbound
+			tj := hosts[j].Inbound + hosts[j].Outbound
+			if ti == tj {
+				return hosts[i].Hostname < hosts[j].Hostname
+			}
+			return ti > tj
+		})
+		out = append(out, BlockedHostDay{
+			Timestamp: d.Add(12 * time.Hour).UTC(),
+			Hosts:     hosts,
+		})
+	}
+	historyMu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.Before(out[j].Timestamp) })
+	return out
+}
+
+func blockedHost24hAggregate(target string) []HostCount {
+	if !blockedPortStoreIsSQLite() {
+		return nil
+	}
+	out, err := sqliteBlockedHost24hAggregate(target, time.Now().UTC().Add(-24*time.Hour))
+	if err != nil {
+		log.Printf("[HISTORY] blocked host 24h aggregate failed target=%s err=%v", target, err)
+		return nil
+	}
+	return out
+}
+
+func hostTrafficCountMapToSortedSlice(hostMap map[string]hostTrafficCount) []HostCount {
+	if len(hostMap) == 0 {
+		return nil
+	}
+	out := make([]HostCount, 0, len(hostMap))
+	for host, c := range hostMap {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			continue
+		}
+		if c.Inbound <= 0 && c.Outbound <= 0 {
+			continue
+		}
+		out = append(out, HostCount{Hostname: host, Inbound: c.Inbound, Outbound: c.Outbound})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ti := out[i].Inbound + out[i].Outbound
+		tj := out[j].Inbound + out[j].Outbound
+		if ti == tj {
+			return out[i].Hostname < out[j].Hostname
+		}
+		return ti > tj
+	})
+	return out
+}
+
+func blockedHost24hLiveFallback(baseURL string, target TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) ([]HostCount, error) {
+	_, _, hosts, _, err := getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+	if err != nil {
+		return nil, err
+	}
+	return hostTrafficCountMapToSortedSlice(hosts), nil
 }
 
 func portCountMapToSortedSlice(portMap map[string]int) []PortCount {
@@ -3552,6 +4342,186 @@ func getAllVENsWithFilters(baseURL string, extraFilters map[string]string) ([]ma
 	return all, nil
 }
 
+func getPolicySnapshot(baseURL string) (int, int, map[string]int, error) {
+	rulesetsRaw, rsErr := fetchCollectionWithFallback(baseURL, []string{
+		"/sec_policy/active/rule_sets",
+		"/sec_policy/draft/rule_sets",
+		"/rule_sets",
+	})
+	rulesetCounts := map[string]int{}
+	totalRulesFromRulesets := 0
+	for _, row := range rulesetsRaw {
+		name := firstNonEmpty(mapString(row, "name"), mapString(row, "href"), mapString(row, "id"))
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		count := rulesetRuleCount(row)
+		rulesetCounts[name] = count
+		totalRulesFromRulesets += count
+	}
+	rulesetsCount := len(rulesetCounts)
+	rulesTotal := totalRulesFromRulesets
+	if rulesTotal == 0 {
+		if n, err := countCollectionWithFallback(baseURL, []string{
+			"/sec_policy/active/rules",
+			"/sec_policy/draft/rules",
+			"/rules",
+		}); err == nil {
+			rulesTotal = n
+		}
+	}
+	if rsErr != nil {
+		return rulesetsCount, rulesTotal, rulesetCounts, rsErr
+	}
+	return rulesetsCount, rulesTotal, rulesetCounts, nil
+}
+
+func rulesetRuleCount(row map[string]interface{}) int {
+	for _, key := range []string{"rules_count", "num_rules", "rule_count", "rules_total"} {
+		if v, ok := row[key]; ok {
+			if n := intFromAny(v); n >= 0 {
+				return n
+			}
+		}
+	}
+	if arr, ok := row["rules"].([]interface{}); ok {
+		return len(arr)
+	}
+	if arr, ok := row["sec_rules"].([]interface{}); ok {
+		return len(arr)
+	}
+	return 0
+}
+
+func fetchCollectionWithFallback(baseURL string, paths []string) ([]map[string]interface{}, error) {
+	var lastErr error
+	for _, p := range paths {
+		items, err := fetchCollectionEndpoint(baseURL + p)
+		if err == nil {
+			return items, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no candidate endpoints configured")
+	}
+	return nil, lastErr
+}
+
+func fetchCollectionEndpoint(endpoint string) ([]map[string]interface{}, error) {
+	const pageSize = 500
+	const maxPages = 500
+	out := make([]map[string]interface{}, 0, pageSize)
+	seen := make(map[string]struct{}, pageSize)
+	for page := 0; page < maxPages; page++ {
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return nil, err
+		}
+		q := u.Query()
+		q.Set("max_results", strconv.Itoa(pageSize))
+		q.Set("skip", strconv.Itoa(page*pageSize))
+		u.RawQuery = q.Encode()
+		batch, err := fetchCollectionPage(u.String())
+		if err != nil {
+			if page == 0 {
+				return nil, err
+			}
+			return out, nil
+		}
+		if len(batch) == 0 {
+			break
+		}
+		newCount := 0
+		for _, rec := range batch {
+			key := strings.TrimSpace(mapString(rec, "href"))
+			if key == "" {
+				key = strings.TrimSpace(mapString(rec, "name"))
+			}
+			if key == "" {
+				key = strings.TrimSpace(mapString(rec, "id"))
+			}
+			if key == "" {
+				key = fmt.Sprintf("page=%d,index=%d", page, newCount)
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, rec)
+			newCount++
+		}
+		if len(batch) < pageSize || newCount == 0 {
+			break
+		}
+	}
+	return out, nil
+}
+
+func countCollectionWithFallback(baseURL string, paths []string) (int, error) {
+	var lastErr error
+	for _, p := range paths {
+		n, err := countCollectionEndpoint(baseURL + p)
+		if err == nil {
+			return n, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no candidate endpoints configured")
+	}
+	return 0, lastErr
+}
+
+func countCollectionEndpoint(endpoint string) (int, error) {
+	const pageSize = 500
+	const maxPages = 500
+	seen := make(map[string]struct{}, pageSize)
+	for page := 0; page < maxPages; page++ {
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return 0, err
+		}
+		q := u.Query()
+		q.Set("max_results", strconv.Itoa(pageSize))
+		q.Set("skip", strconv.Itoa(page*pageSize))
+		u.RawQuery = q.Encode()
+		batch, err := fetchCollectionPage(u.String())
+		if err != nil {
+			if page == 0 {
+				return 0, err
+			}
+			return len(seen), nil
+		}
+		if len(batch) == 0 {
+			break
+		}
+		newCount := 0
+		for _, rec := range batch {
+			key := strings.TrimSpace(mapString(rec, "href"))
+			if key == "" {
+				key = strings.TrimSpace(mapString(rec, "name"))
+			}
+			if key == "" {
+				key = strings.TrimSpace(mapString(rec, "id"))
+			}
+			if key == "" {
+				key = fmt.Sprintf("page=%d,index=%d", page, newCount)
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			newCount++
+		}
+		if len(batch) < pageSize || newCount == 0 {
+			break
+		}
+	}
+	return len(seen), nil
+}
+
 func stringFromMap(m map[string]interface{}, keys ...string) string {
 	cur := interface{}(m)
 	for _, k := range keys {
@@ -3722,6 +4692,18 @@ func minInt(a, b int) int {
 	return b
 }
 
+func intMapEqual(a, b map[string]int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		if bv, ok := b[k]; !ok || bv != av {
+			return false
+		}
+	}
+	return true
+}
+
 func getIllumioStats() DashboardStats {
 	var stats DashboardStats
 	nowUTC := time.Now().UTC()
@@ -3806,6 +4788,29 @@ func getIllumioStats() DashboardStats {
 	} else {
 		stats.Tampering.Status = FetchStatus{Success: true}
 	}
+	rulesEnabled := configuredRulesMetricsEnabled()
+	stats.Rules.Enabled = rulesEnabled
+	if rulesEnabled {
+		currentRulesets, currentRules, hasDaily := policyDailySnapshot(nowUTC)
+		hasRulesetDaily := policyRulesetDailyExists(nowUTC)
+		if !hasDaily || !hasRulesetDaily {
+			rulesetsCount, rulesCount, rulesetCounts, rErr := getPolicySnapshot(baseURL)
+			log.Printf("[COLLECTOR] Policy rulesets=%d rules=%d err=%v", rulesetsCount, rulesCount, rErr)
+			if rErr != nil {
+				stats.Rules.Status = FetchStatus{Success: false, Error: "Policy: " + rErr.Error()}
+			} else {
+				stats.Rules.Status = FetchStatus{Success: true}
+				updatePolicyDailyHistory(nowUTC, rulesetsCount, rulesCount, rulesetCounts)
+			}
+			currentRulesets, currentRules, _ = policyDailySnapshot(nowUTC)
+		} else {
+			stats.Rules.Status = FetchStatus{Success: true}
+		}
+		stats.Rules.Rulesets = currentRulesets
+		stats.Rules.Rules = currentRules
+	} else {
+		stats.Rules.Status = FetchStatus{Success: true, Error: "Disabled in settings"}
+	}
 
 	targets := configuredTrafficTargets()
 	warningParts := make([]string, 0)
@@ -3814,13 +4819,20 @@ func getIllumioStats() DashboardStats {
 	if exclusionWarn != "" {
 		warningParts = append(warningParts, exclusionWarn)
 	}
+	forceHostReseed := startupHostReseedPending.CompareAndSwap(true, false)
+	if forceHostReseed && configuredBlockedHostMetricsEnabled() {
+		if err := sqliteClearBlockedHost5m(); err != nil {
+			log.Printf("[BLOCKED] startup host snapshot reset failed err=%v", err)
+		}
+	}
 	blockedDeltaStart := blockedDeltaWindowStart(nowUTC)
 	portDailyEnabled := configuredBlockedPortDailyEnabled()
-	blockedResults, blockedCurrent, blockedCurrentPorts, blockedBaseline, successCount, pacedWarnings := collectBlockedTargetsWithPacing(
+	blockedResults, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, blockedBaseline, successCount, pacedWarnings := collectBlockedTargetsWithPacing(
 		baseURL,
 		targets,
 		nowUTC,
 		baseline,
+		forceHostReseed,
 		portDailyEnabled,
 		blockedDeltaStart,
 		excludedHRefs,
@@ -3848,10 +4860,11 @@ func getIllumioStats() DashboardStats {
 	)
 	stats.Tampering.Workloads = rollingWorkloads
 	stats.Tampering.Count = len(rollingWorkloads)
+	tamperingTodayCount := tamperingTodaySoFarUniqueCount(nowUTC)
 	updateVENDailyHistory(nowUTC,
 		len(stats.VENStatus.Warning),
 		len(stats.VENStatus.Error),
-		stats.Tampering.Count,
+		tamperingTodayCount,
 		stats.Workloads.EnforcementModes["idle"],
 		stats.Workloads.EnforcementModes["visibility_only"],
 		stats.Workloads.EnforcementModes["selective"],
@@ -3937,10 +4950,42 @@ func getIllumioStats() DashboardStats {
 	} else {
 		stats.Blocked.Status = FetchStatus{Success: true}
 	}
-	accumulateBlockedHistoryFromCycle(nowUTC, blockedCurrent, blockedCurrentPorts, portDailyEnabled)
+	accumulateBlockedHistoryFromCycle(nowUTC, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, portDailyEnabled, configuredBlockedHostMetricsEnabled(), configuredBlockedHostRetentionMode())
 	reconcilePreviousDayBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
 
 	return stats
+}
+
+func refreshPolicyMetricsNow() (int, int, error) {
+	configMutex.RLock()
+	pceURL := strings.TrimSpace(config.PCEURL)
+	orgID := strings.TrimSpace(config.OrgID)
+	if orgID == "" {
+		orgID = "1"
+	}
+	configMutex.RUnlock()
+	if pceURL == "" {
+		return 0, 0, errors.New("pce_url is empty")
+	}
+	baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), orgID)
+	nowUTC := time.Now().UTC()
+	rulesetsCount, rulesCount, rulesetCounts, err := getPolicySnapshot(baseURL)
+	if err != nil {
+		return 0, 0, err
+	}
+	updatePolicyDailyHistory(nowUTC, rulesetsCount, rulesCount, rulesetCounts)
+
+	statsMutex.Lock()
+	s := currentStats
+	s.Rules.Enabled = configuredRulesMetricsEnabled()
+	s.Rules.Rulesets = rulesetsCount
+	s.Rules.Rules = rulesCount
+	s.Rules.Status = FetchStatus{Success: true}
+	currentStats = s
+	statsMutex.Unlock()
+
+	log.Printf("[COLLECTOR] manual policy refresh rulesets=%d rules=%d", rulesetsCount, rulesCount)
+	return rulesetsCount, rulesCount, nil
 }
 
 func collectionWindow(nowUTC time.Time) (time.Time, time.Time, bool) {
@@ -3979,7 +5024,7 @@ func hasTargetBaseline(targetName string) bool {
 	return ok
 }
 
-func applyBlockedFlowSamples(targetName string, nowUTC time.Time, samples []blockedFlowSample) (int, int) {
+func applyBlockedFlowSamples(targetName string, nowUTC time.Time, samples []blockedFlowSample) (int, int, map[string]hostTrafficCount) {
 	rollingMu.Lock()
 	defer rollingMu.Unlock()
 	if configuredBlockedRollingDedupeBackend() == "sqlite" {
@@ -3988,49 +5033,53 @@ func applyBlockedFlowSamples(targetName string, nowUTC time.Time, samples []bloc
 	return applyBlockedFlowSamplesLocked(targetName, nowUTC, samples)
 }
 
-func applyBlockedFlowSamplesLocked(targetName string, nowUTC time.Time, samples []blockedFlowSample) (int, int) {
+func applyBlockedFlowSamplesLocked(targetName string, nowUTC time.Time, samples []blockedFlowSample) (int, int, map[string]hostTrafficCount) {
 	targetName = strings.TrimSpace(targetName)
 	if targetName == "" {
-		return 0, 0
+		return 0, 0, nil
 	}
 	if rollingCache.BlockedFlowLastSeen == nil {
-		rollingCache.BlockedFlowLastSeen = map[string]map[string]time.Time{}
+		rollingCache.BlockedFlowLastSeen = map[string]map[string]blockedFlowSeenState{}
 	}
 	targetSeen, ok := rollingCache.BlockedFlowLastSeen[targetName]
 	if !ok {
-		targetSeen = map[string]time.Time{}
+		targetSeen = map[string]blockedFlowSeenState{}
 		rollingCache.BlockedFlowLastSeen[targetName] = targetSeen
 	}
 	cutoff := nowUTC.Add(-24 * time.Hour)
-	for sig, ts := range targetSeen {
-		if !ts.After(cutoff) {
+	for sig, st := range targetSeen {
+		if !st.LastSeenUTC.After(cutoff) {
 			delete(targetSeen, sig)
 		}
 	}
+	latestBySig := latestBlockedFlowSamplesBySignature(samples, nowUTC, cutoff)
 	newUnique := 0
-	for _, sample := range samples {
-		sig := strings.TrimSpace(sample.Signature)
-		if sig == "" {
-			continue
-		}
+	hostDeltas := make(map[string]hostTrafficCount)
+	for sig, sample := range latestBySig {
 		ts := sample.LastDetectedUTC.UTC()
-		if ts.IsZero() || ts.After(nowUTC) {
-			ts = nowUTC
-		}
-		if !ts.After(cutoff) {
-			continue
-		}
 		prev, exists := targetSeen[sig]
 		if !exists {
-			targetSeen[sig] = ts
+			targetSeen[sig] = blockedFlowSeenState{
+				LastSeenUTC: ts,
+				Connections: sample.Connections,
+			}
 			newUnique++
+			accumulateHostCountFromSampleWithDelta(hostDeltas, sample, sample.Connections)
 			continue
 		}
-		if ts.After(prev) {
-			targetSeen[sig] = ts
+		shouldUpdate := ts.After(prev.LastSeenUTC) || (ts.Equal(prev.LastSeenUTC) && sample.Connections > prev.Connections)
+		if !shouldUpdate {
+			continue
 		}
+		delta := sample.Connections - prev.Connections
+		if delta > 0 {
+			accumulateHostCountFromSampleWithDelta(hostDeltas, sample, delta)
+		}
+		prev.LastSeenUTC = ts
+		prev.Connections = sample.Connections
+		targetSeen[sig] = prev
 	}
-	return newUnique, len(targetSeen)
+	return newUnique, len(targetSeen), hostDeltas
 }
 
 func blockedRollingUniqueCountLocked(targetName string, cutoff time.Time) (int, bool) {
@@ -4048,8 +5097,8 @@ func blockedRollingUniqueCountLocked(targetName string, cutoff time.Time) (int, 
 	if !ok {
 		return 0, false
 	}
-	for sig, ts := range targetSeen {
-		if !ts.After(cutoff) {
+	for sig, st := range targetSeen {
+		if !st.LastSeenUTC.After(cutoff) {
 			delete(targetSeen, sig)
 		}
 	}
@@ -4069,19 +5118,96 @@ func resetBlockedFlowDedupeLocked(targets []TrafficTarget) {
 		}
 		return
 	}
-	rollingCache.BlockedFlowLastSeen = map[string]map[string]time.Time{}
+	rollingCache.BlockedFlowLastSeen = map[string]map[string]blockedFlowSeenState{}
 }
 
-func applyBlockedFlowSamplesSQLite(targetName string, nowUTC time.Time, samples []blockedFlowSample) (int, int) {
+func applyBlockedFlowSamplesSQLite(targetName string, nowUTC time.Time, samples []blockedFlowSample) (int, int, map[string]hostTrafficCount) {
 	targetName = strings.TrimSpace(targetName)
 	if targetName == "" {
-		return 0, 0
+		return 0, 0, nil
 	}
 	if metricsDB == nil {
 		return applyBlockedFlowSamplesLocked(targetName, nowUTC, samples)
 	}
 	cutoff := nowUTC.Add(-24 * time.Hour).Unix()
-	latestBySig := make(map[string]int64, len(samples))
+	latestBySig := latestBlockedFlowSamplesBySignature(samples, nowUTC, nowUTC.Add(-24*time.Hour))
+	tx, err := metricsDB.Begin()
+	if err != nil {
+		log.Printf("[BLOCKED] dedupe sqlite begin failed target=%s err=%v", targetName, err)
+		return 0, 0, nil
+	}
+	if _, err := tx.Exec(`DELETE FROM blocked_flow_seen WHERE target = ? AND last_seen_unix <= ?`, targetName, cutoff); err != nil {
+		_ = tx.Rollback()
+		log.Printf("[BLOCKED] dedupe sqlite prune failed target=%s err=%v", targetName, err)
+		return 0, 0, nil
+	}
+	selectStmt, err := tx.Prepare(`SELECT last_seen_unix, COALESCE(last_connections, 0) FROM blocked_flow_seen WHERE target = ? AND signature = ?`)
+	if err != nil {
+		_ = tx.Rollback()
+		log.Printf("[BLOCKED] dedupe sqlite prepare select failed target=%s err=%v", targetName, err)
+		return 0, 0, nil
+	}
+	insertStmt, err := tx.Prepare(`INSERT INTO blocked_flow_seen(target, signature, last_seen_unix, last_connections) VALUES(?,?,?,?)`)
+	if err != nil {
+		_ = selectStmt.Close()
+		_ = tx.Rollback()
+		log.Printf("[BLOCKED] dedupe sqlite prepare insert failed target=%s err=%v", targetName, err)
+		return 0, 0, nil
+	}
+	updateStmt, err := tx.Prepare(`UPDATE blocked_flow_seen SET last_seen_unix = ?, last_connections = ? WHERE target = ? AND signature = ?`)
+	if err != nil {
+		_ = selectStmt.Close()
+		_ = insertStmt.Close()
+		_ = tx.Rollback()
+		log.Printf("[BLOCKED] dedupe sqlite prepare update failed target=%s err=%v", targetName, err)
+		return 0, 0, nil
+	}
+	newUnique := 0
+	hostDeltas := make(map[string]hostTrafficCount)
+	for sig, sample := range latestBySig {
+		unixTS := sample.LastDetectedUTC.UTC().Unix()
+		prevSeen := int64(0)
+		prevConn := 0
+		err := selectStmt.QueryRow(targetName, sig).Scan(&prevSeen, &prevConn)
+		if err == sql.ErrNoRows {
+			if _, err := insertStmt.Exec(targetName, sig, unixTS, sample.Connections); err != nil {
+				continue
+			}
+			newUnique++
+			accumulateHostCountFromSampleWithDelta(hostDeltas, sample, sample.Connections)
+			continue
+		}
+		if err != nil {
+			continue
+		}
+		shouldUpdate := unixTS > prevSeen || (unixTS == prevSeen && sample.Connections > prevConn)
+		if !shouldUpdate {
+			continue
+		}
+		delta := sample.Connections - prevConn
+		if delta > 0 {
+			accumulateHostCountFromSampleWithDelta(hostDeltas, sample, delta)
+		}
+		_, _ = updateStmt.Exec(unixTS, sample.Connections, targetName, sig)
+	}
+	_ = selectStmt.Close()
+	_ = insertStmt.Close()
+	_ = updateStmt.Close()
+	totalUnique := 0
+	if err := tx.QueryRow(`SELECT COUNT(1) FROM blocked_flow_seen WHERE target = ? AND last_seen_unix > ?`, targetName, cutoff).Scan(&totalUnique); err != nil {
+		_ = tx.Rollback()
+		log.Printf("[BLOCKED] dedupe sqlite count failed target=%s err=%v", targetName, err)
+		return 0, 0, nil
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("[BLOCKED] dedupe sqlite commit failed target=%s err=%v", targetName, err)
+		return 0, 0, nil
+	}
+	return newUnique, totalUnique, hostDeltas
+}
+
+func latestBlockedFlowSamplesBySignature(samples []blockedFlowSample, nowUTC, cutoff time.Time) map[string]blockedFlowSample {
+	out := make(map[string]blockedFlowSample, len(samples))
 	for _, sample := range samples {
 		sig := strings.TrimSpace(sample.Signature)
 		if sig == "" {
@@ -4091,61 +5217,44 @@ func applyBlockedFlowSamplesSQLite(targetName string, nowUTC time.Time, samples 
 		if ts.IsZero() || ts.After(nowUTC) {
 			ts = nowUTC
 		}
-		unixTS := ts.Unix()
-		if unixTS <= cutoff {
+		if !ts.After(cutoff) {
 			continue
 		}
-		if prev, ok := latestBySig[sig]; !ok || unixTS > prev {
-			latestBySig[sig] = unixTS
+		sample.LastDetectedUTC = ts
+		if prev, ok := out[sig]; !ok || sample.LastDetectedUTC.After(prev.LastDetectedUTC) {
+			out[sig] = sample
 		}
 	}
-	tx, err := metricsDB.Begin()
-	if err != nil {
-		log.Printf("[BLOCKED] dedupe sqlite begin failed target=%s err=%v", targetName, err)
-		return 0, 0
+	return out
+}
+
+func accumulateHostCountFromSample(out map[string]hostTrafficCount, sample blockedFlowSample) {
+	if out == nil {
+		return
 	}
-	if _, err := tx.Exec(`DELETE FROM blocked_flow_seen WHERE target = ? AND last_seen_unix <= ?`, targetName, cutoff); err != nil {
-		_ = tx.Rollback()
-		log.Printf("[BLOCKED] dedupe sqlite prune failed target=%s err=%v", targetName, err)
-		return 0, 0
+	n := sample.Connections
+	accumulateHostCountFromSampleWithDelta(out, sample, n)
+}
+
+func accumulateHostCountFromSampleWithDelta(out map[string]hostTrafficCount, sample blockedFlowSample, n int) {
+	if out == nil {
+		return
 	}
-	insertStmt, err := tx.Prepare(`INSERT INTO blocked_flow_seen(target, signature, last_seen_unix) VALUES(?,?,?) ON CONFLICT(target, signature) DO NOTHING`)
-	if err != nil {
-		_ = tx.Rollback()
-		log.Printf("[BLOCKED] dedupe sqlite prepare insert failed target=%s err=%v", targetName, err)
-		return 0, 0
+	if n <= 0 {
+		return
 	}
-	updateStmt, err := tx.Prepare(`UPDATE blocked_flow_seen SET last_seen_unix = ? WHERE target = ? AND signature = ? AND last_seen_unix < ?`)
-	if err != nil {
-		_ = insertStmt.Close()
-		_ = tx.Rollback()
-		log.Printf("[BLOCKED] dedupe sqlite prepare update failed target=%s err=%v", targetName, err)
-		return 0, 0
+	src := strings.TrimSpace(sample.SourceHost)
+	if src != "" {
+		cur := out[src]
+		cur.Outbound += n
+		out[src] = cur
 	}
-	newUnique := 0
-	for sig, unixTS := range latestBySig {
-		res, err := insertStmt.Exec(targetName, sig, unixTS)
-		if err != nil {
-			continue
-		}
-		if rows, err := res.RowsAffected(); err == nil && rows > 0 {
-			newUnique += int(rows)
-		}
-		_, _ = updateStmt.Exec(unixTS, targetName, sig, unixTS)
+	dst := strings.TrimSpace(sample.DestinationHost)
+	if dst != "" {
+		cur := out[dst]
+		cur.Inbound += n
+		out[dst] = cur
 	}
-	_ = insertStmt.Close()
-	_ = updateStmt.Close()
-	totalUnique := 0
-	if err := tx.QueryRow(`SELECT COUNT(1) FROM blocked_flow_seen WHERE target = ? AND last_seen_unix > ?`, targetName, cutoff).Scan(&totalUnique); err != nil {
-		_ = tx.Rollback()
-		log.Printf("[BLOCKED] dedupe sqlite count failed target=%s err=%v", targetName, err)
-		return 0, 0
-	}
-	if err := tx.Commit(); err != nil {
-		log.Printf("[BLOCKED] dedupe sqlite commit failed target=%s err=%v", targetName, err)
-		return 0, 0
-	}
-	return newUnique, totalUnique
 }
 
 func sqliteBlockedFlowUniqueCount(targetName string, cutoff time.Time) (int, error) {
@@ -4195,11 +5304,11 @@ func updateRollingAndBuildView(
 			BaselineWorkloads:   map[string]struct{}{},
 			BaselineBlocked:     map[string]targetBaseline{},
 			Buckets:             []rollingBucket{},
-			BlockedFlowLastSeen: map[string]map[string]time.Time{},
+			BlockedFlowLastSeen: map[string]map[string]blockedFlowSeenState{},
 		}
 		resetBlockedFlowDedupeLocked(targets)
 		if tamperingOK {
-			rollingCache.BaselineTampering = tamperingCount
+			rollingCache.BaselineTampering = len(tamperingNames)
 			for _, n := range tamperingNames {
 				rollingCache.BaselineWorkloads[n] = struct{}{}
 			}
@@ -4236,7 +5345,7 @@ func updateRollingAndBuildView(
 			BlockedByTarget:    map[string]int{},
 		}
 		if tamperingOK {
-			bucket.TamperingCount = tamperingCount
+			bucket.TamperingCount = len(tamperingNames)
 			for _, n := range tamperingNames {
 				bucket.TamperingWorkloads[n] = struct{}{}
 			}
@@ -4310,7 +5419,9 @@ func updateRollingAndBuildView(
 				mins = 24 * 60
 			}
 			blockedWarmupMinutes[name] = mins
-			blockedRollingTotals[name] = baselineEntry.Count
+			// During warmup, display an interpolated current view using baseline plus observed incremental
+			// activity since baseline capture so tiles don't show contradictory 0 current / non-zero recent values.
+			blockedRollingTotals[name] = baselineEntry.Count + incremental
 		} else {
 			if uniqueCount, ok := blockedRollingUniqueCountLocked(name, cutoff); ok {
 				blockedRollingTotals[name] = uniqueCount
@@ -4671,17 +5782,23 @@ func configuredSourceExclusions() []TrafficTarget {
 	configMutex.RLock()
 	raw := append([]TrafficTarget(nil), config.SourceExclusions...)
 	configMutex.RUnlock()
-	cleaned := sanitizeTargets(raw)
-	if len(cleaned) > 0 {
-		return cleaned
-	}
-	return []TrafficTarget{{Name: "LG-SCANNERS", Kind: "auto"}}
+	return sanitizeTargets(raw)
 }
 
 func configuredHistoryDays() int {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
 	return configuredHistoryDaysLocked()
+}
+
+func configuredAPIMaxRPM() int {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredAPIMaxRPMLocked()
+}
+
+func configuredAPIMaxRPMLocked() int {
+	return normalizeAPIMaxRPM(config.APIMaxRPM)
 }
 
 func configuredHistoryDaysLocked() int {
@@ -4716,6 +5833,42 @@ func configuredBlockedPortStoreBackend() string {
 
 func configuredBlockedPortStoreBackendLocked() string {
 	return normalizeBlockedPortStoreBackend(config.BlockedPortStoreBackend)
+}
+
+func configuredBlockedHostMetricsEnabled() bool {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredBlockedHostMetricsEnabledLocked()
+}
+
+func configuredBlockedHostMetricsEnabledLocked() bool {
+	if config.BlockedHostMetricsEnabled == nil {
+		return false
+	}
+	return *config.BlockedHostMetricsEnabled
+}
+
+func configuredBlockedHostRetentionMode() string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredBlockedHostRetentionModeLocked()
+}
+
+func configuredBlockedHostRetentionModeLocked() string {
+	return normalizeBlockedHostRetentionMode(config.BlockedHostRetentionMode)
+}
+
+func configuredRulesMetricsEnabled() bool {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredRulesMetricsEnabledLocked()
+}
+
+func configuredRulesMetricsEnabledLocked() bool {
+	if config.RulesMetricsEnabled == nil {
+		return false
+	}
+	return *config.RulesMetricsEnabled
 }
 
 func configuredBlockedRollingDedupeBackend() string {
@@ -5066,6 +6219,19 @@ func normalizeBlockedRollingDedupeBackend(raw string) string {
 	}
 }
 
+func normalizeBlockedHostRetentionMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "rolling_24h_only":
+		return "rolling_24h_only"
+	case "rolling_24h_plus_daily":
+		return "rolling_24h_plus_daily"
+	case "daily_only":
+		return "daily_only"
+	default:
+		return defaultBlockedHostRetentionMode
+	}
+}
+
 func normalizeBindAddress(raw string) string {
 	s := strings.TrimSpace(raw)
 	if s == "" {
@@ -5250,8 +6416,8 @@ func normalizeCoveragePct(raw float64, fallback float64) float64 {
 	return v
 }
 
-func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[string]int, blockedPorts map[string]map[string]int, portDailyEnabled bool) {
-	if len(blockedCounts) == 0 && (!portDailyEnabled || len(blockedPorts) == 0) {
+func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[string]int, blockedPorts map[string]map[string]int, blockedHosts map[string]map[string]hostTrafficCount, portDailyEnabled bool, hostMetricsEnabled bool, hostRetentionMode string) {
+	if len(blockedCounts) == 0 && (!portDailyEnabled || len(blockedPorts) == 0) && (!hostMetricsEnabled || len(blockedHosts) == 0) {
 		pruneBlockedHistory(nowUTC, configuredHistoryDays())
 		return
 	}
@@ -5260,10 +6426,23 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 			log.Printf("[STORE] failed persisting blocked 5m port snapshot: %v", err)
 		}
 	}
+	if blockedPortStoreIsSQLite() && hostMetricsEnabled {
+		if hostRetentionMode == "daily_only" {
+			if err := sqliteClearBlockedHost5m(); err != nil {
+				log.Printf("[STORE] failed clearing blocked 5m host snapshots for daily-only retention: %v", err)
+			}
+		} else if len(blockedHosts) > 0 {
+			if err := sqliteInsertBlockedHost5m(nowUTC, blockedHosts); err != nil {
+				log.Printf("[STORE] failed persisting blocked 5m host snapshot: %v", err)
+			}
+		}
+	}
 	loc := configuredDayLocation()
 	dayKey := localDayStart(nowUTC, loc).Format("2006-01-02")
 	changedCounts := false
 	changedPorts := false
+	changedHosts := false
+	saveDailyHosts := hostMetricsEnabled && (hostRetentionMode == "rolling_24h_plus_daily" || hostRetentionMode == "daily_only")
 	historyMu.Lock()
 	if len(blockedCounts) > 0 {
 		if blockedDaily[dayKey] == nil {
@@ -5297,6 +6476,33 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 			}
 		}
 	}
+	if saveDailyHosts && len(blockedHosts) > 0 {
+		if blockedHostsDaily[dayKey] == nil {
+			blockedHostsDaily[dayKey] = map[string]map[string]hostTrafficCount{}
+		}
+		for target, hostMap := range blockedHosts {
+			if strings.TrimSpace(target) == "" || len(hostMap) == 0 {
+				continue
+			}
+			if blockedHostsDaily[dayKey][target] == nil {
+				blockedHostsDaily[dayKey][target] = map[string]hostTrafficCount{}
+			}
+			for host, c := range hostMap {
+				host = strings.TrimSpace(host)
+				if host == "" {
+					continue
+				}
+				if c.Inbound <= 0 && c.Outbound <= 0 {
+					continue
+				}
+				prev := blockedHostsDaily[dayKey][target][host]
+				prev.Inbound += c.Inbound
+				prev.Outbound += c.Outbound
+				blockedHostsDaily[dayKey][target][host] = prev
+				changedHosts = true
+			}
+		}
+	}
 	historyMu.Unlock()
 	pruneBlockedHistory(nowUTC, configuredHistoryDays())
 	if changedCounts {
@@ -5304,6 +6510,9 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 	}
 	if changedPorts {
 		saveBlockedPortHistory()
+	}
+	if changedHosts {
+		saveBlockedHostHistory()
 	}
 }
 
@@ -5704,18 +6913,21 @@ func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, 
 func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
 	cleaned := make([]TrafficTarget, 0, len(targets))
 	for _, t := range targets {
-		name := strings.TrimSpace(t.Name)
-		if name == "" {
-			continue
-		}
 		kind := strings.ToLower(strings.TrimSpace(t.Kind))
 		switch kind {
-		case "", "auto", "label", "label_group":
+		case "", "auto", "label", "label_group", "all":
 		default:
 			kind = "auto"
 		}
 		if kind == "" {
 			kind = "auto"
+		}
+		name := strings.TrimSpace(t.Name)
+		if kind == "all" && name == "" {
+			name = allBlockedTargetDefaultName
+		}
+		if name == "" {
+			continue
 		}
 		window := 0
 		if t.BlockedMAWindow > 0 {
@@ -5736,16 +6948,19 @@ func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
 }
 
 func getBlockedCountForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, error) {
-	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
+	if isAllTrafficTarget(target) {
+		return performAsyncTrafficQueryWindowWithInclude(baseURL, nil, sourceExcludeHRefs, target.Name+"_all", startUTC, endUTC, false)
+	}
+	includeAny, err := buildTargetIncludeAny(baseURL, target)
 	if err != nil {
 		return trafficQueryResult{}, err
 	}
-	runBothDirections := func(labelHRefs []string, queryName string) (trafficQueryResult, error) {
-		sourceRes, err := performAsyncTrafficQueryWindow(baseURL, labelHRefs, sourceExcludeHRefs, queryName+"_src", startUTC, endUTC, true)
+	runBothDirections := func(includeAny []interface{}, queryName string) (trafficQueryResult, error) {
+		sourceRes, err := performAsyncTrafficQueryWindowWithInclude(baseURL, includeAny, sourceExcludeHRefs, queryName+"_src", startUTC, endUTC, true)
 		if err != nil {
 			return trafficQueryResult{}, err
 		}
-		destRes, err := performAsyncTrafficQueryWindow(baseURL, labelHRefs, sourceExcludeHRefs, queryName+"_dst", startUTC, endUTC, false)
+		destRes, err := performAsyncTrafficQueryWindowWithInclude(baseURL, includeAny, sourceExcludeHRefs, queryName+"_dst", startUTC, endUTC, false)
 		if err != nil {
 			return trafficQueryResult{}, err
 		}
@@ -5758,26 +6973,30 @@ func getBlockedCountForTargetWindow(baseURL string, target TrafficTarget, startU
 		}
 		return combined, nil
 	}
-	return runBothDirections(labelHRefs, target.Name)
+	return runBothDirections(includeAny, target.Name)
 }
 
 func getBlockedCountAndPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, error) {
-	res, ports, _, err := getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, startUTC, endUTC, sourceExcludeHRefs)
+	res, ports, _, _, err := getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, startUTC, endUTC, sourceExcludeHRefs)
 	return res, ports, err
 }
 
-func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, []blockedFlowSample, error) {
-	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
-	if err != nil {
-		return trafficQueryResult{}, nil, nil, err
+func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
+	if isAllTrafficTarget(target) {
+		res, ports, hosts, samples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, nil, true, sourceExcludeHRefs, target.Name+"_combined_all", startUTC, endUTC, false)
+		return res, ports, hosts, samples, err
 	}
-	srcRes, srcPorts, srcSamples, err := performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_src", startUTC, endUTC, true)
+	includeAny, err := buildTargetIncludeAny(baseURL, target)
 	if err != nil {
-		return trafficQueryResult{}, nil, nil, err
+		return trafficQueryResult{}, nil, nil, nil, err
 	}
-	dstRes, dstPorts, dstSamples, err := performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_dst", startUTC, endUTC, false)
+	srcRes, srcPorts, srcHosts, srcSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, false, sourceExcludeHRefs, target.Name+"_combined_src", startUTC, endUTC, true)
 	if err != nil {
-		return trafficQueryResult{}, nil, nil, err
+		return trafficQueryResult{}, nil, nil, nil, err
+	}
+	dstRes, dstPorts, dstHosts, dstSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, false, sourceExcludeHRefs, target.Name+"_combined_dst", startUTC, endUTC, false)
+	if err != nil {
+		return trafficQueryResult{}, nil, nil, nil, err
 	}
 	combined := trafficQueryResult{
 		Count:     srcRes.Count + dstRes.Count,
@@ -5797,10 +7016,11 @@ func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, targ
 			ports[k] += v
 		}
 	}
+	hosts := mergeHostTrafficCounts(srcHosts, dstHosts)
 	samples := make([]blockedFlowSample, 0, len(srcSamples)+len(dstSamples))
 	samples = append(samples, srcSamples...)
 	samples = append(samples, dstSamples...)
-	return combined, ports, samples, nil
+	return combined, ports, hosts, samples, nil
 }
 
 func collectBlockedTargetPaced(
@@ -5809,6 +7029,7 @@ func collectBlockedTargetPaced(
 	target TrafficTarget,
 	nowUTC time.Time,
 	baseline bool,
+	forceBaseline bool,
 	portDailyEnabled bool,
 	blockedDeltaStart time.Time,
 	sourceExcludeHRefs []string,
@@ -5818,30 +7039,95 @@ func collectBlockedTargetPaced(
 		Result: BlockedTargetResult{Name: target.Name, Kind: target.Kind},
 	}
 	verbose := verboseBlockedLoggingEnabled()
-	queryBaseline := baseline || !hasTargetBaseline(target.Name)
+	hostMetricsEnabled := configuredBlockedHostMetricsEnabled()
+	collectTier2 := portDailyEnabled && !shouldDeferTier2Enrichment()
+	collectTier3 := hostMetricsEnabled && !shouldDeferTier3Enrichment()
+	queryBaseline := forceBaseline || baseline || !hasTargetBaseline(target.Name)
+	useCountOnlyFallback := !queryBaseline && shouldUseBlockedCountOnlyFallback()
+	needsDetailedQuery := collectTier2 || collectTier3 || (!queryBaseline && !useCountOnlyFallback)
+	warnParts := make([]string, 0, 2)
+	if portDailyEnabled && !collectTier2 {
+		warnParts = append(warnParts, "deferred blocked port/proto enrichment due API budget pressure")
+	}
+	if hostMetricsEnabled && !collectTier3 {
+		warnParts = append(warnParts, "deferred blocked host enrichment due API budget pressure")
+	}
+	if useCountOnlyFallback {
+		warnParts = append(warnParts, "used count-only blocked query fallback due cycle deadline pressure")
+	}
 	var qRes trafficQueryResult
 	var err error
 	if queryBaseline {
 		if verbose {
 			log.Printf("[BLOCKED] baseline query target=%s window=%s..%s", target.Name, nowUTC.Add(-24*time.Hour).UTC().Format(time.RFC3339), nowUTC.UTC().Format(time.RFC3339))
 		}
-		qRes, err = getBlockedCountForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+		if hostMetricsEnabled && !collectTier3 {
+			if err := sqliteClearBlockedHost5mTarget(target.Name); err != nil {
+				log.Printf("[BLOCKED] baseline host snapshot reset failed target=%s err=%v", target.Name, err)
+			}
+		}
+		if needsDetailedQuery {
+			var portCounts map[string]int
+			var hostCounts map[string]hostTrafficCount
+			var samples []blockedFlowSample
+			qRes, portCounts, hostCounts, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+			if collectTier2 {
+				res.CurrentPorts = portCounts
+			}
+			res.CurrentSamples = samples
+			if err == nil {
+				if collectTier3 {
+					if err := sqliteClearBlockedHost5mTarget(target.Name); err != nil {
+						log.Printf("[BLOCKED] baseline host snapshot reset failed target=%s err=%v", target.Name, err)
+					}
+				}
+				if err := sqliteClearBlockedFlowSeenTarget(target.Name); err != nil {
+					log.Printf("[BLOCKED] baseline flow-seen reset failed target=%s err=%v", target.Name, err)
+				}
+				currentCount, _, dedupHosts := applyBlockedFlowSamples(target.Name, nowUTC, samples)
+				res.CurrentCount = currentCount
+				if collectTier3 {
+					if len(dedupHosts) > 0 {
+						res.CurrentHosts = dedupHosts
+					} else {
+						res.CurrentHosts = hostCounts
+					}
+				}
+			}
+		} else {
+			qRes, err = getBlockedCountForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
+			res.CurrentCount = qRes.Count
+		}
 		res.BaselineCount = qRes.Count
 		res.NewlyBaselined = err == nil
 	} else {
 		if verbose {
 			log.Printf("[BLOCKED] delta query target=%s window=%s..%s include_ports=%t", target.Name, blockedDeltaStart.UTC().Format(time.RFC3339), nowUTC.UTC().Format(time.RFC3339), portDailyEnabled)
 		}
-		var portCounts map[string]int
-		var samples []blockedFlowSample
-		qRes, portCounts, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
-		res.CurrentPorts = portCounts
-		res.CurrentSamples = samples
-		res.RawCount = qRes.Count
-		res.CurrentCount, _ = applyBlockedFlowSamples(target.Name, nowUTC, samples)
+		if needsDetailedQuery {
+			var portCounts map[string]int
+			var samples []blockedFlowSample
+			qRes, portCounts, _, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+			if collectTier2 {
+				res.CurrentPorts = portCounts
+			}
+			res.CurrentSamples = samples
+			res.RawCount = qRes.Count
+			res.CurrentCount, _, res.CurrentHosts = applyBlockedFlowSamples(target.Name, nowUTC, samples)
+			if !collectTier3 {
+				res.CurrentHosts = nil
+			}
+		} else {
+			qRes, err = getBlockedCountForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
+			res.RawCount = qRes.Count
+			res.CurrentCount = qRes.Count
+		}
 	}
 	res.Result.Count = qRes.Count
-	res.WarningMessage = strings.TrimSpace(qRes.Warning)
+	if warn := strings.TrimSpace(qRes.Warning); warn != "" {
+		warnParts = append(warnParts, warn)
+	}
+	res.WarningMessage = strings.Join(warnParts, " | ")
 	if err != nil {
 		res.Result.Status = FetchStatus{Success: false, Error: err.Error()}
 		if verbose {
@@ -5869,12 +7155,13 @@ func collectBlockedTargetsWithPacing(
 	targets []TrafficTarget,
 	nowUTC time.Time,
 	baseline bool,
+	forceBaseline bool,
 	portDailyEnabled bool,
 	blockedDeltaStart time.Time,
 	sourceExcludeHRefs []string,
-) ([]BlockedTargetResult, map[string]int, map[string]map[string]int, map[string]int, int, []string) {
+) ([]BlockedTargetResult, map[string]int, map[string]map[string]int, map[string]map[string]hostTrafficCount, map[string]int, int, []string) {
 	if len(targets) == 0 {
-		return nil, map[string]int{}, map[string]map[string]int{}, map[string]int{}, 0, nil
+		return nil, map[string]int{}, map[string]map[string]int{}, map[string]map[string]hostTrafficCount{}, map[string]int{}, 0, nil
 	}
 	workers := blockedTargetWorkerCount
 	if workers < 1 {
@@ -5895,7 +7182,7 @@ func collectBlockedTargetsWithPacing(
 				if delay > 0 {
 					time.Sleep(delay)
 				}
-				out <- collectBlockedTargetPaced(idx, baseURL, targets[idx], nowUTC, baseline, portDailyEnabled, blockedDeltaStart, sourceExcludeHRefs)
+				out <- collectBlockedTargetPaced(idx, baseURL, targets[idx], nowUTC, baseline, forceBaseline, portDailyEnabled, blockedDeltaStart, sourceExcludeHRefs)
 			}
 		}()
 	}
@@ -5909,6 +7196,7 @@ func collectBlockedTargetsWithPacing(
 	ordered := make([]BlockedTargetResult, len(targets))
 	blockedCurrent := make(map[string]int, len(targets))
 	blockedCurrentPorts := make(map[string]map[string]int, len(targets))
+	blockedCurrentHosts := make(map[string]map[string]hostTrafficCount, len(targets))
 	blockedBaseline := make(map[string]int)
 	warningParts := make([]string, 0)
 	successCount := 0
@@ -5926,24 +7214,30 @@ func collectBlockedTargetsWithPacing(
 			blockedBaseline[r.Result.Name] = r.BaselineCount
 		} else {
 			blockedCurrent[r.Result.Name] = r.CurrentCount
-			if len(r.CurrentPorts) > 0 {
-				blockedCurrentPorts[r.Result.Name] = r.CurrentPorts
-			}
+		}
+		if len(r.CurrentPorts) > 0 {
+			blockedCurrentPorts[r.Result.Name] = r.CurrentPorts
+		}
+		if len(r.CurrentHosts) > 0 {
+			blockedCurrentHosts[r.Result.Name] = r.CurrentHosts
 		}
 	}
-	return ordered, blockedCurrent, blockedCurrentPorts, blockedBaseline, successCount, warningParts
+	return ordered, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, blockedBaseline, successCount, warningParts
 }
 
 func getBlockedPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (map[string]int, error) {
-	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
+	if isAllTrafficTarget(target) {
+		return performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, nil, sourceExcludeHRefs, target.Name+"_ports_all", startUTC, endUTC, false)
+	}
+	includeAny, err := buildTargetIncludeAny(baseURL, target)
 	if err != nil {
 		return nil, err
 	}
-	sourceMap, err := performAsyncTrafficQueryWindowPortCounts(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_ports_src", startUTC, endUTC, true)
+	sourceMap, err := performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAny, sourceExcludeHRefs, target.Name+"_ports_src", startUTC, endUTC, true)
 	if err != nil {
 		return nil, err
 	}
-	destMap, err := performAsyncTrafficQueryWindowPortCounts(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_ports_dst", startUTC, endUTC, false)
+	destMap, err := performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAny, sourceExcludeHRefs, target.Name+"_ports_dst", startUTC, endUTC, false)
 	if err != nil {
 		return nil, err
 	}
@@ -6215,12 +7509,129 @@ func resolveSourceExclusionHRefsBestEffort(baseURL string, exclusions []TrafficT
 	return hrefs
 }
 
+func splitTargetComponents(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		name := strings.TrimSpace(p)
+		if name == "" {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+func includeAnyFromLabelHRefs(labelHRefs []string) []interface{} {
+	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
+	seen := make(map[string]struct{}, len(labelHRefs))
+	for _, h := range labelHRefs {
+		if strings.TrimSpace(h) == "" {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
+	}
+	includeAny := make([]interface{}, 0, len(includeList))
+	for _, item := range includeList {
+		includeAny = append(includeAny, []interface{}{item})
+	}
+	return includeAny
+}
+
+func buildTargetIncludeAny(baseURL string, target TrafficTarget) ([]interface{}, error) {
+	if isAllTrafficTarget(target) {
+		return nil, nil
+	}
+	components := splitTargetComponents(target.Name)
+	if len(components) == 0 {
+		return nil, fmt.Errorf("target name is empty")
+	}
+	if len(components) == 1 {
+		hrefs, err := getBlockedCountTargetLabelHRefs(baseURL, TrafficTarget{Name: components[0], Kind: target.Kind})
+		if err != nil {
+			return nil, err
+		}
+		return includeAnyFromLabelHRefs(hrefs), nil
+	}
+
+	componentHRefs := make([][]string, 0, len(components))
+	for _, comp := range components {
+		hrefs, err := getBlockedCountTargetLabelHRefs(baseURL, TrafficTarget{Name: comp, Kind: target.Kind})
+		if err != nil {
+			return nil, fmt.Errorf("component %q: %w", comp, err)
+		}
+		if len(hrefs) == 0 {
+			return nil, fmt.Errorf("component %q resolved to no labels", comp)
+		}
+		seen := map[string]struct{}{}
+		uniq := make([]string, 0, len(hrefs))
+		for _, h := range hrefs {
+			h = strings.TrimSpace(h)
+			if h == "" {
+				continue
+			}
+			if _, ok := seen[h]; ok {
+				continue
+			}
+			seen[h] = struct{}{}
+			uniq = append(uniq, h)
+		}
+		if len(uniq) == 0 {
+			return nil, fmt.Errorf("component %q resolved to no labels", comp)
+		}
+		sort.Strings(uniq)
+		componentHRefs = append(componentHRefs, uniq)
+	}
+
+	clauses := [][]string{{}}
+	for _, hrefs := range componentHRefs {
+		next := make([][]string, 0, len(clauses)*len(hrefs))
+		for _, clause := range clauses {
+			for _, href := range hrefs {
+				c := make([]string, 0, len(clause)+1)
+				c = append(c, clause...)
+				exists := false
+				for _, existing := range c {
+					if existing == href {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					c = append(c, href)
+				}
+				next = append(next, c)
+				if len(next) > maxMultiLabelClauses {
+					return nil, fmt.Errorf("multilabel target expands to too many clauses (%d+); simplify target", maxMultiLabelClauses)
+				}
+			}
+		}
+		clauses = next
+	}
+
+	includeAny := make([]interface{}, 0, len(clauses))
+	for _, clause := range clauses {
+		andClause := make([]interface{}, 0, len(clause))
+		for _, href := range clause {
+			andClause = append(andClause, map[string]interface{}{"label": map[string]string{"href": href}})
+		}
+		includeAny = append(includeAny, andClause)
+	}
+	return includeAny, nil
+}
+
 func getBlockedCountTargetLabelHRefs(baseURL string, target TrafficTarget) ([]string, error) {
 	kind := strings.ToLower(strings.TrimSpace(target.Kind))
 	if kind == "" {
 		kind = "auto"
 	}
 	switch kind {
+	case "all":
+		return nil, nil
 	case "label":
 		href, err := resolveLabelHref(baseURL, target.Name)
 		if err != nil {
@@ -6242,28 +7653,9 @@ func getBlockedCountTargetLabelHRefs(baseURL string, target TrafficTarget) ([]st
 	}
 }
 
-func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
-	if len(labelHRefs) == 0 {
-		return trafficQueryResult{}, errors.New("cannot run blocked traffic query with empty label list")
-	}
-	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
-	seen := make(map[string]struct{}, len(labelHRefs))
-	for _, h := range labelHRefs {
-		if h == "" {
-			continue
-		}
-		if _, ok := seen[h]; ok {
-			continue
-		}
-		seen[h] = struct{}{}
-		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
-	}
-	if len(includeList) == 0 {
-		return trafficQueryResult{}, errors.New("resolved labels are empty after normalization")
-	}
-	includeAny := make([]interface{}, 0, len(includeList))
-	for _, item := range includeList {
-		includeAny = append(includeAny, []interface{}{item})
+func performAsyncTrafficQueryWindowWithInclude(baseURL string, includeAny []interface{}, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
+	if includeAny == nil {
+		includeAny = []interface{}{}
 	}
 	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
 	for _, h := range sourceExcludeHRefs {
@@ -6340,28 +7732,13 @@ func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceE
 	return trafficQueryResult{}, fmt.Errorf("async job timed out")
 }
 
-func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
-	if len(labelHRefs) == 0 {
-		return nil, errors.New("cannot run blocked traffic query with empty label list")
-	}
-	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
-	seen := make(map[string]struct{}, len(labelHRefs))
-	for _, h := range labelHRefs {
-		if h == "" {
-			continue
-		}
-		if _, ok := seen[h]; ok {
-			continue
-		}
-		seen[h] = struct{}{}
-		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
-	}
-	if len(includeList) == 0 {
-		return nil, errors.New("resolved labels are empty after normalization")
-	}
-	includeAny := make([]interface{}, 0, len(includeList))
-	for _, item := range includeList {
-		includeAny = append(includeAny, []interface{}{item})
+func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
+	return performAsyncTrafficQueryWindowWithInclude(baseURL, includeAnyFromLabelHRefs(labelHRefs), sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
+}
+
+func performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL string, includeAny []interface{}, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
+	if includeAny == nil {
+		includeAny = []interface{}{}
 	}
 	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
 	for _, h := range sourceExcludeHRefs {
@@ -6427,33 +7804,18 @@ func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []strin
 	return nil, fmt.Errorf("async job timed out")
 }
 
+func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
+	return performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAnyFromLabelHRefs(labelHRefs), sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
+}
+
 func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, error) {
-	res, ports, _, err := performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
+	res, ports, _, _, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
 	return res, ports, err
 }
 
-func performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, []blockedFlowSample, error) {
-	if len(labelHRefs) == 0 {
-		return trafficQueryResult{}, nil, nil, errors.New("cannot run blocked traffic query with empty label list")
-	}
-	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
-	seen := make(map[string]struct{}, len(labelHRefs))
-	for _, h := range labelHRefs {
-		if h == "" {
-			continue
-		}
-		if _, ok := seen[h]; ok {
-			continue
-		}
-		seen[h] = struct{}{}
-		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
-	}
-	if len(includeList) == 0 {
-		return trafficQueryResult{}, nil, nil, errors.New("resolved labels are empty after normalization")
-	}
-	includeAny := make([]interface{}, 0, len(includeList))
-	for _, item := range includeList {
-		includeAny = append(includeAny, []interface{}{item})
+func performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL string, includeAny []interface{}, allScope bool, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
+	if includeAny == nil {
+		includeAny = []interface{}{}
 	}
 	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
 	for _, h := range sourceExcludeHRefs {
@@ -6491,24 +7853,24 @@ func performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL string, labelHRe
 	}
 	var job map[string]interface{}
 	if err := apiCall(baseURL+"/traffic_flows/async_queries", "POST", payload, &job); err != nil {
-		return trafficQueryResult{}, nil, nil, err
+		return trafficQueryResult{}, nil, nil, nil, err
 	}
 	jobHref, _ := job["href"].(string)
 	if jobHref == "" {
-		return trafficQueryResult{}, nil, nil, errors.New("async query did not return job href")
+		return trafficQueryResult{}, nil, nil, nil, errors.New("async query did not return job href")
 	}
 	jobURL := resolveHrefToURL(jobHref)
 	for i := 0; i < 60; i++ {
 		var status map[string]interface{}
 		if err := apiCall(jobURL, "GET", nil, &status); err != nil {
-			return trafficQueryResult{}, nil, nil, err
+			return trafficQueryResult{}, nil, nil, nil, err
 		}
 		s, _ := status["status"].(string)
 		switch s {
 		case "completed":
 			rows, err := getAsyncQueryResultRows(jobURL)
 			if err != nil {
-				return trafficQueryResult{}, nil, nil, err
+				return trafficQueryResult{}, nil, nil, nil, err
 			}
 			count, ok := extractResultCount(status)
 			if !ok {
@@ -6529,13 +7891,19 @@ func performAsyncTrafficQueryWindowCountPortsAndSamples(baseURL string, labelHRe
 				res.Warning = fmt.Sprintf("result may be truncated at max_results=%d", trafficQueryMaxResults)
 			}
 			samples := extractBlockedFlowSamples(rows, queryName, endUTC)
-			return res, aggregatePortCounts(rows), samples, nil
+			hosts := aggregateHostCounts(rows, asSource, allScope)
+			return res, aggregatePortCounts(rows), hosts, samples, nil
 		case "failed":
-			return trafficQueryResult{}, nil, nil, fmt.Errorf("async job failed: %s", statusMessage(status))
+			return trafficQueryResult{}, nil, nil, nil, fmt.Errorf("async job failed: %s", statusMessage(status))
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return trafficQueryResult{}, nil, nil, fmt.Errorf("async job timed out")
+	return trafficQueryResult{}, nil, nil, nil, fmt.Errorf("async job timed out")
+}
+
+func performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
+	includeAny := includeAnyFromLabelHRefs(labelHRefs)
+	return performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, len(labelHRefs) == 0, sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
 }
 
 func getAsyncQueryResultRows(jobURL string) ([]map[string]interface{}, error) {
@@ -6599,23 +7967,295 @@ func aggregatePortCounts(rows []map[string]interface{}) map[string]int {
 	return out
 }
 
+func aggregateHostCounts(rows []map[string]interface{}, asSource bool, allScope bool) map[string]hostTrafficCount {
+	byKey := make(map[string]hostTrafficCount)
+	displayByKey := make(map[string]string)
+	add := func(id flowWorkloadIdentity, inbound, outbound int) {
+		key := strings.TrimSpace(id.Key)
+		if key == "" {
+			return
+		}
+		display := strings.TrimSpace(id.Display)
+		if display == "" {
+			return
+		}
+		displayByKey[key] = choosePreferredWorkloadDisplay(displayByKey[key], display)
+		cur := byKey[key]
+		cur.Inbound += inbound
+		cur.Outbound += outbound
+		byKey[key] = cur
+	}
+	for _, row := range rows {
+		n := intFromAny(row["num_connections"])
+		if n <= 0 {
+			n = 1
+		}
+		if allScope {
+			add(extractFlowSourceWorkloadIdentity(row), 0, n)
+			add(extractFlowDestinationWorkloadIdentity(row), n, 0)
+			continue
+		}
+		if asSource {
+			add(extractFlowSourceWorkloadIdentity(row), 0, n)
+		} else {
+			add(extractFlowDestinationWorkloadIdentity(row), n, 0)
+		}
+	}
+	out := make(map[string]hostTrafficCount, len(byKey))
+	for key, c := range byKey {
+		display := strings.TrimSpace(displayByKey[key])
+		if display == "" {
+			continue
+		}
+		cur := out[display]
+		cur.Inbound += c.Inbound
+		cur.Outbound += c.Outbound
+		out[display] = cur
+	}
+	return out
+}
+
+func mergeHostTrafficCounts(a, b map[string]hostTrafficCount) map[string]hostTrafficCount {
+	out := make(map[string]hostTrafficCount, len(a)+len(b))
+	for host, c := range a {
+		out[host] = c
+	}
+	for host, c := range b {
+		prev := out[host]
+		prev.Inbound += c.Inbound
+		prev.Outbound += c.Outbound
+		out[host] = prev
+	}
+	return out
+}
+
+func choosePreferredWorkloadDisplay(existing, candidate string) string {
+	existing = strings.TrimSpace(existing)
+	candidate = strings.TrimSpace(candidate)
+	if existing == "" {
+		return candidate
+	}
+	if candidate == "" {
+		return existing
+	}
+	existingIP := net.ParseIP(existing) != nil
+	candidateIP := net.ParseIP(candidate) != nil
+	if existingIP && !candidateIP {
+		return candidate
+	}
+	if candidateIP && !existingIP {
+		return existing
+	}
+	existingFQDNish := strings.Contains(existing, ".")
+	candidateFQDNish := strings.Contains(candidate, ".")
+	if candidateFQDNish && !existingFQDNish {
+		return candidate
+	}
+	if existingFQDNish && !candidateFQDNish {
+		return existing
+	}
+	if len(candidate) > len(existing) {
+		return candidate
+	}
+	return existing
+}
+
+func preferredWorkloadDisplay(hostnameCandidates, nameCandidates []string) string {
+	hostname := firstNonEmptyString(hostnameCandidates...)
+	name := firstNonEmptyString(nameCandidates...)
+	hostname = strings.TrimSpace(hostname)
+	name = strings.TrimSpace(name)
+	if hostname == "" {
+		return name
+	}
+	if name == "" {
+		return hostname
+	}
+	if net.ParseIP(hostname) != nil && net.ParseIP(name) == nil {
+		return name
+	}
+	return hostname
+}
+
+func extractFlowSourceWorkloadIdentity(row map[string]interface{}) flowWorkloadIdentity {
+	href := firstNonEmptyString(
+		pathString(row, "src", "workload", "href"),
+		pathString(row, "source", "workload", "href"),
+		pathString(row, "src_workload", "href"),
+		pathString(row, "consumer", "workload", "href"),
+		pathString(row, "src", "href"),
+		pathString(row, "source", "href"),
+		pathString(row, "src_workload_href"),
+		pathString(row, "consumer", "href"),
+	)
+	display := preferredWorkloadDisplay(
+		[]string{
+			pathString(row, "src", "workload", "hostname"),
+			pathString(row, "source", "workload", "hostname"),
+			pathString(row, "src_workload", "hostname"),
+			pathString(row, "consumer", "workload", "hostname"),
+			pathString(row, "src", "hostname"),
+			pathString(row, "source_hostname"),
+			pathString(row, "src_hostname"),
+			pathString(row, "consumer", "hostname"),
+			pathString(row, "consumer_hostname"),
+			pathString(row, "src", "ip"),
+			pathString(row, "source_ip"),
+			pathString(row, "src_ip"),
+			pathString(row, "consumer", "ip"),
+		},
+		[]string{
+			pathString(row, "src", "workload", "name"),
+			pathString(row, "source", "workload", "name"),
+			pathString(row, "src_workload", "name"),
+			pathString(row, "consumer", "workload", "name"),
+			pathString(row, "src", "name"),
+			pathString(row, "source_name"),
+			pathString(row, "src_name"),
+			pathString(row, "consumer", "name"),
+			pathString(row, "consumer_name"),
+		},
+	)
+	key := strings.TrimSpace(href)
+	if key == "" {
+		return flowWorkloadIdentity{}
+	}
+	display = strings.TrimSpace(display)
+	if display == "" || net.ParseIP(display) != nil {
+		return flowWorkloadIdentity{}
+	}
+	return flowWorkloadIdentity{
+		Key:     key,
+		Display: display,
+	}
+}
+
+func extractFlowDestinationWorkloadIdentity(row map[string]interface{}) flowWorkloadIdentity {
+	href := firstNonEmptyString(
+		pathString(row, "dst", "workload", "href"),
+		pathString(row, "destination", "workload", "href"),
+		pathString(row, "dst_workload", "href"),
+		pathString(row, "provider", "workload", "href"),
+		pathString(row, "dst", "href"),
+		pathString(row, "destination", "href"),
+		pathString(row, "dst_workload_href"),
+		pathString(row, "provider", "href"),
+	)
+	display := preferredWorkloadDisplay(
+		[]string{
+			pathString(row, "dst", "workload", "hostname"),
+			pathString(row, "destination", "workload", "hostname"),
+			pathString(row, "dst_workload", "hostname"),
+			pathString(row, "provider", "workload", "hostname"),
+			pathString(row, "dst", "hostname"),
+			pathString(row, "destination_hostname"),
+			pathString(row, "dst_hostname"),
+			pathString(row, "provider", "hostname"),
+			pathString(row, "provider_hostname"),
+			pathString(row, "dst", "ip"),
+			pathString(row, "destination_ip"),
+			pathString(row, "dst_ip"),
+			pathString(row, "provider", "ip"),
+		},
+		[]string{
+			pathString(row, "dst", "workload", "name"),
+			pathString(row, "destination", "workload", "name"),
+			pathString(row, "dst_workload", "name"),
+			pathString(row, "provider", "workload", "name"),
+			pathString(row, "dst", "name"),
+			pathString(row, "destination_name"),
+			pathString(row, "dst_name"),
+			pathString(row, "provider", "name"),
+			pathString(row, "provider_name"),
+		},
+	)
+	key := strings.TrimSpace(href)
+	if key == "" {
+		return flowWorkloadIdentity{}
+	}
+	display = strings.TrimSpace(display)
+	if display == "" || net.ParseIP(display) != nil {
+		return flowWorkloadIdentity{}
+	}
+	return flowWorkloadIdentity{
+		Key:     key,
+		Display: display,
+	}
+}
+
 func extractBlockedFlowSamples(rows []map[string]interface{}, leg string, fallbackUTC time.Time) []blockedFlowSample {
 	out := make([]blockedFlowSample, 0, len(rows))
+	sourceDisplayByKey := map[string]string{}
+	destinationDisplayByKey := map[string]string{}
 	for _, row := range rows {
 		sig := blockedFlowSignature(row, leg)
 		if sig == "" {
 			continue
 		}
+		src := extractFlowSourceWorkloadIdentity(row)
+		dst := extractFlowDestinationWorkloadIdentity(row)
+		if src.Key != "" && src.Display != "" {
+			sourceDisplayByKey[src.Key] = choosePreferredWorkloadDisplay(sourceDisplayByKey[src.Key], src.Display)
+		}
+		if dst.Key != "" && dst.Display != "" {
+			destinationDisplayByKey[dst.Key] = choosePreferredWorkloadDisplay(destinationDisplayByKey[dst.Key], dst.Display)
+		}
 		out = append(out, blockedFlowSample{
 			Signature:       sig,
 			LastDetectedUTC: blockedFlowLastDetectedUTC(row, fallbackUTC),
+			SourceKey:       src.Key,
+			SourceHost:      src.Display,
+			DestinationKey:  dst.Key,
+			DestinationHost: dst.Display,
+			Connections:     blockedFlowConnections(row),
 		})
+	}
+	for i := range out {
+		if key := strings.TrimSpace(out[i].SourceKey); key != "" {
+			if display := strings.TrimSpace(sourceDisplayByKey[key]); display != "" {
+				out[i].SourceHost = display
+			}
+		}
+		if key := strings.TrimSpace(out[i].DestinationKey); key != "" {
+			if display := strings.TrimSpace(destinationDisplayByKey[key]); display != "" {
+				out[i].DestinationHost = display
+			}
+		}
 	}
 	return out
 }
 
+func blockedFlowConnections(row map[string]interface{}) int {
+	n := intFromAny(row["num_connections"])
+	if n <= 0 {
+		n = 1
+	}
+	return n
+}
+
+func blockedFlowEndpointIdentity(values ...string) string {
+	parts := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, raw := range values {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		parts = append(parts, v)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
+}
+
 func blockedFlowSignature(row map[string]interface{}, leg string) string {
-	srcID := firstNonEmptyString(
+	srcID := blockedFlowEndpointIdentity(
 		pathString(row, "src", "workload", "href"),
 		pathString(row, "source", "workload", "href"),
 		pathString(row, "src_workload", "href"),
@@ -6624,9 +8264,10 @@ func blockedFlowSignature(row map[string]interface{}, leg string) string {
 		pathString(row, "src", "ip"),
 		pathString(row, "source_ip"),
 		pathString(row, "src_ip"),
+		pathString(row, "src", "fqdn"),
 		pathString(row, "src_fqdn"),
 	)
-	dstID := firstNonEmptyString(
+	dstID := blockedFlowEndpointIdentity(
 		pathString(row, "dst", "workload", "href"),
 		pathString(row, "destination", "workload", "href"),
 		pathString(row, "dst_workload", "href"),
@@ -6635,6 +8276,7 @@ func blockedFlowSignature(row map[string]interface{}, leg string) string {
 		pathString(row, "dst", "ip"),
 		pathString(row, "destination_ip"),
 		pathString(row, "dst_ip"),
+		pathString(row, "dst", "fqdn"),
 		pathString(row, "dst_fqdn"),
 	)
 	svcPort := firstNonZeroInt(
@@ -7111,13 +8753,13 @@ func apiCallRaw(url, method string, payload interface{}) ([]byte, error) {
 
 func apiCallRawWithClient(client *http.Client, url, method string, payload interface{}) ([]byte, error) {
 	reloadConfigIfFileChanged()
-	var body io.Reader
+	var payloadBytes []byte
 	if payload != nil {
 		b, err := json.Marshal(payload)
 		if err != nil {
 			return nil, fmt.Errorf("encode request payload: %w", err)
 		}
-		body = bytes.NewBuffer(b)
+		payloadBytes = b
 	}
 
 	configMutex.RLock()
@@ -7125,34 +8767,60 @@ func apiCallRawWithClient(client *http.Client, url, method string, payload inter
 	apiSecret := config.APISecret
 	configMutex.RUnlock()
 
-	log.Printf("[API] %s %s", method, url)
-	req, err := http.NewRequest(method, url, body)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	req.SetBasicAuth(apiKey, apiSecret)
-	req.Header.Set("Accept", "application/json")
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
 	if client == nil {
 		client = httpClient
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	const maxAttempts = 5
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		apiRateLimiter.waitTurn()
+		var body io.Reader
+		if payloadBytes != nil {
+			body = bytes.NewReader(payloadBytes)
+		}
+		log.Printf("[API] %s %s", method, url)
+		req, err := http.NewRequest(method, url, body)
+		if err != nil {
+			return nil, fmt.Errorf("build request: %w", err)
+		}
+		req.SetBasicAuth(apiKey, apiSecret)
+		req.Header.Set("Accept", "application/json")
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response body: %w", err)
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			break
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("read response body: %w", readErr)
+			break
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			wait := parseRetryAfter(resp.Header.Get("Retry-After"))
+			if wait == 0 {
+				wait = time.Duration(2*attempt) * time.Second
+			}
+			apiRateLimiter.noteRateLimit(wait)
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+			if attempt < maxAttempts {
+				continue
+			}
+			break
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		}
+		return respBody, nil
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	if lastErr == nil {
+		lastErr = errors.New("request failed after retries")
 	}
-	return respBody, nil
+	return nil, lastErr
 }
 
 func resolveHrefToURL(href string) string {
@@ -7230,6 +8898,8 @@ func loadConfigFile() (Config, time.Time, bool) {
 	cfg.PublicBaseURL = normalizePublicBaseURL(cfg.PublicBaseURL)
 	cfg.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(cfg.BlockedPortStoreBackend)
 	cfg.BlockedRollingDedupeBackend = normalizeBlockedRollingDedupeBackend(cfg.BlockedRollingDedupeBackend)
+	cfg.BlockedHostRetentionMode = normalizeBlockedHostRetentionMode(cfg.BlockedHostRetentionMode)
+	cfg.APIMaxRPM = normalizeAPIMaxRPM(cfg.APIMaxRPM)
 	cfg.HistoryDays = normalizeHistoryDays(cfg.HistoryDays)
 	cfg.TrafficTargets = sanitizeTargets(cfg.TrafficTargets)
 	cfg.SourceExclusions = sanitizeTargets(cfg.SourceExclusions)
@@ -7253,6 +8923,35 @@ func normalizeHistoryDays(days int) int {
 	return days
 }
 
+func normalizeAPIMaxRPM(v int) int {
+	if v <= 0 {
+		return defaultAPIMaxRPM
+	}
+	if v < 120 {
+		return 120
+	}
+	if v > 490 {
+		return 490
+	}
+	return v
+}
+
+func normalizeAPIMinRPM(v int, max int) int {
+	if max <= 0 {
+		max = defaultAPIMaxRPM
+	}
+	if v <= 0 {
+		v = minimumAPIRPMOnThrottle
+	}
+	if v > max {
+		v = max
+	}
+	if v < 60 {
+		v = 60
+	}
+	return v
+}
+
 func reloadConfigIfFileChanged() {
 	st, err := os.Stat(configFileName)
 	if err != nil {
@@ -7274,6 +8973,7 @@ func reloadConfigIfFileChanged() {
 	config = cfg
 	configModTime = modTime
 	configMutex.Unlock()
+	apiRateLimiter.applyConfig(cfg.APIMaxRPM)
 	log.Printf("[CONFIG] reloaded config.json from disk")
 }
 
@@ -7420,10 +9120,29 @@ func initBlockedPortStore() {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_blocked_ports_5m_target_ts ON blocked_ports_5m(target, ts_unix);`,
 		`CREATE INDEX IF NOT EXISTS idx_blocked_ports_5m_ts ON blocked_ports_5m(ts_unix);`,
+		`CREATE TABLE IF NOT EXISTS blocked_hosts_daily (
+			day TEXT NOT NULL,
+			target TEXT NOT NULL,
+			hostname TEXT NOT NULL,
+			inbound_count INTEGER NOT NULL,
+			outbound_count INTEGER NOT NULL,
+			PRIMARY KEY(day, target, hostname)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_blocked_hosts_daily_target_day ON blocked_hosts_daily(target, day);`,
+		`CREATE TABLE IF NOT EXISTS blocked_hosts_5m (
+			ts_unix INTEGER NOT NULL,
+			target TEXT NOT NULL,
+			hostname TEXT NOT NULL,
+			inbound_count INTEGER NOT NULL,
+			outbound_count INTEGER NOT NULL,
+			PRIMARY KEY(ts_unix, target, hostname)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_blocked_hosts_5m_target_ts ON blocked_hosts_5m(target, ts_unix);`,
 		`CREATE TABLE IF NOT EXISTS blocked_flow_seen (
 			target TEXT NOT NULL,
 			signature TEXT NOT NULL,
 			last_seen_unix INTEGER NOT NULL,
+			last_connections INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY(target, signature)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_blocked_flow_seen_target_ts ON blocked_flow_seen(target, last_seen_unix);`,
@@ -7434,6 +9153,9 @@ func initBlockedPortStore() {
 			_ = db.Close()
 			return
 		}
+	}
+	if _, err := db.Exec(`ALTER TABLE blocked_flow_seen ADD COLUMN last_connections INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		log.Printf("[STORE] sqlite schema migration for blocked_flow_seen.last_connections failed: %v", err)
 	}
 	metricsDB = db
 	migrateBlockedPortDailyJSONToSQLite()
@@ -7608,6 +9330,7 @@ func loadTamperingHistoryReconcileMarker() (tamperingHistoryReconcileMarker, boo
 		if marker.CompletedByDay == nil {
 			marker.CompletedByDay = map[string]string{}
 		}
+		marker.MethodVersion = strings.TrimSpace(marker.MethodVersion)
 		return marker, true
 	}
 	if blockedPortStoreIsSQLite() {
@@ -7642,6 +9365,9 @@ func saveTamperingHistoryReconcileMarker(marker tamperingHistoryReconcileMarker)
 	}
 	if marker.CompletedByDay == nil {
 		marker.CompletedByDay = map[string]string{}
+	}
+	if strings.TrimSpace(marker.MethodVersion) == "" {
+		marker.MethodVersion = tamperingReconcileMethodVersion
 	}
 	if blockedPortStoreIsSQLite() {
 		return sqliteKVSetJSON(stateKeyTamperingHistoryReconcile, marker)
@@ -7820,6 +9546,176 @@ func sqliteInsertBlockedPort5m(tsUTC time.Time, blockedPorts map[string]map[stri
 	return tx.Commit()
 }
 
+func sqliteInsertBlockedHost5m(tsUTC time.Time, blockedHosts map[string]map[string]hostTrafficCount) error {
+	if metricsDB == nil || len(blockedHosts) == 0 {
+		return nil
+	}
+	bucketUnix := tsUTC.UTC().Unix()
+	tx, err := metricsDB.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO blocked_hosts_5m(ts_unix, target, hostname, inbound_count, outbound_count) VALUES(?,?,?,?,?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for target, hostMap := range blockedHosts {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		for host, c := range hostMap {
+			host = strings.TrimSpace(host)
+			if host == "" {
+				continue
+			}
+			if c.Inbound <= 0 && c.Outbound <= 0 {
+				continue
+			}
+			if _, err := stmt.Exec(bucketUnix, target, host, c.Inbound, c.Outbound); err != nil {
+				_ = stmt.Close()
+				_ = tx.Rollback()
+				return err
+			}
+		}
+	}
+	_ = stmt.Close()
+	if _, err := tx.Exec(`DELETE FROM blocked_hosts_5m WHERE ts_unix < ?`, tsUTC.UTC().Add(-24*time.Hour).Unix()); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func sqliteClearBlockedHost5m() error {
+	if metricsDB == nil {
+		return errors.New("sqlite not initialized")
+	}
+	_, err := metricsDB.Exec(`DELETE FROM blocked_hosts_5m`)
+	return err
+}
+
+func sqliteClearBlockedHost5mTarget(target string) error {
+	if metricsDB == nil {
+		return errors.New("sqlite not initialized")
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil
+	}
+	_, err := metricsDB.Exec(`DELETE FROM blocked_hosts_5m WHERE target = ?`, target)
+	return err
+}
+
+func sqliteClearBlockedFlowSeenTarget(target string) error {
+	if metricsDB == nil {
+		return errors.New("sqlite not initialized")
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil
+	}
+	_, err := metricsDB.Exec(`DELETE FROM blocked_flow_seen WHERE target = ?`, target)
+	return err
+}
+
+func sqliteReplaceBlockedHostDaily(records []dailyBlockedHostRecord) error {
+	if metricsDB == nil {
+		return errors.New("sqlite not initialized")
+	}
+	tx, err := metricsDB.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM blocked_hosts_daily`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO blocked_hosts_daily(day, target, hostname, inbound_count, outbound_count) VALUES(?,?,?,?,?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for _, rec := range records {
+		if _, err := stmt.Exec(rec.Day, rec.Target, rec.Hostname, rec.Inbound, rec.Outbound); err != nil {
+			_ = stmt.Close()
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	_ = stmt.Close()
+	return tx.Commit()
+}
+
+func sqliteLoadBlockedHostDaily() ([]dailyBlockedHostRecord, error) {
+	if metricsDB == nil {
+		return nil, errors.New("sqlite not initialized")
+	}
+	rows, err := metricsDB.Query(`SELECT day, target, hostname, inbound_count, outbound_count FROM blocked_hosts_daily ORDER BY day, target, hostname`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]dailyBlockedHostRecord, 0, 1024)
+	for rows.Next() {
+		var rec dailyBlockedHostRecord
+		if err := rows.Scan(&rec.Day, &rec.Target, &rec.Hostname, &rec.Inbound, &rec.Outbound); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func sqliteBlockedHost24hAggregate(target string, sinceUTC time.Time) ([]HostCount, error) {
+	if metricsDB == nil {
+		return nil, errors.New("sqlite not initialized")
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, nil
+	}
+	sinceUnix := sinceUTC.UTC().Unix()
+	rows, err := metricsDB.Query(`
+		SELECT hostname, COALESCE(SUM(inbound_count), 0), COALESCE(SUM(outbound_count), 0)
+		FROM blocked_hosts_5m
+		WHERE target = ? AND ts_unix >= ?
+		GROUP BY hostname
+	`, target, sinceUnix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]HostCount, 0, 1024)
+	for rows.Next() {
+		var host HostCount
+		if err := rows.Scan(&host.Hostname, &host.Inbound, &host.Outbound); err != nil {
+			return nil, err
+		}
+		host.Hostname = strings.TrimSpace(host.Hostname)
+		if host.Hostname == "" {
+			continue
+		}
+		if host.Inbound <= 0 && host.Outbound <= 0 {
+			continue
+		}
+		out = append(out, host)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ti := out[i].Inbound + out[i].Outbound
+		tj := out[j].Inbound + out[j].Outbound
+		if ti == tj {
+			return out[i].Hostname < out[j].Hostname
+		}
+		return ti > tj
+	})
+	return out, nil
+}
+
 func loadBlockedHistory() {
 	historyMu.Lock()
 	defer historyMu.Unlock()
@@ -7899,6 +9795,84 @@ func loadBlockedPortHistory() {
 	}
 }
 
+func loadBlockedHostHistory() {
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	blockedHostsDaily = map[string]map[string]map[string]hostTrafficCount{}
+
+	var records []dailyBlockedHostRecord
+	if blockedPortStoreIsSQLite() {
+		loaded, err := sqliteLoadBlockedHostDaily()
+		if err != nil {
+			log.Printf("[HISTORY] failed loading blocked host history from sqlite: %v", err)
+			return
+		}
+		records = loaded
+	} else {
+		return
+	}
+	for _, rec := range records {
+		day := strings.TrimSpace(rec.Day)
+		target := strings.TrimSpace(rec.Target)
+		host := strings.TrimSpace(rec.Hostname)
+		if day == "" || target == "" || host == "" {
+			continue
+		}
+		if blockedHostsDaily[day] == nil {
+			blockedHostsDaily[day] = map[string]map[string]hostTrafficCount{}
+		}
+		if blockedHostsDaily[day][target] == nil {
+			blockedHostsDaily[day][target] = map[string]hostTrafficCount{}
+		}
+		blockedHostsDaily[day][target][host] = hostTrafficCount{
+			Inbound:  rec.Inbound,
+			Outbound: rec.Outbound,
+		}
+	}
+}
+
+func loadPolicyRulesetHistory() {
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	policyRulesetDaily = map[string]map[string]int{}
+	var records []dailyPolicyRulesetRecord
+	if blockedPortStoreIsSQLite() {
+		ok, err := sqliteKVGetJSON(stateKeyPolicyRulesetDaily, &records)
+		if err != nil {
+			log.Printf("[HISTORY] failed loading policy ruleset history from sqlite: %v", err)
+			return
+		}
+		if !ok {
+			return
+		}
+	} else {
+		path := dataFilePath("policy_ruleset_daily_history.json")
+		file, err := os.Open(path)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				log.Printf("[HISTORY] failed loading policy ruleset history: %v", err)
+			}
+			return
+		}
+		defer file.Close()
+		if err := json.NewDecoder(file).Decode(&records); err != nil {
+			log.Printf("[HISTORY] failed decoding policy ruleset history: %v", err)
+			return
+		}
+	}
+	for _, rec := range records {
+		day := strings.TrimSpace(rec.Day)
+		name := strings.TrimSpace(rec.Ruleset)
+		if day == "" || name == "" {
+			continue
+		}
+		if policyRulesetDaily[day] == nil {
+			policyRulesetDaily[day] = map[string]int{}
+		}
+		policyRulesetDaily[day][name] = rec.RuleCount
+	}
+}
+
 func loadVENHistory() {
 	venHistoryMu.Lock()
 	defer venHistoryMu.Unlock()
@@ -7933,6 +9907,8 @@ func loadVENHistory() {
 			WarningMax:       rec.WarningMax,
 			ErrorMax:         rec.ErrorMax,
 			TamperingMax:     rec.TamperingMax,
+			RulesetsMax:      rec.RulesetsMax,
+			RulesMax:         rec.RulesMax,
 			ModeIdleMax:      rec.ModeIdleMax,
 			ModeVisMax:       rec.ModeVisMax,
 			ModeSelectiveMax: rec.ModeSelectiveMax,
@@ -7983,7 +9959,7 @@ func loadRollingState() {
 		BaselineWorkloads:   map[string]struct{}{},
 		BaselineBlocked:     map[string]targetBaseline{},
 		Buckets:             make([]rollingBucket, 0, len(persisted.Buckets)),
-		BlockedFlowLastSeen: map[string]map[string]time.Time{},
+		BlockedFlowLastSeen: map[string]map[string]blockedFlowSeenState{},
 	}
 	for _, n := range persisted.BaselineWorkloads {
 		n = strings.TrimSpace(n)
@@ -8335,10 +10311,26 @@ func pruneBlockedHistory(nowUTC time.Time, keepDays int) {
 			changed = true
 		}
 	}
+	for day := range blockedHostsDaily {
+		parsed, err := parseDayKeyInLocation(day, loc)
+		if err != nil || parsed.Before(cutoff) {
+			delete(blockedHostsDaily, day)
+			changed = true
+		}
+	}
+	for day := range policyRulesetDaily {
+		parsed, err := parseDayKeyInLocation(day, loc)
+		if err != nil || parsed.Before(cutoff) {
+			delete(policyRulesetDaily, day)
+			changed = true
+		}
+	}
 	historyMu.Unlock()
 	if changed {
 		saveBlockedHistory()
 		saveBlockedPortHistory()
+		saveBlockedHostHistory()
+		savePolicyRulesetHistory()
 	}
 }
 
@@ -8412,6 +10404,81 @@ func saveBlockedPortHistory() {
 	}
 }
 
+func saveBlockedHostHistory() {
+	historyMu.Lock()
+	records := make([]dailyBlockedHostRecord, 0)
+	for day, targets := range blockedHostsDaily {
+		for target, hosts := range targets {
+			for host, c := range hosts {
+				if strings.TrimSpace(day) == "" || strings.TrimSpace(target) == "" || strings.TrimSpace(host) == "" {
+					continue
+				}
+				if c.Inbound <= 0 && c.Outbound <= 0 {
+					continue
+				}
+				records = append(records, dailyBlockedHostRecord{
+					Day:      day,
+					Target:   target,
+					Hostname: host,
+					Inbound:  c.Inbound,
+					Outbound: c.Outbound,
+				})
+			}
+		}
+	}
+	historyMu.Unlock()
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Day == records[j].Day {
+			if records[i].Target == records[j].Target {
+				return records[i].Hostname < records[j].Hostname
+			}
+			return records[i].Target < records[j].Target
+		}
+		return records[i].Day < records[j].Day
+	})
+	if blockedPortStoreIsSQLite() {
+		if err := sqliteReplaceBlockedHostDaily(records); err != nil {
+			log.Printf("[HISTORY] failed to save blocked host history (sqlite): %v", err)
+		}
+		return
+	}
+}
+
+func savePolicyRulesetHistory() {
+	historyMu.Lock()
+	records := make([]dailyPolicyRulesetRecord, 0)
+	for day, byRuleset := range policyRulesetDaily {
+		for name, count := range byRuleset {
+			day = strings.TrimSpace(day)
+			name = strings.TrimSpace(name)
+			if day == "" || name == "" {
+				continue
+			}
+			records = append(records, dailyPolicyRulesetRecord{
+				Day:       day,
+				Ruleset:   name,
+				RuleCount: count,
+			})
+		}
+	}
+	historyMu.Unlock()
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Day == records[j].Day {
+			return records[i].Ruleset < records[j].Ruleset
+		}
+		return records[i].Day < records[j].Day
+	})
+	if blockedPortStoreIsSQLite() {
+		if err := sqliteKVSetJSON(stateKeyPolicyRulesetDaily, records); err != nil {
+			log.Printf("[HISTORY] failed to save policy ruleset history (sqlite): %v", err)
+		}
+		return
+	}
+	if err := writeJSONFileAtomic(dataFilePath("policy_ruleset_daily_history.json"), records); err != nil {
+		log.Printf("[HISTORY] failed to save policy ruleset history: %v", err)
+	}
+}
+
 func pruneVENHistory(nowUTC time.Time, keepDays int) {
 	if keepDays <= 0 {
 		keepDays = 365
@@ -8445,6 +10512,8 @@ func saveVENHistory() {
 			WarningMax:       snap.WarningMax,
 			ErrorMax:         snap.ErrorMax,
 			TamperingMax:     snap.TamperingMax,
+			RulesetsMax:      snap.RulesetsMax,
+			RulesMax:         snap.RulesMax,
 			ModeIdleMax:      snap.ModeIdleMax,
 			ModeVisMax:       snap.ModeVisMax,
 			ModeSelectiveMax: snap.ModeSelectiveMax,
@@ -8490,7 +10559,7 @@ func updateVENDailyHistory(
 		prev.ErrorMax = errorCount
 		changed = true
 	}
-	if tamperingCount > prev.TamperingMax {
+	if tamperingCount != prev.TamperingMax {
 		prev.TamperingMax = tamperingCount
 		changed = true
 	}
@@ -8553,25 +10622,25 @@ func readInput(r *bufio.Reader) string {
 }
 
 func serveDashboard(w http.ResponseWriter, r *http.Request) {
-	if err := dashboardTmpl.Execute(w, nil); err != nil {
+	if err := dashboardTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 func serveSettings(w http.ResponseWriter, r *http.Request) {
-	if err := settingsTmpl.Execute(w, nil); err != nil {
+	if err := settingsTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 func serveDetails(w http.ResponseWriter, r *http.Request) {
-	if err := detailsPageTmpl.Execute(w, nil); err != nil {
+	if err := detailsPageTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 func serveReport(w http.ResponseWriter, r *http.Request) {
-	if err := reportPageTmpl.Execute(w, nil); err != nil {
+	if err := reportPageTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -8581,7 +10650,7 @@ func serveTrends(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveExecutive(w http.ResponseWriter, r *http.Request) {
-	if err := executivePageTmpl.Execute(w, nil); err != nil {
+	if err := executivePageTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, "failed to render executive page", http.StatusInternalServerError)
 	}
 }
@@ -8658,6 +10727,14 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 	if !writeRow("Tampered VENs (Deduped)", strconv.Itoa(tamperedCount)) {
 		return
 	}
+	if snapshot.Rules.Enabled {
+		if !writeRow("Policy Rulesets (Today)", strconv.Itoa(snapshot.Rules.Rulesets)) {
+			return
+		}
+		if !writeRow("Policy Rules (Today)", strconv.Itoa(snapshot.Rules.Rules)) {
+			return
+		}
+	}
 	for _, t := range snapshot.Blocked.Targets {
 		if !writeRow(fmt.Sprintf("Blocked %s (24h)", t.Name), strconv.Itoa(t.Count)) {
 			return
@@ -8710,6 +10787,18 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 	for _, p := range venDailyTrendSeries("error", configuredHistoryDays()) {
 		if !writeRow("VEN Error Daily", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
 			return
+		}
+	}
+	if snapshot.Rules.Enabled {
+		for _, p := range rulesetsDailyTrendSeries(configuredHistoryDays()) {
+			if !writeRow("Policy Rulesets Daily", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
+				return
+			}
+		}
+		for _, p := range rulesDailyTrendSeries(configuredHistoryDays()) {
+			if !writeRow("Policy Rules Daily", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
+				return
+			}
 		}
 	}
 	for _, t := range snapshot.Blocked.Targets {

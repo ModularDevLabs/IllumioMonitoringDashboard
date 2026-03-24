@@ -1,5 +1,107 @@
 # Release Notes
 
+## v1.2.5-branch (feature/experiments-2026-03-19)
+
+Experimental feature branch updates (not merged to stable main):
+
+### Adaptive API Rate Control
+- Added global API token-bucket limiter for all PCE API requests:
+  - default cap: `450 RPM`
+  - configurable via `config.json` key: `api_max_rpm`
+- Added adaptive HTTP `429` handling:
+  - parses and respects `Retry-After` when returned by PCE
+  - temporarily reduces active RPM budget under throttling
+  - gradually recovers budget back toward configured max
+- Added cycle-level API usage telemetry:
+  - `[API-RATE]` logs include per-cycle request totals, average RPM, and current/target budget
+
+### Cycle-Aware Query Scheduling
+- Added cycle deadline pressure checks for blocked traffic collection so high-volume environments remain stable within 5-minute collector windows.
+- Added graceful degradation tiers under budget pressure:
+  - Tier 1: blocked totals remain primary and continue refreshing
+  - Tier 2: blocked port/proto enrichment is deferred first
+  - Tier 3: blocked hostname enrichment is deferred next
+  - late-cycle fallback can switch to count-only blocked query path when necessary
+
+### Tampering Daily Chart Consistency (rc8)
+- Fixed tampering daily data feed to use deduped **today-so-far** workload set counts from current-day 5m buckets.
+- Preserved daily **max-only** behavior while correcting the source metric so daily tampering no longer reflects stale/inflated historical rolling artifacts.
+
+### Policy Drilldown Range Controls
+- Added daily range selector support in policy drilldowns:
+  - `7d`, `30d`, `90d`, `180d`, `365d`
+- Applies to:
+  - `policy_rulesets`
+  - `policy_rules`
+  - `policy_ruleset`
+
+### Tampering Metric Alignment (rc9)
+- Updated tampering 24h(5m) trend points to use deduped unique impacted workload/VEN counts per 5-minute bucket.
+- Updated daily tampering value semantics to represent unique impacted workload/VEN counts for the calendar day (not sum of 5m points).
+- Added tampering reconcile method-version marker so prior day keys are replayed once when methodology changes, ensuring stored historical daily values are re-baselined under the current method.
+
+### Blocked Target Scope
+- Added `traffic_targets[].kind = "all"` support:
+  - runs environment-wide blocked query with blank source/destination filters
+  - target name is optional; defaults to `ALL-BLOCKED-TRAFFIC`
+- Added comma-separated multi-label target support in `traffic_targets[].name`:
+  - example: `A-Daily, E-Production`
+  - matcher applies all listed labels together for target scoping.
+
+### Blocked Tile Warmup Consistency
+- Warmup current view now shows `baseline + incremental` so tiles no longer show `0` while recent warmup increment is non-zero.
+
+### Blocked Hostname Metrics (Configurable)
+- Added optional per-host blocked flow aggregation (inbound/outbound counts):
+  - `blocked_host_metrics_enabled`
+  - `blocked_host_retention_mode`:
+    - `rolling_24h_only`
+    - `rolling_24h_plus_daily`
+    - `daily_only` (new): store only daily host rollups; no 24h 5m host snapshots
+- Added SQLite storage for hostname metrics:
+  - `blocked_hosts_5m` (rolling 24h snapshots)
+  - `blocked_hosts_daily` (daily retained snapshots when configured)
+- Added blocked target drilldown hostname table:
+  - columns: `hostname`, `outbound`, `inbound`, `total`
+  - uses rolling 24h or daily rollups based on retention mode
+
+### Blocked Hostname + Exclusion Fixes
+- Fixed blocked host drilldown first-run behavior:
+  - when rolling 24h host snapshots are still empty, drilldown now runs a live 24h host fallback query so hostname data is available immediately.
+- Fixed source-exclusion clearing:
+  - empty `traffic_source_exclusions` now persists as empty (no automatic `LG-SCANNERS` fallback reinjection).
+- Improved blocked hostname direction fidelity:
+  - host aggregation now prefers workload `hostname` over generic workload `name` to reduce host-key collisions that could skew inbound/outbound totals.
+
+### UI Polish
+- Added `Collapse/Expand` control for `Blocked Ports (Daily Aggregate)` in blocked-target drilldown.
+- Standardized top banner title text across main/supporting pages to reduce visual context switching.
+
+### Policy Growth Metrics (Opt-In)
+- Added optional daily policy-growth tracking:
+  - `rules_metrics_enabled` (default `false`)
+  - collects total `rulesets` and total `rules` once per day
+  - persists in daily history with retention governed by `history_days`
+  - stores per-ruleset daily rule counts for drilldown trends
+- Added Trend View policy section:
+  - `Policy Rulesets (Daily)`
+  - `Policy Rules (Daily)`
+- Added Executive View policy coverage (when enabled):
+  - protection KPIs for total rulesets/rules
+  - policy metrics status KPI
+  - `Policy Growth Trend (Daily)` chart
+- Added manual policy refresh control:
+  - Settings button: `Refresh Policy Metrics`
+  - API: `POST /api/refresh/policy-metrics`
+  - forces immediate rulesets/rules snapshot update (no wait for next 5m cycle)
+- Added drilldown metrics for policy growth:
+  - `policy_rulesets`
+  - `policy_rules`
+  - `policy_ruleset` (targeted ruleset trend)
+- Drilldown enhancement:
+  - `policy_rulesets` drilldown now lists rulesets with current total rules
+  - each ruleset row is clickable to open `policy_ruleset` daily trend
+
 ## v1.2.4 - 2026-03-18
 
 Stable release focused on tampering-data correctness, reconciliation reliability, and operator controls.

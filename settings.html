@@ -28,7 +28,46 @@
             margin: 0 auto;
             padding: 0 16px;
         }
-        .topbar { background: var(--illumio-orange); color: #fff; padding: 14px 0; margin-bottom: 16px; }
+        .header {
+            background: var(--illumio-orange);
+            color: #fff;
+            padding: 22px 20px 18px;
+            border-radius: 0 0 15px 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 16px;
+        }
+        .header h1 {
+            font-size: clamp(1.45rem, 2.1vw, 1.9rem);
+            font-weight: 750;
+            margin: 0;
+        }
+        #status-bar { font-size: 0.86rem; }
+        #status-bar { text-align: center; }
+        .status-meta {
+            font-size: 0.78rem;
+            opacity: 0.95;
+            margin-left: 8px;
+            color: rgba(255,255,255,0.9);
+        }
+        .status-actions .btn {
+            --bs-btn-padding-y: 0.1rem;
+            --bs-btn-padding-x: 0.45rem;
+            --bs-btn-font-size: 0.72rem;
+        }
+        .status-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: center; }
+        .version-badge {
+            position: fixed;
+            right: 12px;
+            bottom: 10px;
+            z-index: 1200;
+            background: rgba(17, 17, 17, 0.82);
+            color: #fff;
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+            border: 1px solid rgba(255,255,255,0.25);
+        }
         .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; }
         .text-muted { color: var(--muted) !important; }
         .section-toggle summary {
@@ -78,6 +117,30 @@
             gap: 8px;
             width: 100%;
         }
+        .settings-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+        .setting-cluster {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface-2);
+            padding: 10px;
+        }
+        .setting-cluster-title {
+            font-size: 0.86rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+        @media (min-width: 1100px) {
+            .settings-grid {
+                grid-template-columns: repeat(2, minmax(320px, 1fr));
+            }
+        }
         body[data-theme="dark"] .form-control,
         body[data-theme="dark"] .form-select {
             background: #6d7681;
@@ -90,13 +153,16 @@
     </style>
 </head>
 <body>
-    <div class="topbar">
-        <div class="dashboard-shell d-flex justify-content-between align-items-center">
-            <div class="h5 mb-0">Dashboard Settings</div>
-            <div class="d-flex gap-2">
+    <div class="header text-center">
+        <h1>Illumio Monitoring Dashboard</h1>
+        <div id="status-bar" class="mt-2">
+            <span class="status-meta">Settings</span>
+            <span class="status-actions ms-2">
                 <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
+                <a href="/executive" class="btn btn-light btn-sm">Executive View</a>
+                <a href="/trends" class="btn btn-light btn-sm">Trend View</a>
                 <a href="/" class="btn btn-light btn-sm">Back to Dashboard</a>
-            </div>
+            </span>
         </div>
     </div>
 
@@ -106,213 +172,275 @@
             <p class="text-muted small mb-3 mt-1">Manage traffic targets, exclusions, retention, and anomaly defaults.</p>
                 <details class="section-toggle mb-2" open>
                     <summary>Traffic Targets Settings</summary>
-                    <div class="mb-2 mt-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="history-days">Blocked Daily History Retention (days)</label>
-                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="history-days" value="365">
+                    <div class="settings-grid mt-2">
+                        <div class="setting-cluster">
+                            <div class="setting-cluster-title">Retention And Storage</div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="history-days">Blocked Daily History Retention (days)</label>
+                                <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="history-days" value="365">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-port-daily-enabled">
+                                    Blocked Port Daily Aggregation
+                                    <span class="help-tip" title="Rough DB growth: ~0.1-1.0 MB/year per target for typical port cardinality. Higher if many unique port/proto combinations are seen daily.">?</span>
+                                </label>
+                                <select class="form-select form-select-sm" id="blocked-port-daily-enabled">
+                                    <option value="true">Enabled</option>
+                                    <option value="false">Disabled</option>
+                                </select>
+                                <div class="small text-muted mt-1">When enabled, stores daily blocked port/proto totals and shows the blocked-ports table in blocked target drilldown.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-rolling-dedupe-backend">Blocked 24h Rolling Dedupe Backend</label>
+                                <select class="form-select form-select-sm" id="blocked-rolling-dedupe-backend">
+                                    <option value="sqlite">SQLite (default)</option>
+                                    <option value="memory">In-memory</option>
+                                </select>
+                                <div class="small text-muted mt-1">Controls how 24h unique-flow dedupe state is stored for blocked 5m rolling charts.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-host-metrics-enabled">
+                                    Blocked Hostname Metrics
+                                    <span class="help-tip" title="Largest storage-impact feature. With 10k hosts+target: rolling 24h snapshots can add ~1.3-2.6 GB/year; daily-only ~0.4-0.9 GB/year.">?</span>
+                                </label>
+                                <select class="form-select form-select-sm" id="blocked-host-metrics-enabled">
+                                    <option value="false">Disabled</option>
+                                    <option value="true">Enabled</option>
+                                </select>
+                                <div class="small text-muted mt-1">Collect per-host inbound/outbound blocked flow counts from blocked query results.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-host-retention-mode">
+                                    Blocked Hostname Retention Mode
+                                    <span class="help-tip" title="Approx 10k hosts+target/year: rolling_24h_only ~1.3-2.6 GB; daily_only ~0.4-0.9 GB; rolling_24h_plus_daily ~1.7-3.5 GB.">?</span>
+                                </label>
+                                <select class="form-select form-select-sm" id="blocked-host-retention-mode">
+                                    <option value="rolling_24h_only">Rolling 24h (5m snapshots only)</option>
+                                    <option value="rolling_24h_plus_daily">Rolling 24h + Daily snapshots</option>
+                                    <option value="daily_only">Daily snapshots only</option>
+                                </select>
+                                <div class="small text-muted mt-1">Choose 24h-only, 24h+daily, or daily-only hostname retention for blocked host drilldown/history.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="rules-metrics-enabled">
+                                    Policy Rulesets/Rules Daily Metrics
+                                    <span class="help-tip" title="Stores daily totals plus per-ruleset daily counts for drilldown trends. Rough growth: ~ (rulesets x days x 40-100 bytes). Example: 500 rulesets ~= 7-18 MB/year.">?</span>
+                                </label>
+                                <select class="form-select form-select-sm" id="rules-metrics-enabled">
+                                    <option value="false">Disabled (default)</option>
+                                    <option value="true">Enabled</option>
+                                </select>
+                                <div class="small text-muted mt-1">When enabled, collects total rulesets and total rules once per day and adds policy growth charts in Trend View. After saving, data appears on the next collector cycle (5m) or immediately if you click Refresh Now.</div>
+                            </div>
+                            <div class="small text-muted mt-2">Storage estimates are rough and depend on cardinality/traffic volume. See README sizing section for formulas and host-count examples.</div>
+                            <div class="d-flex flex-wrap gap-2 mt-2">
+                                <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic-storage" type="button">Save Retention/Storage</button>
+                            </div>
+                            <div class="small mt-2" id="msg-traffic-storage"></div>
+                        </div>
+                        <div class="setting-cluster">
+                            <div class="setting-cluster-title">Anomaly Defaults</div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-ma-window">
+                                    Blocked 5m Moving Average Window (points)
+                                    <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                                </label>
+                                <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="blocked-ma-window" value="12">
+                                <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-pct">Blocked Anomaly Threshold (%)</label>
+                                <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="blocked-anomaly-pct" value="50">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-baseline">Blocked Anomaly Baseline Source</label>
+                                <select class="form-select form-select-sm" id="blocked-anomaly-baseline">
+                                    <option value="5m">5m Moving Average</option>
+                                    <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
+                                </select>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-days">
+                                    Blocked Daily Baseline Lookback (days)
+                                    <span class="help-tip" title="Used only when baseline source is Daily. The app averages the last N daily totals, then compares the latest 5m blocked value against that daily average and threshold.">?</span>
+                                </label>
+                                <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="blocked-anomaly-days" value="7">
+                                <div class="small text-muted mt-1">Daily baseline only: N is the number of recent daily totals used to build the blocked anomaly baseline.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="daily-ma-window">
+                                    Daily Moving Average Window (points)
+                                    <span class="help-tip" title="Daily points: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d. Used for Daily trend MA overlays and blocked daily-baseline overlays.">?</span>
+                                </label>
+                                <input type="number" min="2" max="3650" step="1" class="form-control form-control-sm" id="daily-ma-window" value="7">
+                                <div class="small text-muted mt-1">Reference: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d.</div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-min-pct">Blocked Baseline Min Coverage (%)</label>
+                                <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="blocked-anomaly-min-pct" value="70">
+                                <div class="small text-muted mt-1">If baseline is not fully built yet, alerts are suppressed until this coverage threshold is met (for example 70% means 5 of 7 days).</div>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 mt-2">
+                                <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic-anomaly" type="button">Save Anomaly Defaults</button>
+                            </div>
+                            <div class="small mt-2" id="msg-traffic-anomaly"></div>
+                        </div>
                     </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-port-daily-enabled">Blocked Port Daily Aggregation</label>
-                        <select class="form-select form-select-sm" id="blocked-port-daily-enabled">
-                            <option value="true">Enabled</option>
-                            <option value="false">Disabled</option>
-                        </select>
-                        <div class="small text-muted mt-1">When enabled, stores daily blocked port/proto totals and shows the blocked-ports table in blocked target drilldown.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-rolling-dedupe-backend">Blocked 24h Rolling Dedupe Backend</label>
-                        <select class="form-select form-select-sm" id="blocked-rolling-dedupe-backend">
-                            <option value="sqlite">SQLite (default)</option>
-                            <option value="memory">In-memory</option>
-                        </select>
-                        <div class="small text-muted mt-1">Controls how 24h unique-flow dedupe state is stored for blocked 5m rolling charts.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-ma-window">
-                            Blocked 5m Moving Average Window (points)
-                            <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
-                        </label>
-                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="blocked-ma-window" value="12">
-                        <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-pct">Blocked Anomaly Threshold (%)</label>
-                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="blocked-anomaly-pct" value="50">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-baseline">Blocked Anomaly Baseline Source</label>
-                        <select class="form-select form-select-sm" id="blocked-anomaly-baseline">
-                            <option value="5m">5m Moving Average</option>
-                            <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
-                        </select>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-days">
-                            Blocked Daily Baseline Lookback (days)
-                            <span class="help-tip" title="Used only when baseline source is Daily. The app averages the last N daily totals, then compares the latest 5m blocked value against that daily average and threshold.">?</span>
-                        </label>
-                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="blocked-anomaly-days" value="7">
-                        <div class="small text-muted mt-1">Daily baseline only: N is the number of recent daily totals used to build the blocked anomaly baseline.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="daily-ma-window">
-                            Daily Moving Average Window (points)
-                            <span class="help-tip" title="Daily points: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d. Used for Daily trend MA overlays and blocked daily-baseline overlays.">?</span>
-                        </label>
-                        <input type="number" min="2" max="3650" step="1" class="form-control form-control-sm" id="daily-ma-window" value="7">
-                        <div class="small text-muted mt-1">Reference: 7=7d, 30=30d, 90=90d, 180=180d, 365=365d.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-min-pct">Blocked Baseline Min Coverage (%)</label>
-                        <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="blocked-anomaly-min-pct" value="70">
-                        <div class="small text-muted mt-1">If baseline is not fully built yet, alerts are suppressed until this coverage threshold is met (for example 70% means 5 of 7 days).</div>
-                    </div>
-                    <div class="mb-2">
+                    <div class="mb-2 mt-2 section-full">
                         <label class="form-label form-label-sm small text-muted mb-1" for="source-exclusions">Traffic Source Exclusions (comma-separated names)</label>
                         <input type="text" class="form-control form-control-sm" id="source-exclusions" placeholder="LG-SCANNERS">
                     </div>
-                    <div id="target-editor"></div>
-                    <div class="d-flex flex-wrap gap-2 mt-2">
+                    <div class="mb-1 mt-2 section-full">
+                        <label class="form-label form-label-sm small text-muted mb-1">Traffic Targets (comma-separated names)</label>
+                    </div>
+                    <div id="target-editor" class="section-full"></div>
+                    <div class="d-flex flex-wrap gap-2 mt-2 section-full">
                         <button class="btn btn-outline-secondary btn-sm" id="btn-add-target" type="button">Add Target</button>
-                        <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic" type="button">Save Traffic/Data</button>
+                        <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic" type="button">Save Targets/Exclusions</button>
                         <button class="btn btn-outline-success btn-sm" id="btn-refresh-now" type="button">Refresh Now</button>
+                        <button class="btn btn-outline-success btn-sm" id="btn-refresh-policy" type="button">Refresh Policy Metrics</button>
                         <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-history" type="button">Reconcile Blocked History</button>
                         <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-tampering-history" type="button">Reconcile Tampering History</button>
                     </div>
-                    <div class="small mt-2" id="msg-traffic"></div>
-                    <div class="small mt-1 text-muted" id="msg-reconcile-status"></div>
-                    <div class="small mt-1 text-muted" id="msg-tampering-reconcile-status"></div>
+                    <div class="small mt-2 section-full" id="msg-traffic"></div>
+                    <div class="small mt-1 text-muted section-full" id="msg-reconcile-status"></div>
+                    <div class="small mt-1 text-muted section-full" id="msg-tampering-reconcile-status"></div>
                 </details>
 
-                <details class="section-toggle mb-2">
-                    <summary>VEN Warning/Error Anomaly Settings</summary>
-                    <div class="mb-2 mt-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-ma-window">
-                            VEN 5m Moving Average Window (points)
-                            <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
-                        </label>
-                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="ven-ma-window" value="12">
-                        <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-pct">VEN Anomaly Threshold (%)</label>
-                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="ven-anomaly-pct" value="50">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-baseline">VEN Anomaly Baseline Source</label>
-                        <select class="form-select form-select-sm" id="ven-anomaly-baseline">
-                            <option value="5m">5m Moving Average</option>
-                            <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
-                        </select>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-days">VEN Daily Baseline Lookback (days)</label>
-                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="ven-anomaly-days" value="7">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-min-pct">VEN Baseline Min Coverage (%)</label>
-                        <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="ven-anomaly-min-pct" value="70">
-                    </div>
-                    <div class="d-flex flex-wrap gap-2 mt-2">
-                        <button class="btn btn-outline-primary btn-sm" id="btn-save-ven" type="button">Save VEN Settings</button>
-                    </div>
-                    <div class="small mt-2" id="msg-ven"></div>
-                </details>
+                <div class="settings-grid mt-2">
+                    <details class="section-toggle mb-2">
+                        <summary>VEN Warning/Error Anomaly Settings</summary>
+                        <div class="mb-2 mt-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="ven-ma-window">
+                                VEN 5m Moving Average Window (points)
+                                <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                            </label>
+                            <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="ven-ma-window" value="12">
+                            <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-pct">VEN Anomaly Threshold (%)</label>
+                            <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="ven-anomaly-pct" value="50">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-baseline">VEN Anomaly Baseline Source</label>
+                            <select class="form-select form-select-sm" id="ven-anomaly-baseline">
+                                <option value="5m">5m Moving Average</option>
+                                <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
+                            </select>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-days">VEN Daily Baseline Lookback (days)</label>
+                            <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="ven-anomaly-days" value="7">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="ven-anomaly-min-pct">VEN Baseline Min Coverage (%)</label>
+                            <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="ven-anomaly-min-pct" value="70">
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <button class="btn btn-outline-primary btn-sm" id="btn-save-ven" type="button">Save VEN Settings</button>
+                        </div>
+                        <div class="small mt-2" id="msg-ven"></div>
+                    </details>
 
-                <details class="section-toggle">
-                    <summary>Tampering Anomaly Settings</summary>
-                    <div class="mb-2 mt-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-ma-window">
-                            Tampering 5m Moving Average Window (points)
-                            <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
-                        </label>
-                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="tampering-ma-window" value="12">
-                        <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-pct">Tampering Anomaly Threshold (%)</label>
-                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-anomaly-pct" value="50">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-baseline">Tampering Anomaly Baseline Source</label>
-                        <select class="form-select form-select-sm" id="tampering-anomaly-baseline">
-                            <option value="5m">5m Moving Average</option>
-                            <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
-                        </select>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-days">Tampering Daily Baseline Lookback (days)</label>
-                        <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="tampering-anomaly-days" value="7">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-min-pct">Tampering Baseline Min Coverage (%)</label>
-                        <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="tampering-anomaly-min-pct" value="70">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm small text-muted mb-1" for="tampering-daily-anomaly-pct">Daily Tampering Anomaly Threshold (%)</label>
-                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-daily-anomaly-pct" value="50">
-                        <div class="small text-muted mt-1">Used when Tampering baseline source is set to Daily.</div>
-                    </div>
-                    <div class="d-flex flex-wrap gap-2 mt-2">
-                        <button class="btn btn-outline-primary btn-sm" id="btn-save-tampering" type="button">Save Tampering Settings</button>
-                    </div>
-                    <div class="small mt-2" id="msg-tampering"></div>
-                </details>
+                    <details class="section-toggle mb-2">
+                        <summary>Tampering Anomaly Settings</summary>
+                        <div class="mb-2 mt-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-ma-window">
+                                Tampering 5m Moving Average Window (points)
+                                <span class="help-tip" title="5m points: 1 hour = 12, 6 hours = 72, 12 hours = 144, 24 hours = 288 (max). Daily chart MA uses daily points: 1 day = 1, 7 days = 7, 30 days = 30.">?</span>
+                            </label>
+                            <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" id="tampering-ma-window" value="12">
+                            <div class="small text-muted mt-1">Reference: 5m points 12=1h, 72=6h, 144=12h, 288=24h max. Daily points 1=1d, 7=7d, 30=30d.</div>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-pct">Tampering Anomaly Threshold (%)</label>
+                            <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-anomaly-pct" value="50">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-baseline">Tampering Anomaly Baseline Source</label>
+                            <select class="form-select form-select-sm" id="tampering-anomaly-baseline">
+                                <option value="5m">5m Moving Average</option>
+                                <option value="daily">Daily Baseline (latest 5m vs N-day average)</option>
+                            </select>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-days">Tampering Daily Baseline Lookback (days)</label>
+                            <input type="number" min="1" max="3650" step="1" class="form-control form-control-sm" id="tampering-anomaly-days" value="7">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-anomaly-min-pct">Tampering Baseline Min Coverage (%)</label>
+                            <input type="number" min="1" max="100" step="1" class="form-control form-control-sm" id="tampering-anomaly-min-pct" value="70">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm small text-muted mb-1" for="tampering-daily-anomaly-pct">Daily Tampering Anomaly Threshold (%)</label>
+                            <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="tampering-daily-anomaly-pct" value="50">
+                            <div class="small text-muted mt-1">Used when Tampering baseline source is set to Daily.</div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <button class="btn btn-outline-primary btn-sm" id="btn-save-tampering" type="button">Save Tampering Settings</button>
+                        </div>
+                        <div class="small mt-2" id="msg-tampering"></div>
+                    </details>
+                </div>
         </div>
 
-        <div class="card p-3">
-            <details class="section-toggle" open>
-                <summary>Hosting Settings</summary>
-                <p class="text-muted small mb-3 mt-1">Configure how the dashboard listens on the server and what base URL is used in generated links.</p>
+        <div class="settings-grid mt-3">
+            <div class="card p-3">
+                <details class="section-toggle" open>
+                    <summary>Hosting Settings</summary>
+                    <p class="text-muted small mb-3 mt-1">Configure how the dashboard listens on the server and what base URL is used in generated links.</p>
 
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="bind-address">Server Bind Address</label>
-                    <input type="text" class="form-control form-control-sm" id="bind-address" placeholder=":18443 or 0.0.0.0:18443">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="public-base-url">Public Base URL</label>
-                    <input type="text" class="form-control form-control-sm" id="public-base-url" placeholder="https://dashboard.example.com">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="timezone">Timezone (IANA, optional)</label>
-                    <input type="text" class="form-control form-control-sm" id="timezone" placeholder="System local (e.g., America/Chicago)">
-                    <div class="small text-muted mt-1">Daily buckets and daily charts use this timezone. Leave blank for server local time.</div>
-                </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="bind-address">Server Bind Address</label>
+                        <input type="text" class="form-control form-control-sm" id="bind-address" placeholder=":18443 or 0.0.0.0:18443">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="public-base-url">Public Base URL</label>
+                        <input type="text" class="form-control form-control-sm" id="public-base-url" placeholder="https://dashboard.example.com">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="timezone">Timezone (IANA, optional)</label>
+                        <input type="text" class="form-control form-control-sm" id="timezone" placeholder="System local (e.g., America/Chicago)">
+                        <div class="small text-muted mt-1">Daily buckets and daily charts use this timezone. Leave blank for server local time.</div>
+                    </div>
 
-                <div class="d-flex flex-wrap gap-2 mt-2">
-                    <button class="btn btn-outline-primary btn-sm" id="btn-save-hosting" type="button">Save Hosting</button>
-                </div>
-                <div class="small mt-2" id="msg-hosting"></div>
-                <div class="small mt-2 text-muted">Hosting changes take effect on next start.</div>
-            </details>
-        </div>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <button class="btn btn-outline-primary btn-sm" id="btn-save-hosting" type="button">Save Hosting</button>
+                    </div>
+                    <div class="small mt-2" id="msg-hosting"></div>
+                    <div class="small mt-2 text-muted">Hosting changes take effect on next start.</div>
+                </details>
+            </div>
 
-        <div class="card p-3 mt-3">
-            <details class="section-toggle" open>
-                <summary>API Credentials</summary>
-                <p class="text-muted small mb-3 mt-1">Update PCE URL/API credentials without restarting. New requests use saved values immediately.</p>
+            <div class="card p-3">
+                <details class="section-toggle" open>
+                    <summary>API Credentials</summary>
+                    <p class="text-muted small mb-3 mt-1">Update PCE URL/API credentials without restarting. New requests use saved values immediately.</p>
 
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-pce-url">PCE URL</label>
-                    <input type="text" class="form-control form-control-sm" id="cred-pce-url" placeholder="https://your-pce.example.com:8443">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-org-id">Org ID</label>
-                    <input type="text" class="form-control form-control-sm" id="cred-org-id" placeholder="1">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-api-key">API Key ID</label>
-                    <input type="text" class="form-control form-control-sm" id="cred-api-key" placeholder="api_key_id">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label form-label-sm small text-muted mb-1" for="cred-api-secret">API Secret</label>
-                    <input type="password" class="form-control form-control-sm" id="cred-api-secret" placeholder="Leave blank to keep current secret">
-                    <div class="small text-muted mt-1" id="cred-secret-status"></div>
-                </div>
-                <div class="d-flex flex-wrap gap-2 mt-2">
-                    <button class="btn btn-outline-primary btn-sm" id="btn-save-credentials" type="button">Save Credentials</button>
-                </div>
-                <div class="small mt-2" id="msg-credentials"></div>
-            </details>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="cred-pce-url">PCE URL</label>
+                        <input type="text" class="form-control form-control-sm" id="cred-pce-url" placeholder="https://your-pce.example.com:8443">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="cred-org-id">Org ID</label>
+                        <input type="text" class="form-control form-control-sm" id="cred-org-id" placeholder="1">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="cred-api-key">API Key ID</label>
+                        <input type="text" class="form-control form-control-sm" id="cred-api-key" placeholder="api_key_id">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="cred-api-secret">API Secret</label>
+                        <input type="password" class="form-control form-control-sm" id="cred-api-secret" placeholder="Leave blank to keep current secret">
+                        <div class="small text-muted mt-1" id="cred-secret-status"></div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <button class="btn btn-outline-primary btn-sm" id="btn-save-credentials" type="button">Save Credentials</button>
+                    </div>
+                    <div class="small mt-2" id="msg-credentials"></div>
+                </details>
+            </div>
         </div>
 
         <div class="card p-3 mt-3">
@@ -382,6 +510,9 @@
         let historyDays = 365;
         let blockedPortDailyEnabled = true;
         let blockedRollingDedupeBackend = 'sqlite';
+        let blockedHostMetricsEnabled = false;
+        let blockedHostRetentionMode = 'rolling_24h_plus_daily';
+        let rulesMetricsEnabled = false;
         let blockedMAWindow = 12;
         let blockedAnomalyPct = 50;
         let blockedAnomalyBaseline = '5m';
@@ -422,6 +553,12 @@
                 .replaceAll("'", '&#39;');
         }
 
+        function normalizeBlockedHostRetentionModeClient(raw) {
+            const v = String(raw || '').trim().toLowerCase();
+            if (v === 'rolling_24h_only' || v === 'rolling_24h_plus_daily' || v === 'daily_only') return v;
+            return 'rolling_24h_plus_daily';
+        }
+
         function renderTargetEditor() {
             const root = document.getElementById('target-editor');
             root.innerHTML = '';
@@ -429,12 +566,13 @@
                 const row = document.createElement('div');
                 row.className = 'target-row';
                 row.innerHTML = `
-                    <input type="text" class="form-control form-control-sm" placeholder="Target name" value="${escAttr(target.name || '')}" data-type="name" data-idx="${idx}">
+                    <input type="text" class="form-control form-control-sm" placeholder="Target name (optional for kind=all)" value="${escAttr(target.name || '')}" data-type="name" data-idx="${idx}">
                     <div class="target-row-controls">
                         <select class="form-select form-select-sm" data-type="kind" data-idx="${idx}">
                             <option value="auto" ${target.kind === 'auto' ? 'selected' : ''}>auto</option>
                             <option value="label_group" ${target.kind === 'label_group' ? 'selected' : ''}>label_group</option>
                             <option value="label" ${target.kind === 'label' ? 'selected' : ''}>label</option>
+                            <option value="all" ${target.kind === 'all' ? 'selected' : ''}>all (blank src/dst)</option>
                         </select>
                         <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" placeholder="MA win" title="5m points: 12=1h, 72=6h, 144=12h, 288=24h max. Daily chart MA uses days as points: 7=7d." value="${target.blocked_ma_window || ''}" data-type="ma_window" data-idx="${idx}">
                         <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" placeholder="Anomaly %" value="${target.blocked_anomaly_pct || ''}" data-type="anomaly_pct" data-idx="${idx}">
@@ -471,6 +609,9 @@
             historyDays = Number(d.history_days || 365);
             blockedPortDailyEnabled = d.blocked_port_daily_enabled !== false;
             blockedRollingDedupeBackend = String(d.blocked_rolling_dedupe_backend || 'sqlite').trim().toLowerCase() === 'memory' ? 'memory' : 'sqlite';
+            blockedHostMetricsEnabled = d.blocked_host_metrics_enabled === true;
+            blockedHostRetentionMode = normalizeBlockedHostRetentionModeClient(d.blocked_host_retention_mode || 'rolling_24h_plus_daily');
+            rulesMetricsEnabled = d.rules_metrics_enabled === true;
             blockedMAWindow = Number(d.blocked_ma_window || 12);
             blockedAnomalyPct = Number(d.blocked_anomaly_pct || 50);
             blockedAnomalyBaseline = String(d.blocked_anomaly_baseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
@@ -494,6 +635,9 @@
             document.getElementById('history-days').value = historyDays;
             document.getElementById('blocked-port-daily-enabled').value = blockedPortDailyEnabled ? 'true' : 'false';
             document.getElementById('blocked-rolling-dedupe-backend').value = blockedRollingDedupeBackend;
+            document.getElementById('blocked-host-metrics-enabled').value = blockedHostMetricsEnabled ? 'true' : 'false';
+            document.getElementById('blocked-host-retention-mode').value = blockedHostRetentionMode;
+            document.getElementById('rules-metrics-enabled').value = rulesMetricsEnabled ? 'true' : 'false';
             document.getElementById('blocked-ma-window').value = blockedMAWindow;
             document.getElementById('blocked-anomaly-pct').value = blockedAnomalyPct;
             document.getElementById('blocked-anomaly-baseline').value = blockedAnomalyBaseline;
@@ -524,8 +668,25 @@
             renderTargetEditor();
         }
 
-        async function saveSettingsWithMessage(messageId, successText) {
-            const payload = buildTrafficDataPayload(messageId);
+        async function saveSettingsWithMessage(messageId, successText, sections) {
+            const payload = buildTrafficDataPayload(messageId, sections);
+            if (!payload) return false;
+            const r = await fetch('/api/config/targets', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!r.ok) {
+                showMsg(messageId, `Save failed (${r.status})`, 'danger');
+                return false;
+            }
+            showMsg(messageId, successText, 'success');
+            await loadTrafficSettings();
+            return true;
+        }
+
+        async function saveExtendedSettingsWithMessage(messageId, successText) {
+            const payload = buildExtendedSettingsPayload(messageId);
             if (!payload) return false;
             const r = await fetch('/api/config/targets', {
                 method: 'PUT',
@@ -542,18 +703,29 @@
         }
 
         async function saveTrafficSettings() {
-            await saveSettingsWithMessage('msg-traffic', 'Traffic target settings saved.');
+            await saveSettingsWithMessage('msg-traffic', 'Traffic targets/exclusions saved.', { targetsOnly: true });
+        }
+
+        async function saveTrafficStorageSettings() {
+            await saveSettingsWithMessage('msg-traffic-storage', 'Retention/storage settings saved.', { retentionStorage: true });
+        }
+
+        async function saveTrafficAnomalySettings() {
+            await saveSettingsWithMessage('msg-traffic-anomaly', 'Anomaly defaults saved.', { anomalyDefaults: true });
         }
 
         async function saveVenSettings() {
-            await saveSettingsWithMessage('msg-ven', 'VEN warning/error settings saved.');
+            await saveExtendedSettingsWithMessage('msg-ven', 'VEN warning/error settings saved.');
         }
 
         async function saveTamperingSettings() {
-            await saveSettingsWithMessage('msg-tampering', 'Tampering settings saved.');
+            await saveExtendedSettingsWithMessage('msg-tampering', 'Tampering settings saved.');
         }
 
-        function buildTrafficDataPayload(messageId) {
+        function buildTrafficDataPayload(messageId, sections = {}) {
+            const saveTargetsOnly = sections.targetsOnly === true;
+            const saveRetentionStorage = sections.retentionStorage === true;
+            const saveAnomalyDefaults = sections.anomalyDefaults === true;
             const cleaned = editableTargets
                 .map((t) => ({
                     name: (t.name || '').trim(),
@@ -562,38 +734,89 @@
                     blocked_anomaly_pct: Number(t.blocked_anomaly_pct || 0)
                 }))
                 .map((t) => {
+                    t.kind = t.kind.toLowerCase();
+                    if (t.kind !== 'auto' && t.kind !== 'label_group' && t.kind !== 'label' && t.kind !== 'all') t.kind = 'auto';
                     if (!Number.isFinite(t.blocked_ma_window) || t.blocked_ma_window < 2) t.blocked_ma_window = 0;
                     if (t.blocked_ma_window > 288) t.blocked_ma_window = 288;
                     if (!Number.isFinite(t.blocked_anomaly_pct) || t.blocked_anomaly_pct < 1) t.blocked_anomaly_pct = 0;
                     if (t.blocked_anomaly_pct > 10000) t.blocked_anomaly_pct = 10000;
                     return t;
                 })
-                .filter((t) => t.name !== '');
+                .filter((t) => t.name !== '' || t.kind === 'all');
             if (cleaned.length === 0) {
                 showMsg(messageId, 'Add at least one target before saving.', 'danger');
                 return null;
             }
-            let parsedDays = Number(document.getElementById('history-days').value || historyDays || 365);
-            if (!Number.isFinite(parsedDays) || parsedDays < 1) parsedDays = 365;
-            if (parsedDays > 3650) parsedDays = 3650;
-            const parsedBlockedPortDailyEnabled = String(document.getElementById('blocked-port-daily-enabled').value || (blockedPortDailyEnabled ? 'true' : 'false')) === 'true';
-            const parsedBlockedRollingDedupeBackend = String(document.getElementById('blocked-rolling-dedupe-backend').value || blockedRollingDedupeBackend || 'sqlite').trim().toLowerCase() === 'memory' ? 'memory' : 'sqlite';
-            let parsedMAWindow = Number(document.getElementById('blocked-ma-window').value || blockedMAWindow || 12);
+            const payload = {
+                traffic_targets: cleaned
+            };
+            const exclusions = String(document.getElementById('source-exclusions').value || '')
+                .split(',')
+                .map((n) => n.trim())
+                .filter((n) => n.length > 0)
+                .map((name) => ({ name, kind: 'auto' }));
+            payload.traffic_source_exclusions = exclusions;
+            if (saveTargetsOnly) {
+                return payload;
+            }
+            if (saveRetentionStorage || (!saveRetentionStorage && !saveAnomalyDefaults)) {
+                let parsedDays = Number(document.getElementById('history-days').value || historyDays || 365);
+                if (!Number.isFinite(parsedDays) || parsedDays < 1) parsedDays = 365;
+                if (parsedDays > 3650) parsedDays = 3650;
+                const parsedBlockedPortDailyEnabled = String(document.getElementById('blocked-port-daily-enabled').value || (blockedPortDailyEnabled ? 'true' : 'false')) === 'true';
+                const parsedBlockedRollingDedupeBackend = String(document.getElementById('blocked-rolling-dedupe-backend').value || blockedRollingDedupeBackend || 'sqlite').trim().toLowerCase() === 'memory' ? 'memory' : 'sqlite';
+                const parsedBlockedHostMetricsEnabled = String(document.getElementById('blocked-host-metrics-enabled').value || (blockedHostMetricsEnabled ? 'true' : 'false')) === 'true';
+                const parsedBlockedHostRetentionMode = normalizeBlockedHostRetentionModeClient(document.getElementById('blocked-host-retention-mode').value || blockedHostRetentionMode || 'rolling_24h_plus_daily');
+                const parsedRulesMetricsEnabled = String(document.getElementById('rules-metrics-enabled').value || (rulesMetricsEnabled ? 'true' : 'false')) === 'true';
+                payload.history_days = Math.floor(parsedDays);
+                payload.blocked_port_daily_enabled = parsedBlockedPortDailyEnabled;
+                payload.blocked_rolling_dedupe_backend = parsedBlockedRollingDedupeBackend;
+                payload.blocked_host_metrics_enabled = parsedBlockedHostMetricsEnabled;
+                payload.blocked_host_retention_mode = parsedBlockedHostRetentionMode;
+                payload.rules_metrics_enabled = parsedRulesMetricsEnabled;
+            }
+            if (saveAnomalyDefaults || (!saveRetentionStorage && !saveAnomalyDefaults)) {
+                let parsedMAWindow = Number(document.getElementById('blocked-ma-window').value || blockedMAWindow || 12);
+                if (!Number.isFinite(parsedMAWindow) || parsedMAWindow < 2) parsedMAWindow = 12;
+                if (parsedMAWindow > 288) parsedMAWindow = 288;
+                let parsedAnomalyPct = Number(document.getElementById('blocked-anomaly-pct').value || blockedAnomalyPct || 50);
+                if (!Number.isFinite(parsedAnomalyPct) || parsedAnomalyPct < 1) parsedAnomalyPct = 50;
+                if (parsedAnomalyPct > 10000) parsedAnomalyPct = 10000;
+                const parsedBaseline = String(document.getElementById('blocked-anomaly-baseline').value || blockedAnomalyBaseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
+                let parsedBaselineDays = Number(document.getElementById('blocked-anomaly-days').value || blockedAnomalyDays || 7);
+                if (!Number.isFinite(parsedBaselineDays) || parsedBaselineDays < 1) parsedBaselineDays = 7;
+                if (parsedBaselineDays > 3650) parsedBaselineDays = 3650;
+                let parsedBaselineMinPct = Number(document.getElementById('blocked-anomaly-min-pct').value || blockedAnomalyMinPct || 70);
+                if (!Number.isFinite(parsedBaselineMinPct) || parsedBaselineMinPct < 1) parsedBaselineMinPct = 70;
+                if (parsedBaselineMinPct > 100) parsedBaselineMinPct = 100;
+                let parsedDailyMAWindow = Number(document.getElementById('daily-ma-window').value || dailyMAWindow || parsedBaselineDays || 7);
+                if (!Number.isFinite(parsedDailyMAWindow) || parsedDailyMAWindow < 2) parsedDailyMAWindow = parsedBaselineDays || 7;
+                if (parsedDailyMAWindow > 3650) parsedDailyMAWindow = 3650;
+                payload.blocked_ma_window = Math.floor(parsedMAWindow);
+                payload.blocked_anomaly_pct = Math.floor(parsedAnomalyPct);
+                payload.blocked_anomaly_baseline = parsedBaseline;
+                payload.blocked_anomaly_days = Math.floor(parsedBaselineDays);
+                payload.blocked_anomaly_min_pct = parsedBaselineMinPct;
+                payload.daily_ma_window = Math.floor(parsedDailyMAWindow);
+            }
+            return payload;
+        }
+
+        function buildExtendedSettingsPayload(messageId) {
+            const payload = buildTrafficDataPayload(messageId);
+            if (!payload) return null;
+            let parsedMAWindow = Number(payload.blocked_ma_window || blockedMAWindow || 12);
             if (!Number.isFinite(parsedMAWindow) || parsedMAWindow < 2) parsedMAWindow = 12;
             if (parsedMAWindow > 288) parsedMAWindow = 288;
-            let parsedAnomalyPct = Number(document.getElementById('blocked-anomaly-pct').value || blockedAnomalyPct || 50);
+            let parsedAnomalyPct = Number(payload.blocked_anomaly_pct || blockedAnomalyPct || 50);
             if (!Number.isFinite(parsedAnomalyPct) || parsedAnomalyPct < 1) parsedAnomalyPct = 50;
             if (parsedAnomalyPct > 10000) parsedAnomalyPct = 10000;
-            const parsedBaseline = String(document.getElementById('blocked-anomaly-baseline').value || blockedAnomalyBaseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
-            let parsedBaselineDays = Number(document.getElementById('blocked-anomaly-days').value || blockedAnomalyDays || 7);
+            let parsedBaselineDays = Number(payload.blocked_anomaly_days || blockedAnomalyDays || 7);
             if (!Number.isFinite(parsedBaselineDays) || parsedBaselineDays < 1) parsedBaselineDays = 7;
             if (parsedBaselineDays > 3650) parsedBaselineDays = 3650;
-            let parsedBaselineMinPct = Number(document.getElementById('blocked-anomaly-min-pct').value || blockedAnomalyMinPct || 70);
+            let parsedBaselineMinPct = Number(payload.blocked_anomaly_min_pct || blockedAnomalyMinPct || 70);
             if (!Number.isFinite(parsedBaselineMinPct) || parsedBaselineMinPct < 1) parsedBaselineMinPct = 70;
             if (parsedBaselineMinPct > 100) parsedBaselineMinPct = 100;
-            let parsedDailyMAWindow = Number(document.getElementById('daily-ma-window').value || dailyMAWindow || parsedBaselineDays || 7);
-            if (!Number.isFinite(parsedDailyMAWindow) || parsedDailyMAWindow < 2) parsedDailyMAWindow = parsedBaselineDays || 7;
-            if (parsedDailyMAWindow > 3650) parsedDailyMAWindow = 3650;
             let parsedVenMAWindow = Number(document.getElementById('ven-ma-window').value || venMAWindow || parsedMAWindow || 12);
             if (!Number.isFinite(parsedVenMAWindow) || parsedVenMAWindow < 2) parsedVenMAWindow = parsedMAWindow || 12;
             if (parsedVenMAWindow > 288) parsedVenMAWindow = 288;
@@ -626,42 +849,25 @@
             const parsedBindAddress = String(document.getElementById('bind-address').value || bindAddress || ':18443').trim();
             const parsedPublicBaseURL = String(document.getElementById('public-base-url').value || publicBaseURL || 'http://localhost:18443').trim();
             const parsedTimezone = String(document.getElementById('timezone').value || timezone || '').trim();
-            const exclusions = String(document.getElementById('source-exclusions').value || '')
-                .split(',')
-                .map((n) => n.trim())
-                .filter((n) => n.length > 0)
-                .map((name) => ({ name, kind: 'auto' }));
-            return {
-                traffic_targets: cleaned,
-                traffic_source_exclusions: exclusions,
-                history_days: Math.floor(parsedDays),
-                blocked_port_daily_enabled: parsedBlockedPortDailyEnabled,
-                blocked_rolling_dedupe_backend: parsedBlockedRollingDedupeBackend,
-                blocked_ma_window: Math.floor(parsedMAWindow),
-                blocked_anomaly_pct: Math.floor(parsedAnomalyPct),
-                blocked_anomaly_baseline: parsedBaseline,
-                blocked_anomaly_days: Math.floor(parsedBaselineDays),
-                blocked_anomaly_min_pct: parsedBaselineMinPct,
-                daily_ma_window: Math.floor(parsedDailyMAWindow),
-                ven_ma_window: Math.floor(parsedVenMAWindow),
-                ven_anomaly_pct: Math.floor(parsedVenAnomalyPct),
-                ven_anomaly_baseline: parsedVenBaseline,
-                ven_anomaly_days: Math.floor(parsedVenBaselineDays),
-                ven_anomaly_min_pct: parsedVenBaselineMinPct,
-                tampering_ma_window: Math.floor(parsedTamperingMAWindow),
-                tampering_anomaly_pct: Math.floor(parsedTamperingAnomalyPct),
-                tampering_anomaly_baseline: parsedTamperingBaseline,
-                tampering_anomaly_days: Math.floor(parsedTamperingBaselineDays),
-                tampering_anomaly_min_pct: parsedTamperingBaselineMinPct,
-                tampering_daily_anomaly_pct: Math.floor(parsedTamperingDailyAnomalyPct),
-                timezone: parsedTimezone,
-                bind_address: parsedBindAddress,
-                public_base_url: parsedPublicBaseURL
-            };
+            payload.ven_ma_window = Math.floor(parsedVenMAWindow);
+            payload.ven_anomaly_pct = Math.floor(parsedVenAnomalyPct);
+            payload.ven_anomaly_baseline = parsedVenBaseline;
+            payload.ven_anomaly_days = Math.floor(parsedVenBaselineDays);
+            payload.ven_anomaly_min_pct = parsedVenBaselineMinPct;
+            payload.tampering_ma_window = Math.floor(parsedTamperingMAWindow);
+            payload.tampering_anomaly_pct = Math.floor(parsedTamperingAnomalyPct);
+            payload.tampering_anomaly_baseline = parsedTamperingBaseline;
+            payload.tampering_anomaly_days = Math.floor(parsedTamperingBaselineDays);
+            payload.tampering_anomaly_min_pct = parsedTamperingBaselineMinPct;
+            payload.tampering_daily_anomaly_pct = Math.floor(parsedTamperingDailyAnomalyPct);
+            payload.timezone = parsedTimezone;
+            payload.bind_address = parsedBindAddress;
+            payload.public_base_url = parsedPublicBaseURL;
+            return payload;
         }
 
         async function saveHostingSettings() {
-            const payload = buildTrafficDataPayload('msg-hosting');
+            const payload = buildExtendedSettingsPayload('msg-hosting');
             if (!payload) return;
             const r = await fetch('/api/config/targets', {
                 method: 'PUT',
@@ -683,6 +889,22 @@
                 return;
             }
             showMsg('msg-traffic', 'Refresh started.', 'success');
+        }
+
+        async function refreshPolicyMetricsNow() {
+            const r = await fetch('/api/refresh/policy-metrics', { method: 'POST' });
+            if (!r.ok) {
+                showMsg('msg-traffic', `Policy refresh failed (${r.status})`, 'danger');
+                return;
+            }
+            const d = await r.json().catch(() => ({}));
+            if (!d.started) {
+                showMsg('msg-traffic', d.message || 'Policy metrics refresh did not start.', 'warning');
+                return;
+            }
+            const rs = Number(d.rulesets || 0).toLocaleString();
+            const rls = Number(d.rules || 0).toLocaleString();
+            showMsg('msg-traffic', `Policy metrics refreshed (rulesets=${rs}, rules=${rls}).`, 'success');
         }
 
         function formatTS(ts) {
@@ -874,11 +1096,14 @@
             renderTargetEditor();
         });
         document.getElementById('btn-save-traffic').addEventListener('click', saveTrafficSettings);
+        document.getElementById('btn-save-traffic-storage').addEventListener('click', saveTrafficStorageSettings);
+        document.getElementById('btn-save-traffic-anomaly').addEventListener('click', saveTrafficAnomalySettings);
         document.getElementById('btn-save-ven').addEventListener('click', saveVenSettings);
         document.getElementById('btn-save-tampering').addEventListener('click', saveTamperingSettings);
         document.getElementById('btn-save-hosting').addEventListener('click', saveHostingSettings);
         document.getElementById('btn-save-credentials').addEventListener('click', saveCredentialSettings);
         document.getElementById('btn-refresh-now').addEventListener('click', refreshNow);
+        document.getElementById('btn-refresh-policy').addEventListener('click', refreshPolicyMetricsNow);
         document.getElementById('btn-reconcile-history').addEventListener('click', triggerFullReconcile);
         document.getElementById('btn-reconcile-tampering-history').addEventListener('click', triggerTamperingReconcile);
         document.getElementById('btn-save-alerts').addEventListener('click', saveAlertSettings);
@@ -890,5 +1115,6 @@
             showMsg('msg-credentials', e.message, 'danger');
         });
     </script>
+    <div class="version-badge">v."{{.VersionLabel}}"</div>
 </body>
 </html>

@@ -3,6 +3,7 @@
 <head>
     <title>Illumio Monitoring Report</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -29,40 +30,61 @@
             line-height: 1.45;
             letter-spacing: 0.01em;
         }
+        .dashboard-shell {
+            width: min(98vw, 1920px);
+            margin: 0 auto;
+            padding: 0 16px;
+        }
         .wrap { width: min(98vw, 1920px); margin: 0 auto; padding: 16px; }
         .header {
-            background: var(--panel-bg);
-            border: 1px solid var(--border);
-            border-left: 5px solid var(--illumio-orange);
-            border-radius: 10px;
-            padding: 12px 14px;
-            margin-bottom: 12px;
+            background: var(--illumio-orange);
+            color: #fff;
+            border: none;
+            border-radius: 0 0 15px 15px;
+            padding: 22px 20px 18px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 16px;
+            text-align: center;
         }
         .header h1 {
             margin: 0;
-            font-size: clamp(1.35rem, 1.8vw, 1.7rem);
-            font-weight: 760;
-            letter-spacing: 0.01em;
+            font-size: clamp(1.45rem, 2.1vw, 1.9rem);
+            font-weight: 750;
         }
-        .meta { margin-top: 8px; color: var(--muted); font-size: 0.88rem; }
+        #status-bar { font-size: 0.86rem; }
+        #status-bar { text-align: center; }
+        .status-meta {
+            font-size: 0.78rem;
+            opacity: 0.95;
+            margin-left: 8px;
+            color: rgba(255,255,255,0.9);
+        }
+        .status-actions { margin-left: 8px; display: inline-flex; gap: 9px; flex-wrap: wrap; align-items: center; justify-content: center; }
+        .status-actions .btn {
+            --bs-btn-padding-y: 0.1rem;
+            --bs-btn-padding-x: 0.45rem;
+            --bs-btn-font-size: 0.72rem;
+        }
         .actions { margin-top: 10px; display: flex; gap: 9px; flex-wrap: wrap; }
-        .refresh-note { align-self: center; font-size: 0.84rem; color: var(--muted); }
+        .refresh-note { align-self: center; font-size: 0.84rem; color: rgba(255,255,255,0.92); }
         .range-controls { display: inline-flex; gap: 6px; margin-left: 2px; }
         .mode-controls { display: inline-flex; gap: 6px; margin-left: 2px; }
         .control-group { display: inline-flex; align-items: center; gap: 7px; }
-        .control-label { font-size: 0.8rem; color: var(--muted); font-weight: 600; letter-spacing: 0.01em; }
-        .btn {
-            display: inline-block;
-            border: 1px solid var(--border);
-            border-radius: 7px;
-            padding: 7px 11px;
-            text-decoration: none;
-            color: var(--text);
-            background: var(--panel-bg);
-            cursor: pointer;
+        .control-label { font-size: 0.8rem; color: rgba(255,255,255,0.92); font-weight: 600; letter-spacing: 0.01em; }
+        .header .muted { color: rgba(255,255,255,0.92); }
+        .version-badge {
+            position: fixed;
+            right: 12px;
+            bottom: 10px;
+            z-index: 1200;
+            background: rgba(17, 17, 17, 0.82);
+            color: #fff;
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+            border: 1px solid rgba(255,255,255,0.25);
         }
-        .btn.primary { background: var(--illumio-orange); color: #fff; border-color: var(--illumio-orange); }
-        body[data-theme="dark"] .btn { background: #646d78; border-color: #aeb8c4; color: #fff; }
         .panel {
             background: var(--panel-bg);
             border: 1px solid var(--border);
@@ -124,7 +146,7 @@
         .muted { color: var(--muted); font-size: 0.83rem; }
         @media print {
             body { background: #fff; }
-            .actions { display: none; }
+            .status-actions { display: none !important; }
             .wrap { max-width: none; padding: 0; }
             .panel, .header, .chart-card { box-shadow: none; }
             details[open] summary { display: none; }
@@ -132,38 +154,39 @@
     </style>
 </head>
 <body>
-<div class="wrap">
-    <div class="header">
-        <h1>Illumio Monitoring Dashboard Report</h1>
-        <div class="meta" id="meta">Loading...</div>
-        <div class="actions">
-            <button class="btn" id="btn-theme">Dark Mode</button>
-            <button class="btn primary" id="btn-print">Print / Save as PDF</button>
-            <button class="btn" id="btn-refresh-live">Refresh</button>
+<div class="header text-center">
+    <h1>Illumio Monitoring Dashboard</h1>
+    <div id="status-bar" class="mt-2">
+        <span id="meta" class="status-meta">Loading...</span>
+        <span class="status-actions">
+            <button class="btn btn-light btn-sm" id="btn-theme">Dark Mode</button>
+            <button class="btn btn-light btn-sm" id="btn-print">Print / Save as PDF</button>
+            <button class="btn btn-light btn-sm" id="btn-refresh-live">Refresh</button>
             <span class="control-group">
                 <span class="control-label">View</span>
                 <span class="mode-controls" id="mode-controls">
-                    <button class="btn" id="mode-both">Show: All</button>
-                    <button class="btn" id="mode-24h">24h (5m) Only</button>
-                    <button class="btn" id="mode-daily">Daily Only</button>
+                    <button class="btn btn-light btn-sm" id="mode-both">Show: All</button>
+                    <button class="btn btn-light btn-sm" id="mode-24h">24h (5m) Only</button>
+                    <button class="btn btn-light btn-sm" id="mode-daily">Daily Only</button>
                 </span>
             </span>
             <span class="control-group">
                 <span class="control-label">Chart Length</span>
                 <span class="range-controls" id="range-controls">
-                    <button class="btn" id="range-7">7d</button>
-                    <button class="btn" id="range-30">30d</button>
-                    <button class="btn" id="range-90">90d</button>
-                    <button class="btn" id="range-180">180d</button>
-                    <button class="btn" id="range-365">365d</button>
+                    <button class="btn btn-light btn-sm" id="range-7">7d</button>
+                    <button class="btn btn-light btn-sm" id="range-30">30d</button>
+                    <button class="btn btn-light btn-sm" id="range-90">90d</button>
+                    <button class="btn btn-light btn-sm" id="range-180">180d</button>
+                    <button class="btn btn-light btn-sm" id="range-365">365d</button>
                 </span>
             </span>
-            <a class="btn" href="/api/export/report.csv">Download CSV (Excel)</a>
-            <a class="btn" href="/">Back to Dashboard</a>
+            <a class="btn btn-light btn-sm" href="/api/export/report.csv">Download CSV (Excel)</a>
+            <a class="btn btn-light btn-sm" href="/">Back to Dashboard</a>
             <span class="refresh-note d-none" id="next-refresh">Next refresh in --</span>
-        </div>
+        </span>
     </div>
-
+</div>
+<div class="wrap">
     <div class="panel">
         <h2>Summary</h2>
         <div class="summary-grid" id="summary"></div>
@@ -183,6 +206,10 @@
             <summary class="enforcement-summary" id="ven-summary">VEN Status Trends</summary>
             <div class="chart-grid" id="charts-ven"></div>
         </details>
+        <details class="enforcement-block mt-2" id="policy-details">
+            <summary class="enforcement-summary" id="policy-summary">Policy Growth Trends</summary>
+            <div class="chart-grid" id="charts-policy"></div>
+        </details>
         <div id="blocked-groups" class="mt-2"></div>
         <details class="enforcement-block mt-2" id="enforcement-details">
             <summary class="enforcement-summary" id="enforcement-summary">Enforcement Mode Trends</summary>
@@ -190,6 +217,7 @@
         </details>
     </div>
 </div>
+<div class="version-badge">v."{{.VersionLabel}}"</div>
 
 <script src="/static/ui-common.js"></script>
 <script>
@@ -403,11 +431,13 @@
     function captureExpansionState() {
         const anomalyDetails = document.getElementById('anomaly-details');
         const venDetails = document.getElementById('ven-details');
+        const policyDetails = document.getElementById('policy-details');
         const enforcementDetails = document.getElementById('enforcement-details');
 
         expansionState.sections = {
             anomaly: !!(anomalyDetails && anomalyDetails.open),
             ven: !!(venDetails && venDetails.open),
+            policy: !!(policyDetails && policyDetails.open),
             enforcement: !!(enforcementDetails && enforcementDetails.open)
         };
 
@@ -422,12 +452,15 @@
     function finalizeSectionSummariesAndExpansion() {
         const anomalyCount = chartCountByContainer['anomaly-outcomes'] || 0;
         const venCount = chartCountByContainer['charts-ven'] || 0;
+        const policyCount = chartCountByContainer['charts-policy'] || 0;
         const enforcementCount = chartCountByContainer['charts-enforcement'] || 0;
         const anomalySummary = document.getElementById('anomaly-summary');
         const venSummary = document.getElementById('ven-summary');
+        const policySummary = document.getElementById('policy-summary');
         const enforcementSummary = document.getElementById('enforcement-summary');
         if (anomalySummary) anomalySummary.textContent = `Anomaly Outcomes (${anomalyCount})`;
         if (venSummary) venSummary.textContent = `VEN Status Trends (${venCount})`;
+        if (policySummary) policySummary.textContent = `Policy Growth Trends (${policyCount})`;
         if (enforcementSummary) enforcementSummary.textContent = `Enforcement Mode Trends (${enforcementCount})`;
 
         blockedGroupsMeta.forEach((g) => {
@@ -438,12 +471,14 @@
 
         const anomalyDetails = document.getElementById('anomaly-details');
         const venDetails = document.getElementById('ven-details');
+        const policyDetails = document.getElementById('policy-details');
         const enforcementDetails = document.getElementById('enforcement-details');
 
         if (!expansionState.initialized) {
             if (chartMode === 'both') {
                 if (anomalyDetails) anomalyDetails.open = false;
                 if (venDetails) venDetails.open = false;
+                if (policyDetails) policyDetails.open = false;
                 if (enforcementDetails) enforcementDetails.open = false;
                 blockedGroupsMeta.forEach((g) => {
                     const d = document.getElementById(g.detailsId);
@@ -453,6 +488,7 @@
             }
             if (anomalyDetails) anomalyDetails.open = anomalyCount > 0;
             if (venDetails) venDetails.open = venCount > 0;
+            if (policyDetails) policyDetails.open = policyCount > 0;
             if (enforcementDetails) enforcementDetails.open = enforcementCount > 0;
             blockedGroupsMeta.forEach((g) => {
                 const d = document.getElementById(g.detailsId);
@@ -468,6 +504,10 @@
         if (venDetails) {
             const desired = expansionState.sections.ven;
             venDetails.open = venCount > 0 && desired;
+        }
+        if (policyDetails) {
+            const desired = expansionState.sections.policy;
+            policyDetails.open = policyCount > 0 && desired;
         }
         if (enforcementDetails) {
             const desired = expansionState.sections.enforcement;
@@ -537,6 +577,7 @@
         document.getElementById('anomaly-outcomes').innerHTML = '';
         document.getElementById('anomaly-notes').textContent = '';
         document.getElementById('charts-ven').innerHTML = '';
+        document.getElementById('charts-policy').innerHTML = '';
         document.getElementById('blocked-groups').innerHTML = '';
         document.getElementById('charts-enforcement').innerHTML = '';
         blockedGroupSeq = 0;
@@ -590,6 +631,10 @@
         addSummaryItem(summary, 'VEN Warnings', (stats.ven_status.warning || []).length);
         addSummaryItem(summary, 'VEN Errors', (stats.ven_status.error || []).length);
         addSummaryItem(summary, 'Tampered VENs (Deduped)', tamperedCount);
+        if (stats.rules?.enabled) {
+            addSummaryItem(summary, 'Policy Rulesets (Today)', Number(stats.rules.rulesets || 0));
+            addSummaryItem(summary, 'Policy Rules (Today)', Number(stats.rules.rules || 0));
+        }
         addSummaryItem(summary, `Anomalous Blocked Targets (${blockedAnomalyPct}% over MA)`, anomalousTargets.length);
         (stats.blocked.targets || []).forEach((t) => addSummaryItem(summary, `Blocked ${t.name} (24h)`, t.count || 0));
 
@@ -643,6 +688,28 @@
                 'charts-ven',
                 [{ label: `MA (${Number(cfg.daily_ma_window || 7)})`, points: filterDaily(tampDD.trend_ma_daily || []), color: '#17a2b8' }]
             );
+        }
+        if (stats.rules?.enabled) {
+            const [policyRulesetsDD, policyRulesDD] = await Promise.all([
+                fetchJSON('/api/drilldown?metric=policy_rulesets').catch(() => null),
+                fetchJSON('/api/drilldown?metric=policy_rules').catch(() => null)
+            ]);
+            if (policyRulesetsDD) {
+                renderLineChart(
+                    'Policy Rulesets (Daily)',
+                    filterDaily(policyRulesetsDD.trend_daily || policyRulesetsDD.trend || []),
+                    '#20c997',
+                    'charts-policy'
+                );
+            }
+            if (policyRulesDD) {
+                renderLineChart(
+                    'Policy Rules (Daily)',
+                    filterDaily(policyRulesDD.trend_daily || policyRulesDD.trend || []),
+                    '#0d6efd',
+                    'charts-policy'
+                );
+            }
         }
 
         const targets = stats.blocked.targets || [];

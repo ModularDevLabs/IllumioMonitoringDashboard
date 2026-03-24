@@ -31,11 +31,45 @@
             margin: 0 auto;
             padding: 0 16px;
         }
-        .topbar {
+        .header {
             background: var(--illumio-orange);
             color: white;
-            padding: 16px 0;
+            padding: 22px 20px 18px;
+            border-radius: 0 0 15px 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             margin-bottom: 20px;
+        }
+        .header h1 {
+            font-size: clamp(1.45rem, 2.1vw, 1.9rem);
+            font-weight: 750;
+            margin: 0;
+        }
+        #status-bar { font-size: 0.86rem; }
+        #status-bar { text-align: center; }
+        .status-meta {
+            font-size: 0.78rem;
+            opacity: 0.95;
+            margin-left: 8px;
+            color: rgba(255,255,255,0.9);
+        }
+        .status-actions .btn {
+            --bs-btn-padding-y: 0.1rem;
+            --bs-btn-padding-x: 0.45rem;
+            --bs-btn-font-size: 0.72rem;
+        }
+        .status-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: center; }
+        .version-badge {
+            position: fixed;
+            right: 12px;
+            bottom: 10px;
+            z-index: 1200;
+            background: rgba(17, 17, 17, 0.82);
+            color: #fff;
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+            border: 1px solid rgba(255,255,255,0.25);
         }
         .card {
             border: 1px solid rgba(0,0,0,0.06);
@@ -47,12 +81,27 @@
         .chart-wrap { height: 330px; }
         .trend-controls { gap: 8px; }
         .range-controls { gap: 6px; }
-        .status-meta {
+        .card-meta {
             font-size: 0.8rem;
             color: var(--muted);
             margin-bottom: 8px;
         }
         .text-muted { color: var(--muted) !important; }
+        .section-toggle summary {
+            cursor: pointer;
+            list-style: none;
+            font-weight: 600;
+            font-size: 0.95rem;
+            padding: 2px 0;
+        }
+        .section-toggle summary::-webkit-details-marker { display: none; }
+        .section-toggle summary::before {
+            content: "▸";
+            display: inline-block;
+            margin-right: 8px;
+            color: var(--muted);
+        }
+        .section-toggle[open] summary::before { content: "▾"; }
         body[data-theme="dark"] .card,
         body[data-theme="dark"] .card h1,
         body[data-theme="dark"] .card h2,
@@ -92,16 +141,19 @@
     </style>
 </head>
 <body>
-    <div class="topbar">
-        <div class="dashboard-shell d-flex justify-content-between align-items-center">
-            <div class="h5 mb-0">Metric Drilldown</div>
-            <div id="actions" class="d-flex gap-2">
+    <div class="header text-center">
+        <h1>Illumio Monitoring Dashboard</h1>
+        <div id="status-bar" class="mt-2">
+            <span id="meta" class="status-meta">Loading...</span>
+            <span id="actions" class="status-actions ms-2">
                 <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
+                <a href="/settings" class="btn btn-light btn-sm">Settings</a>
+                <a href="/executive" class="btn btn-light btn-sm">Executive View</a>
+                <a href="/trends" class="btn btn-light btn-sm">Trend View</a>
                 <a id="btn-csv" href="#" class="btn btn-light btn-sm">Export CSV</a>
                 <button id="btn-pdf" type="button" class="btn btn-light btn-sm">Export PDF</button>
-                <a href="/trends" class="btn btn-light btn-sm">Trend View</a>
                 <a href="/" class="btn btn-light btn-sm">Back to Dashboard</a>
-            </div>
+            </span>
         </div>
     </div>
 
@@ -109,7 +161,7 @@
         <div class="card p-3">
             <h5 id="title">Loading...</h5>
             <div class="text-muted mb-3" id="count"></div>
-            <div class="status-meta" id="refresh-meta"></div>
+            <div class="card-meta" id="refresh-meta"></div>
             <div id="trend-controls" class="d-none d-flex trend-controls mb-2">
                 <button id="trend-raw" type="button" class="btn btn-sm btn-outline-primary">24h (5m)</button>
                 <button id="trend-sum" type="button" class="btn btn-sm btn-outline-secondary">Daily</button>
@@ -125,17 +177,36 @@
                 <canvas id="trend-chart"></canvas>
             </div>
             <div id="blocked-ports-wrap" class="d-none mb-3">
-                <h6>Blocked Ports (Daily Aggregate)</h6>
-                <div class="text-muted small mb-2" id="blocked-ports-meta"></div>
+                <details class="section-toggle" id="blocked-ports-section" open>
+                    <summary>Blocked Ports (Daily Aggregate)</summary>
+                    <div class="text-muted small mb-2 mt-1" id="blocked-ports-meta"></div>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Port/Proto</th>
+                                    <th class="text-end">Total Flows</th>
+                                </tr>
+                            </thead>
+                            <tbody id="blocked-ports-body"></tbody>
+                        </table>
+                    </div>
+                </details>
+            </div>
+            <div id="blocked-hosts-wrap" class="d-none mb-3">
+                <h6>Blocked Hostnames (Daily Aggregate)</h6>
+                <div class="text-muted small mb-2" id="blocked-hosts-meta"></div>
                 <div class="table-responsive">
                     <table class="table table-sm">
                         <thead>
                             <tr>
-                                <th>Port/Proto</th>
-                                <th class="text-end">Total Flows</th>
+                                <th>Hostname</th>
+                                <th class="text-end">Outbound</th>
+                                <th class="text-end">Inbound</th>
+                                <th class="text-end">Total</th>
                             </tr>
                         </thead>
-                        <tbody id="blocked-ports-body"></tbody>
+                        <tbody id="blocked-hosts-body"></tbody>
                     </table>
                 </div>
             </div>
@@ -144,6 +215,7 @@
     </div>
 
     <script src="/static/ui-common.js"></script>
+    <div class="version-badge">v."{{.VersionLabel}}"</div>
     <script>
         let trendChart = null;
         let trendPoints = [];
@@ -160,6 +232,10 @@
         let blockedAnomalySource = '5m';
         let blockedPortDailyEnabled = true;
         let blockedPortsDaily = [];
+        let blockedHostMetricsEnabled = false;
+        let blockedHostRetentionMode = 'rolling_24h_plus_daily';
+        let blockedHostsDaily = [];
+        let blockedHosts24h = [];
         const THEME_KEY = 'illumio_theme';
         let dayRange = 30;
         let nextRefreshAt = null;
@@ -198,7 +274,11 @@
         function applyTheme(theme) {
             UICommon.setTheme(theme, THEME_KEY, 'btn-theme');
             if (trendPoints && trendPoints.length > 0) {
-                renderTrend(trendPoints, document.getElementById('title').innerText, { hideList: currentMetric === 'blocked_target', showControls: true });
+                renderTrend(trendPoints, document.getElementById('title').innerText, {
+                    hideList: currentMetric === 'blocked_target',
+                    showControls: true,
+                    forceDaily: isPolicyDailyMetric(currentMetric)
+                });
             }
         }
 
@@ -261,6 +341,7 @@
         function renderTrend(points, title, opts = {}) {
             const hideList = !!opts.hideList;
             const showControls = !!opts.showControls;
+            const forceDaily = !!opts.forceDaily;
             const wrap = document.getElementById('trend-wrap');
             const list = document.getElementById('items');
             const controls = document.getElementById('trend-controls');
@@ -285,14 +366,21 @@
             }
             wrap.classList.remove('d-none');
             if (showControls) {
-                controls.classList.remove('d-none');
-                updateTrendButtons();
-                if (trendMode === 'sum') {
+                if (forceDaily) {
+                    controls.classList.add('d-none');
                     range.classList.remove('d-none');
                     updateRangeButtons();
                     points = filteredDaily(points);
                 } else {
-                    range.classList.add('d-none');
+                    controls.classList.remove('d-none');
+                    updateTrendButtons();
+                    if (trendMode === 'sum') {
+                        range.classList.remove('d-none');
+                        updateRangeButtons();
+                        points = filteredDaily(points);
+                    } else {
+                        range.classList.add('d-none');
+                    }
                 }
             } else {
                 controls.classList.add('d-none');
@@ -305,7 +393,7 @@
                 list.classList.remove('d-none');
             }
 
-            const isDaily = trendMode === 'sum';
+            const isDaily = forceDaily || trendMode === 'sum';
             const labels = points.map((p) => isDaily
                 ? new Date(p.timestamp).toLocaleDateString()
                 : new Date(p.timestamp).toLocaleTimeString());
@@ -316,7 +404,7 @@
             const tickColor = isDarkTheme() ? '#e7edf3' : '#333';
             const gridColor = isDarkTheme() ? 'rgba(220,228,235,0.22)' : 'rgba(0,0,0,0.10)';
             const datasets = [{
-                label: trendMode === 'sum'
+                label: isDaily
                     ? (title || 'Trend') + ' (daily)'
                     : (title || 'Trend') + ' (24h, 5m)',
                 data: values,
@@ -379,6 +467,7 @@
             });
             UICommon.makeChartZoomable(trendChart, title);
             renderBlockedPortsTable();
+            renderBlockedHostsTable();
         }
 
         function renderBlockedPortsTable() {
@@ -430,6 +519,120 @@
             meta.innerText = `All blocked ports across last ${dayRange} day(s), including today-so-far.`;
         }
 
+        function renderBlockedHostsTable() {
+            const wrap = document.getElementById('blocked-hosts-wrap');
+            const body = document.getElementById('blocked-hosts-body');
+            const meta = document.getElementById('blocked-hosts-meta');
+            if (currentMetric !== 'blocked_target') {
+                wrap.classList.add('d-none');
+                return;
+            }
+            wrap.classList.remove('d-none');
+            if (!blockedHostMetricsEnabled) {
+                body.innerHTML = '<tr><td colspan="4" class="text-muted">Blocked hostname metrics are disabled in settings.</td></tr>';
+                meta.innerText = 'Disabled.';
+                return;
+            }
+            if (blockedHostRetentionMode === 'rolling_24h_only') {
+                const rows24 = (blockedHosts24h || [])
+                    .map((h) => ({
+                        hostname: String(h.hostname || '').trim(),
+                        inbound: Number(h.inbound || 0),
+                        outbound: Number(h.outbound || 0)
+                    }))
+                    .filter((h) => h.hostname)
+                    .map((h) => ({ ...h, total: h.inbound + h.outbound }))
+                    .sort((a, b) => b.total - a.total || a.hostname.localeCompare(b.hostname));
+                body.innerHTML = '';
+                if (!rows24.length) {
+                    body.innerHTML = '<tr><td colspan="4" class="text-muted">No blocked hostname entries recorded in rolling 24h snapshots.</td></tr>';
+                } else {
+                    rows24.forEach((r) => {
+                        const tr = document.createElement('tr');
+                        const hostTd = document.createElement('td');
+                        hostTd.className = 'mono';
+                        hostTd.innerText = r.hostname;
+                        const outTd = document.createElement('td');
+                        outTd.className = 'text-end';
+                        outTd.innerText = r.outbound.toLocaleString();
+                        const inTd = document.createElement('td');
+                        inTd.className = 'text-end';
+                        inTd.innerText = r.inbound.toLocaleString();
+                        const totalTd = document.createElement('td');
+                        totalTd.className = 'text-end';
+                        totalTd.innerText = r.total.toLocaleString();
+                        tr.appendChild(hostTd);
+                        tr.appendChild(outTd);
+                        tr.appendChild(inTd);
+                        tr.appendChild(totalTd);
+                        body.appendChild(tr);
+                    });
+                }
+                meta.innerText = 'All blocked hostnames across rolling 24h (5m snapshots).';
+                return;
+            }
+            if (blockedHostRetentionMode === 'daily_only') {
+                meta.innerText = `Daily snapshots only mode: showing last ${dayRange} day(s), including today-so-far.`;
+            }
+            const cutoff = Date.now() - dayRange * 24 * 60 * 60 * 1000;
+            const totals = new Map();
+            (blockedHostsDaily || []).forEach((d) => {
+                const ts = new Date(d.timestamp).getTime();
+                if (!Number.isFinite(ts) || ts < cutoff) return;
+                (d.hosts || []).forEach((h) => {
+                    const host = String(h.hostname || '').trim();
+                    const inbound = Number(h.inbound || 0);
+                    const outbound = Number(h.outbound || 0);
+                    if (!host) return;
+                    const prev = totals.get(host) || { inbound: 0, outbound: 0 };
+                    prev.inbound += Number.isFinite(inbound) && inbound > 0 ? inbound : 0;
+                    prev.outbound += Number.isFinite(outbound) && outbound > 0 ? outbound : 0;
+                    totals.set(host, prev);
+                });
+            });
+            const rows = Array.from(totals.entries())
+                .map(([hostname, c]) => ({ hostname, inbound: c.inbound, outbound: c.outbound, total: c.inbound + c.outbound }))
+                .sort((a, b) => b.total - a.total || a.hostname.localeCompare(b.hostname));
+            body.innerHTML = '';
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="4" class="text-muted">No blocked hostname entries recorded for selected daily range.</td></tr>';
+            } else {
+                rows.forEach((r) => {
+                    const tr = document.createElement('tr');
+                    const hostTd = document.createElement('td');
+                    hostTd.className = 'mono';
+                    hostTd.innerText = r.hostname;
+                    const outTd = document.createElement('td');
+                    outTd.className = 'text-end';
+                    outTd.innerText = r.outbound.toLocaleString();
+                    const inTd = document.createElement('td');
+                    inTd.className = 'text-end';
+                    inTd.innerText = r.inbound.toLocaleString();
+                    const totalTd = document.createElement('td');
+                    totalTd.className = 'text-end';
+                    totalTd.innerText = r.total.toLocaleString();
+                    tr.appendChild(hostTd);
+                    tr.appendChild(outTd);
+                    tr.appendChild(inTd);
+                    tr.appendChild(totalTd);
+                    body.appendChild(tr);
+                });
+            }
+            if (blockedHostRetentionMode !== 'daily_only') {
+                meta.innerText = `All blocked hostnames across last ${dayRange} day(s), including today-so-far.`;
+            }
+        }
+
+        function normalizeBlockedHostRetentionModeClient(raw) {
+            const v = String(raw || '').trim().toLowerCase();
+            if (v === 'rolling_24h_only' || v === 'rolling_24h_plus_daily' || v === 'daily_only') return v;
+            return 'rolling_24h_plus_daily';
+        }
+
+        function isPolicyDailyMetric(metric) {
+            return metric === 'policy_rulesets' || metric === 'policy_rules' || metric === 'policy_ruleset';
+        }
+
         function bindTrendControls() {
             document.getElementById('trend-raw').addEventListener('click', () => {
                 trendMode = 'raw';
@@ -446,11 +649,16 @@
                 if (!btn) return;
                 btn.addEventListener('click', () => {
                     dayRange = d;
-                    if (trendMode === 'sum') {
+                    if (trendMode === 'sum' || isPolicyDailyMetric(currentMetric)) {
                         trendPoints = trendDaily;
-                        renderTrend(trendPoints, document.getElementById('title').innerText, { hideList: currentMetric === 'blocked_target', showControls: true });
+                        renderTrend(trendPoints, document.getElementById('title').innerText, {
+                            hideList: currentMetric === 'blocked_target',
+                            showControls: true,
+                            forceDaily: isPolicyDailyMetric(currentMetric)
+                        });
                     } else {
                         renderBlockedPortsTable();
+                        renderBlockedHostsTable();
                     }
                 });
             });
@@ -494,6 +702,10 @@
                 trendMADaily = d.trend_ma_daily || [];
                 blockedPortDailyEnabled = d.blocked_port_daily_enabled !== false;
                 blockedPortsDaily = d.blocked_ports_daily || [];
+                blockedHostMetricsEnabled = d.blocked_host_metrics_enabled === true;
+                blockedHostRetentionMode = normalizeBlockedHostRetentionModeClient(d.blocked_host_retention_mode || 'rolling_24h_plus_daily');
+                blockedHostsDaily = d.blocked_hosts_daily || [];
+                blockedHosts24h = d.blocked_hosts_24h || [];
                 blockedMAWindow = Number(d.blocked_ma_window || blockedMAWindow || 12);
                 blockedAnomalyPct = Number(d.blocked_anomaly_pct || blockedAnomalyPct || 50);
                 blockedAnomalySource = String(d.anomaly_source || '5m').toLowerCase() === 'daily' ? 'daily' : '5m';
@@ -510,27 +722,51 @@
             }
             blockedPortsDaily = [];
             blockedPortDailyEnabled = true;
+            blockedHostMetricsEnabled = false;
+            blockedHostRetentionMode = 'rolling_24h_plus_daily';
+            blockedHostsDaily = [];
+            blockedHosts24h = [];
             renderBlockedPortsTable();
+            renderBlockedHostsTable();
             if (d.metric === 'ven_warning' || d.metric === 'ven_error') {
                 document.getElementById('trend-raw').innerText = '24h (5m)';
                 document.getElementById('trend-sum').innerText = 'Daily';
             }
-            document.getElementById('count').innerText = `${d.count} workload(s)`;
-            const list = document.getElementById('items');
-            list.classList.remove('d-none');
-            list.innerHTML = '';
-            if (!d.items || d.items.length === 0) {
-                const li = document.createElement('li');
-                li.className = 'list-group-item text-muted';
-                li.innerText = 'No results for this metric in the latest collection cycle.';
-                list.appendChild(li);
+            if (d.metric === 'policy_rulesets') {
+                document.getElementById('count').innerText = `${d.count} ruleset(s)`;
+            } else if (d.metric === 'policy_rules' || d.metric === 'policy_ruleset') {
+                const dailyPoints = (d.trend_daily || d.trend || []).length;
+                document.getElementById('count').innerText = `${dailyPoints} daily point(s)`;
             } else {
-                d.items.forEach((name) => {
+                document.getElementById('count').innerText = `${d.count} workload(s)`;
+            }
+            const list = document.getElementById('items');
+            list.innerHTML = '';
+            if (d.metric === 'policy_ruleset' || d.metric === 'policy_rules') {
+                list.classList.add('d-none');
+            } else {
+                list.classList.remove('d-none');
+                if (!d.items || d.items.length === 0) {
                     const li = document.createElement('li');
-                    li.className = 'list-group-item mono';
-                    li.innerText = name;
+                    li.className = 'list-group-item text-muted';
+                    li.innerText = 'No results for this metric in the latest collection cycle.';
                     list.appendChild(li);
-                });
+                } else {
+                    d.items.forEach((name, idx) => {
+                        const li = document.createElement('li');
+                        li.className = 'list-group-item mono';
+                        li.innerText = name;
+                        if (d.metric === 'policy_rulesets' && Array.isArray(d.item_targets) && d.item_targets[idx]) {
+                            li.style.cursor = 'pointer';
+                            li.title = 'Click to view this ruleset trend';
+                            li.addEventListener('click', () => {
+                                const t = encodeURIComponent(String(d.item_targets[idx]));
+                                window.location.href = `/details?metric=policy_ruleset&target=${t}`;
+                            });
+                        }
+                        list.appendChild(li);
+                    });
+                }
             }
             if (d.metric === 'ven_warning' || d.metric === 'ven_error' || String(d.metric || '').startsWith('mode_')) {
                 trend24h = d.trend_24h || d.trend || [];
@@ -566,6 +802,11 @@
                 document.getElementById('trend-raw').innerText = '24h (5m)';
                 document.getElementById('trend-sum').innerText = 'Daily';
                 renderTrend(trendPoints, d.title, { hideList: false, showControls: true });
+            } else if (d.metric === 'policy_rulesets' || d.metric === 'policy_rules' || d.metric === 'policy_ruleset') {
+                trendMode = 'sum';
+                trendDaily = d.trend_daily || d.trend || [];
+                trendPoints = trendDaily;
+                renderTrend(trendPoints, d.title, { hideList: d.metric !== 'policy_rulesets', showControls: true, forceDaily: true });
             } else {
                 document.getElementById('trend-controls').classList.add('d-none');
                 trendPoints = d.trend || [];

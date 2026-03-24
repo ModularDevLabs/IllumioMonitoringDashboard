@@ -3,6 +3,7 @@
 <head>
     <title>Executive View - Illumio Monitoring Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -29,30 +30,53 @@
             color: var(--text);
             font-family: "Segoe UI", Tahoma, Arial, sans-serif;
         }
+        .dashboard-shell {
+            width: min(98vw, 1920px);
+            margin: 0 auto;
+            padding: 0 16px;
+        }
         .wrap { width: min(98vw, 1920px); margin: 0 auto; padding: 16px; }
-        .head {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-left: 5px solid var(--illumio-orange);
-            border-radius: 10px;
-            padding: 12px;
-            margin-bottom: 12px;
+        .header {
+            background: var(--illumio-orange);
+            color: #fff;
+            border: none;
+            border-radius: 0 0 15px 15px;
+            padding: 22px 20px 18px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 16px;
+            text-align: center;
         }
-        .head h1 { margin: 0; font-size: 1.5rem; }
+        .header h1 { margin: 0; font-size: clamp(1.45rem, 2.1vw, 1.9rem); font-weight: 750; }
+        #status-bar { font-size: 0.86rem; }
+        #status-bar { text-align: center; }
+        .status-meta {
+            font-size: 0.78rem;
+            opacity: 0.95;
+            margin-left: 8px;
+        }
+        .status-actions { margin-left: 8px; display: inline-flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: center; }
+        .status-actions .btn {
+            --bs-btn-padding-y: 0.1rem;
+            --bs-btn-padding-x: 0.45rem;
+            --bs-btn-font-size: 0.72rem;
+        }
         .muted { color: var(--muted); font-size: 0.88rem; }
-        .actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
         .period-controls { display: inline-flex; gap: 6px; align-items: center; }
-        .btn {
-            border: 1px solid var(--border);
-            background: var(--surface);
-            color: var(--text);
-            border-radius: 7px;
-            padding: 6px 10px;
-            text-decoration: none;
-            cursor: pointer;
-        }
-        .btn.primary { background: var(--illumio-orange); color: #fff; border-color: var(--illumio-orange); }
         .btn.active { outline: 2px solid var(--illumio-orange); outline-offset: 0; }
+        .header .muted { color: rgba(255,255,255,0.9); }
+        .version-badge {
+            position: fixed;
+            right: 12px;
+            bottom: 10px;
+            z-index: 1200;
+            background: rgba(17, 17, 17, 0.82);
+            color: #fff;
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 0.72rem;
+            letter-spacing: 0.02em;
+            border: 1px solid rgba(255,255,255,0.25);
+        }
         .panel {
             background: var(--surface);
             border: 1px solid var(--border);
@@ -126,32 +150,33 @@
         @media print {
             body { background: #fff; color: #111; font-size: 12px; }
             .wrap { max-width: none; padding: 0; }
-            .actions { display: none !important; }
-            .panel, .head, .kpi, .board-col { box-shadow: none; break-inside: avoid; page-break-inside: avoid; }
+            .status-actions { display: none !important; }
+            .panel, .header, .kpi, .board-col { box-shadow: none; break-inside: avoid; page-break-inside: avoid; }
             .chart-wrap { height: 180px; }
         }
     </style>
 </head>
 <body>
-<div class="wrap">
-    <div class="head">
-        <h1 id="page-title">Executive Summary</h1>
-        <div class="muted" id="meta">Loading...</div>
-        <div class="actions">
-            <button id="btn-theme" type="button" class="btn">Dark Mode</button>
-            <button id="btn-refresh" type="button" class="btn primary">Refresh</button>
+<div class="header text-center">
+    <h1>Illumio Monitoring Dashboard</h1>
+    <div id="status-bar" class="mt-2">
+        <span id="meta" class="status-meta">Loading...</span>
+        <span class="status-actions">
+            <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
+            <button id="btn-refresh" type="button" class="btn btn-light btn-sm">Refresh</button>
             <span class="period-controls">
                 <span class="muted">Period</span>
-                <button id="period-7" type="button" class="btn">7d</button>
-                <button id="period-30" type="button" class="btn">30d</button>
-                <button id="period-90" type="button" class="btn">90d</button>
+                <button id="period-7" type="button" class="btn btn-light btn-sm">7d</button>
+                <button id="period-30" type="button" class="btn btn-light btn-sm">30d</button>
+                <button id="period-90" type="button" class="btn btn-light btn-sm">90d</button>
             </span>
-            <a class="btn" id="btn-board" href="/executive?board=1">Board PDF View</a>
-            <a class="btn" href="/report?live=1">Trend View</a>
-            <a class="btn" href="/">Back to Dashboard</a>
-        </div>
+            <a class="btn btn-light btn-sm" id="btn-board" href="/executive?board=1">Board PDF View</a>
+            <a class="btn btn-light btn-sm" href="/report?live=1">Trend View</a>
+            <a class="btn btn-light btn-sm" href="/">Back to Dashboard</a>
+        </span>
     </div>
-
+</div>
+<div class="wrap">
     <div class="panel board-only" id="board-panel">
         <h2>Board Snapshot</h2>
         <div class="muted">One-page summary: protection value, risk signals, and immediate actions.</div>
@@ -225,12 +250,20 @@
             <ul class="list" id="actions-list"></ul>
         </div>
     </div>
+
+    <div class="panel non-board d-none" id="policy-trend-panel">
+        <h2>Policy Growth Trend (Daily)</h2>
+        <div class="muted">Total rulesets and rules over time (enabled via settings).</div>
+        <div class="chart-wrap"><canvas id="policy-daily-chart"></canvas></div>
+    </div>
 </div>
+<div class="version-badge">v."{{.VersionLabel}}"</div>
 
 <script src="/static/ui-common.js"></script>
 <script>
     const THEME_KEY = 'illumio_theme';
     let chart = null;
+    let policyChart = null;
     let nextRefreshAt = null;
     let timer = null;
     let lastSnapshotTS = null;
@@ -260,6 +293,17 @@
         const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
         return (series || []).filter((p) => new Date(p.timestamp).getTime() >= cutoff)
             .reduce((a, p) => a + Number(p.value || 0), 0);
+    }
+
+    function isAllBlockedTarget(target) {
+        if (!target || typeof target !== 'object') return false;
+        const name = String(target.name || '').trim().toUpperCase();
+        const kind = String(target.kind || '').trim().toLowerCase();
+        return name === 'ALL-BLOCKED-TRAFFIC' || kind === 'all';
+    }
+
+    function filteredBlockedTargets(stats) {
+        return (stats.blocked?.targets || []).filter((t) => !isAllBlockedTarget(t));
     }
 
     function comparePeriods(series, days) {
@@ -331,9 +375,65 @@
         UICommon.makeChartZoomable(chart, 'Blocked Flows (Daily)');
     }
 
+    function renderPolicyChart(rulesetsSeries, rulesSeries) {
+        if (boardMode) return;
+        const panel = document.getElementById('policy-trend-panel');
+        const canvas = document.getElementById('policy-daily-chart');
+        if (!panel || !canvas) return;
+        const hasData = (rulesetsSeries && rulesetsSeries.length) || (rulesSeries && rulesSeries.length);
+        if (!hasData) {
+            panel.classList.add('d-none');
+            if (policyChart) {
+                policyChart.destroy();
+                policyChart = null;
+            }
+            return;
+        }
+        panel.classList.remove('d-none');
+        const labelsMap = new Map();
+        (rulesetsSeries || []).forEach((p) => labelsMap.set(dateKey(p.timestamp), true));
+        (rulesSeries || []).forEach((p) => labelsMap.set(dateKey(p.timestamp), true));
+        const labels = Array.from(labelsMap.keys()).sort();
+        const rulesetsByDay = new Map((rulesetsSeries || []).map((p) => [dateKey(p.timestamp), Number(p.value || 0)]));
+        const rulesByDay = new Map((rulesSeries || []).map((p) => [dateKey(p.timestamp), Number(p.value || 0)]));
+
+        const ctx = canvas.getContext('2d');
+        if (policyChart) policyChart.destroy();
+        policyChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels.map((k) => new Date(k + 'T12:00:00Z').toLocaleDateString()),
+                datasets: [{
+                    label: 'Policy Rulesets (Daily)',
+                    data: labels.map((k) => rulesetsByDay.get(k) ?? null),
+                    borderColor: '#20c997',
+                    backgroundColor: 'rgba(32, 201, 151, 0.15)',
+                    tension: 0.22,
+                    fill: false,
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    pointHitRadius: 8
+                }, {
+                    label: 'Policy Rules (Daily)',
+                    data: labels.map((k) => rulesByDay.get(k) ?? null),
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13, 110, 253, 0.15)',
+                    tension: 0.22,
+                    fill: false,
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    pointHitRadius: 8
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { beginAtZero: true } } }
+        });
+        UICommon.makeChartZoomable(policyChart, 'Policy Growth (Daily)');
+    }
+
     function actionItems(stats, blockedSeries, tamperDaily, periodDays) {
         const out = [];
-        const anomalous = (stats.blocked?.targets || []).filter((t) => t.anomalous);
+        const blockedTargets = filteredBlockedTargets(stats);
+        const anomalous = blockedTargets.filter((t) => t.anomalous);
         if (anomalous.length) out.push(`Investigate ${anomalous.length} anomalous blocked target(s): ${anomalous.slice(0, 3).map((t) => t.name).join(', ')}.`);
         const warn = (stats.ven_status?.warning || []).length;
         const err = (stats.ven_status?.error || []).length;
@@ -362,15 +462,19 @@
     }
 
     function buildBoardSnapshot(stats, blockedDaily, targets, actions, periodDays) {
-        const anomalous = (stats.blocked?.targets || []).filter((t) => t.anomalous);
-        const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
+        const blockedTargets = filteredBlockedTargets(stats);
+        const anomalous = blockedTargets.filter((t) => t.anomalous);
+        const blocked24h = blockedTargets.reduce((a, t) => a + Number(t.count || 0), 0);
         const periodTotal = sumLastDays(blockedDaily, periodDays);
-        const bestTarget = [...(stats.blocked?.targets || [])].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
+        const bestTarget = [...blockedTargets].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
         const wins = [
             `Blocked ${fmt(blocked24h)} flows in the last 24h (protection outcome).`,
             `Blocked ${fmt(periodTotal)} flows across ${periodDays}d.`,
             bestTarget ? `Highest protected target: ${bestTarget.name} (${fmt(bestTarget.count)} in 24h).` : 'Protected target activity available once targets return data.'
         ];
+        if (stats.rules?.enabled) {
+            wins.push(`Policy footprint: ${fmt(stats.rules.rulesets)} rulesets, ${fmt(stats.rules.rules)} rules.`);
+        }
         const risks = [];
         if (anomalous.length) risks.push(`${anomalous.length} blocked-target anomaly trigger(s) active.`);
         const err = (stats.ven_status?.error || []).length;
@@ -385,18 +489,17 @@
         setList('board-actions', actions, 'No immediate actions required.');
     }
 
-    function renderValueRanking(stats, targetDetails, periodDays) {
+    function renderValueRanking(blockedTargets, targetDetails, periodDays) {
         const body = document.getElementById('value-ranking-body');
         const periodLabel = document.getElementById('rank-period-label');
         if (!body) return;
         if (periodLabel) periodLabel.textContent = `${periodDays}d`;
-        const targets = stats.blocked?.targets || [];
-        if (!targets.length) {
+        if (!blockedTargets.length) {
             body.innerHTML = '<tr><td colspan="6" class="muted">No blocked targets configured or no data returned yet.</td></tr>';
             return;
         }
 
-        const rows = targets.map((t, idx) => {
+        const rows = blockedTargets.map((t, idx) => {
             const d = targetDetails[idx] || {};
             const periodTotal = sumLastDays(d.trend_daily || [], periodDays);
             return {
@@ -442,15 +545,15 @@
 
     function buildNarrativeSummary(stats, blockedDaily, actions, periodDays) {
         const nowText = new Date().toLocaleString();
-        const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
+        const blockedTargets = filteredBlockedTargets(stats);
+        const blocked24h = blockedTargets.reduce((a, t) => a + Number(t.count || 0), 0);
         const blockedPeriod = sumLastDays(blockedDaily, periodDays);
         const blockedDeltaPeriod = comparePeriods(blockedDaily, periodDays);
-        const targets = stats.blocked?.targets || [];
-        const topTargets = [...targets]
+        const topTargets = [...blockedTargets]
             .sort((a, b) => Number(b.count || 0) - Number(a.count || 0))
             .slice(0, 3)
             .map((t) => `${t.name} (${fmt(t.count || 0)} in 24h)`);
-        const anomalous = targets.filter((t) => t.anomalous).length;
+        const anomalous = blockedTargets.filter((t) => t.anomalous).length;
         const venWarn = (stats.ven_status?.warning || []).length;
         const venErr = (stats.ven_status?.error || []).length;
         const tampered = (stats.tampering?.workloads || []).length;
@@ -462,6 +565,9 @@
         lines.push(`Protection outcomes: ${fmt(blocked24h)} blocked flows in the last 24h; ${fmt(blockedPeriod)} blocked flows across the selected ${periodDays}-day window (${blockedDeltaPeriod >= 0 ? '+' : ''}${blockedDeltaPeriod.toFixed(1)}% vs prior ${periodDays}-day window).`);
         lines.push(`Top protected targets (24h): ${topTargets.length ? topTargets.join(', ') : 'n/a'}.`);
         lines.push(`Risk signals: ${anomalous} anomalous blocked targets, ${venWarn} VEN warnings, ${venErr} VEN errors, ${tampered} tampered VENs in the last 24h.`);
+        if (stats.rules?.enabled) {
+            lines.push(`Policy growth: ${fmt(stats.rules.rulesets)} rulesets and ${fmt(stats.rules.rules)} rules (daily policy trend enabled).`);
+        }
         lines.push(`Pipeline confidence: ${pipelineBad === 0 ? 'healthy' : `${pipelineBad} collector stage(s) failing or partial`}.`);
         lines.push('');
         lines.push('Recommended actions:');
@@ -502,12 +608,23 @@
     async function load() {
         const stats = await fetch('/api/stats?ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.json());
         const targets = await fetch('/api/config/targets?ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.json());
-        const targetDetails = await Promise.all((stats.blocked?.targets || []).map((t) =>
+        const allBlockedTargets = stats.blocked?.targets || [];
+        const targetDetailsAll = await Promise.all(allBlockedTargets.map((t) =>
             fetch(`/api/drilldown?metric=blocked_target&target=${encodeURIComponent(t.name)}&ts=${Date.now()}`, { cache: 'no-store' })
                 .then((r) => r.ok ? r.json() : null).catch(() => null)
         ));
+        const blockedTargets = allBlockedTargets.filter((t) => !isAllBlockedTarget(t));
+        const targetDetails = targetDetailsAll.filter((_, idx) => !isAllBlockedTarget(allBlockedTargets[idx]));
         const blockedDaily = aggregateDailyBlocked(targetDetails.filter(Boolean));
         const tamper = await fetch('/api/drilldown?metric=tampering&ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.ok ? r.json() : null).catch(() => null);
+        let policyRulesets = null;
+        let policyRules = null;
+        if (stats.rules?.enabled) {
+            [policyRulesets, policyRules] = await Promise.all([
+                fetch('/api/drilldown?metric=policy_rulesets&ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.ok ? r.json() : null).catch(() => null),
+                fetch('/api/drilldown?metric=policy_rules&ts=' + Date.now(), { cache: 'no-store' }).then((r) => r.ok ? r.json() : null).catch(() => null)
+            ]);
+        }
 
         lastSnapshotTS = stats.timestamp;
         updateMeta();
@@ -519,18 +636,22 @@
         risk.innerHTML = '';
         if (actionsRoot) actionsRoot.innerHTML = '';
 
-        const blocked24h = (stats.blocked?.targets || []).reduce((a, t) => a + Number(t.count || 0), 0);
+        const blocked24h = blockedTargets.reduce((a, t) => a + Number(t.count || 0), 0);
         const periodTotal = sumLastDays(blockedDaily, selectedPeriodDays);
         const thirtyDay = sumLastDays(blockedDaily, 30);
         const blockedDeltaPeriod = comparePeriods(blockedDaily, selectedPeriodDays);
-        const bestTarget = [...(stats.blocked?.targets || [])].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
+        const bestTarget = [...blockedTargets].sort((a, b) => Number(b.count || 0) - Number(a.count || 0))[0];
 
         addKPI(protection, 'Blocked Flows (24h)', fmt(blocked24h), 'Protection outcome volume');
         addKPI(protection, `Blocked Flows (${selectedPeriodDays}d)`, fmt(periodTotal), `${blockedDeltaPeriod >= 0 ? '+' : ''}${blockedDeltaPeriod.toFixed(1)}% vs prior ${selectedPeriodDays}d`);
         addKPI(protection, 'Blocked Flows (30d)', fmt(thirtyDay), 'Aggregated daily totals');
         addKPI(protection, 'Most Active Target (24h)', bestTarget ? `${bestTarget.name}: ${fmt(bestTarget.count)}` : 'n/a', 'Highest blocked flow target');
+        if (stats.rules?.enabled) {
+            addKPI(protection, 'Policy Rulesets', fmt(stats.rules?.rulesets || 0), 'Current total rulesets');
+            addKPI(protection, 'Policy Rules', fmt(stats.rules?.rules || 0), 'Current total rules');
+        }
 
-        const anomalous = (stats.blocked?.targets || []).filter((t) => t.anomalous).length;
+        const anomalous = blockedTargets.filter((t) => t.anomalous).length;
         const venWarn = (stats.ven_status?.warning || []).length;
         const venErr = (stats.ven_status?.error || []).length;
         const tampered = (stats.tampering?.workloads || []).length;
@@ -542,6 +663,9 @@
         addKPI(risk, 'Tampered VENs', fmt(tampered), 'Unique impacted names (24h)', tampered > 0 ? 'risk-bad' : 'risk-good');
         addKPI(risk, 'Pipeline Confidence', pipelineBad === 0 ? 'Healthy' : `${pipelineBad} failing stage(s)`, 'Collector/API stage status', pipelineBad === 0 ? 'risk-good' : 'risk-warn');
         addKPI(risk, 'Blocked Port Daily', targets.blocked_port_daily_enabled === false ? 'Disabled' : 'Enabled', 'Controls blocked-port daily aggregation', targets.blocked_port_daily_enabled === false ? 'risk-warn' : 'risk-good');
+        if (stats.rules?.enabled) {
+            addKPI(risk, 'Policy Metrics', stats.rules?.status?.success ? 'Enabled' : 'Fetch Error', stats.rules?.status?.error || 'Daily policy growth tracking', stats.rules?.status?.success ? 'risk-good' : 'risk-warn');
+        }
 
         const actions = actionItems(stats, blockedDaily, tamper?.trend_daily || [], selectedPeriodDays);
         if (actionsRoot) {
@@ -552,9 +676,10 @@
             });
         }
         buildBoardSnapshot(stats, blockedDaily, targets, actions, selectedPeriodDays);
-        renderValueRanking(stats, targetDetails, selectedPeriodDays);
+        renderValueRanking(blockedTargets, targetDetails, selectedPeriodDays);
         renderNarrativeSummary(buildNarrativeSummary(stats, blockedDaily, actions, selectedPeriodDays));
         renderChart(blockedDaily);
+        renderPolicyChart(policyRulesets?.trend_daily || policyRulesets?.trend || [], policyRules?.trend_daily || policyRules?.trend || []);
 
         if (boardMode && queryAutoprint()) {
             setTimeout(() => window.print(), 250);
@@ -577,8 +702,6 @@
         syncPeriodInURL();
         if (boardMode) {
             document.body.classList.add('board-mode');
-            const title = document.getElementById('page-title');
-            if (title) title.innerText = 'Executive Board Summary';
             const boardBtn = document.getElementById('btn-board');
             if (boardBtn) {
                 boardBtn.textContent = 'Print Board PDF';
