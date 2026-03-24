@@ -44,6 +44,9 @@ Experimental feature branch updates (not merged to stable main):
 - Added `traffic_targets[].kind = "all"` support:
   - runs environment-wide blocked query with blank source/destination filters
   - target name is optional; defaults to `ALL-BLOCKED-TRAFFIC`
+- Added comma-separated multi-label target support in `traffic_targets[].name`:
+  - example: `A-Daily, E-Production`
+  - matcher applies all listed labels together for target scoping.
 
 ### Blocked Tile Warmup Consistency
 - Warmup current view now shows `baseline + incremental` so tiles no longer show `0` while recent warmup increment is non-zero.

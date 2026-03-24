@@ -325,6 +325,7 @@ Optional source exclusions (leave empty to disable exclusions):
 - `label`: resolve only as label
 - `auto`: try label first, then label group
 - `all`: run environment-wide blocked query with blank source/destination filters (name optional; defaults to `ALL-BLOCKED-TRAFFIC`)
+- Multi-label target: use comma-separated names in one target (for example `A-Daily, E-Production`) to match flows scoped by all listed labels.
 
 Optional per-target blocked anomaly overrides:
 - `blocked_ma_window`: MA window points for this target only (2-288)

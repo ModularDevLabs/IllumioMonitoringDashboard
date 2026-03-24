@@ -77,6 +77,7 @@ const minimumAPIRPMOnThrottle = 300
 const defaultAPIBurst = 30
 const perfSampleWindowSize = 256
 const defaultLogFileName = "illumiomonitoringdashboard.log"
+const maxMultiLabelClauses = 2000
 
 type Config struct {
 	PCEURL                      string          `json:"pce_url"`
@@ -6948,18 +6949,18 @@ func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
 
 func getBlockedCountForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, error) {
 	if isAllTrafficTarget(target) {
-		return performAsyncTrafficQueryWindow(baseURL, nil, sourceExcludeHRefs, target.Name+"_all", startUTC, endUTC, false)
+		return performAsyncTrafficQueryWindowWithInclude(baseURL, nil, sourceExcludeHRefs, target.Name+"_all", startUTC, endUTC, false)
 	}
-	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
+	includeAny, err := buildTargetIncludeAny(baseURL, target)
 	if err != nil {
 		return trafficQueryResult{}, err
 	}
-	runBothDirections := func(labelHRefs []string, queryName string) (trafficQueryResult, error) {
-		sourceRes, err := performAsyncTrafficQueryWindow(baseURL, labelHRefs, sourceExcludeHRefs, queryName+"_src", startUTC, endUTC, true)
+	runBothDirections := func(includeAny []interface{}, queryName string) (trafficQueryResult, error) {
+		sourceRes, err := performAsyncTrafficQueryWindowWithInclude(baseURL, includeAny, sourceExcludeHRefs, queryName+"_src", startUTC, endUTC, true)
 		if err != nil {
 			return trafficQueryResult{}, err
 		}
-		destRes, err := performAsyncTrafficQueryWindow(baseURL, labelHRefs, sourceExcludeHRefs, queryName+"_dst", startUTC, endUTC, false)
+		destRes, err := performAsyncTrafficQueryWindowWithInclude(baseURL, includeAny, sourceExcludeHRefs, queryName+"_dst", startUTC, endUTC, false)
 		if err != nil {
 			return trafficQueryResult{}, err
 		}
@@ -6972,7 +6973,7 @@ func getBlockedCountForTargetWindow(baseURL string, target TrafficTarget, startU
 		}
 		return combined, nil
 	}
-	return runBothDirections(labelHRefs, target.Name)
+	return runBothDirections(includeAny, target.Name)
 }
 
 func getBlockedCountAndPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, error) {
@@ -6982,18 +6983,18 @@ func getBlockedCountAndPortCountsForTargetWindow(baseURL string, target TrafficT
 
 func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
 	if isAllTrafficTarget(target) {
-		res, ports, hosts, samples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL, nil, sourceExcludeHRefs, target.Name+"_combined_all", startUTC, endUTC, false)
+		res, ports, hosts, samples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, nil, true, sourceExcludeHRefs, target.Name+"_combined_all", startUTC, endUTC, false)
 		return res, ports, hosts, samples, err
 	}
-	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
+	includeAny, err := buildTargetIncludeAny(baseURL, target)
 	if err != nil {
 		return trafficQueryResult{}, nil, nil, nil, err
 	}
-	srcRes, srcPorts, srcHosts, srcSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_src", startUTC, endUTC, true)
+	srcRes, srcPorts, srcHosts, srcSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, false, sourceExcludeHRefs, target.Name+"_combined_src", startUTC, endUTC, true)
 	if err != nil {
 		return trafficQueryResult{}, nil, nil, nil, err
 	}
-	dstRes, dstPorts, dstHosts, dstSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_combined_dst", startUTC, endUTC, false)
+	dstRes, dstPorts, dstHosts, dstSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, false, sourceExcludeHRefs, target.Name+"_combined_dst", startUTC, endUTC, false)
 	if err != nil {
 		return trafficQueryResult{}, nil, nil, nil, err
 	}
@@ -7226,17 +7227,17 @@ func collectBlockedTargetsWithPacing(
 
 func getBlockedPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (map[string]int, error) {
 	if isAllTrafficTarget(target) {
-		return performAsyncTrafficQueryWindowPortCounts(baseURL, nil, sourceExcludeHRefs, target.Name+"_ports_all", startUTC, endUTC, false)
+		return performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, nil, sourceExcludeHRefs, target.Name+"_ports_all", startUTC, endUTC, false)
 	}
-	labelHRefs, err := getBlockedCountTargetLabelHRefs(baseURL, target)
+	includeAny, err := buildTargetIncludeAny(baseURL, target)
 	if err != nil {
 		return nil, err
 	}
-	sourceMap, err := performAsyncTrafficQueryWindowPortCounts(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_ports_src", startUTC, endUTC, true)
+	sourceMap, err := performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAny, sourceExcludeHRefs, target.Name+"_ports_src", startUTC, endUTC, true)
 	if err != nil {
 		return nil, err
 	}
-	destMap, err := performAsyncTrafficQueryWindowPortCounts(baseURL, labelHRefs, sourceExcludeHRefs, target.Name+"_ports_dst", startUTC, endUTC, false)
+	destMap, err := performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAny, sourceExcludeHRefs, target.Name+"_ports_dst", startUTC, endUTC, false)
 	if err != nil {
 		return nil, err
 	}
@@ -7508,6 +7509,121 @@ func resolveSourceExclusionHRefsBestEffort(baseURL string, exclusions []TrafficT
 	return hrefs
 }
 
+func splitTargetComponents(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		name := strings.TrimSpace(p)
+		if name == "" {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+func includeAnyFromLabelHRefs(labelHRefs []string) []interface{} {
+	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
+	seen := make(map[string]struct{}, len(labelHRefs))
+	for _, h := range labelHRefs {
+		if strings.TrimSpace(h) == "" {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
+	}
+	includeAny := make([]interface{}, 0, len(includeList))
+	for _, item := range includeList {
+		includeAny = append(includeAny, []interface{}{item})
+	}
+	return includeAny
+}
+
+func buildTargetIncludeAny(baseURL string, target TrafficTarget) ([]interface{}, error) {
+	if isAllTrafficTarget(target) {
+		return nil, nil
+	}
+	components := splitTargetComponents(target.Name)
+	if len(components) == 0 {
+		return nil, fmt.Errorf("target name is empty")
+	}
+	if len(components) == 1 {
+		hrefs, err := getBlockedCountTargetLabelHRefs(baseURL, TrafficTarget{Name: components[0], Kind: target.Kind})
+		if err != nil {
+			return nil, err
+		}
+		return includeAnyFromLabelHRefs(hrefs), nil
+	}
+
+	componentHRefs := make([][]string, 0, len(components))
+	for _, comp := range components {
+		hrefs, err := getBlockedCountTargetLabelHRefs(baseURL, TrafficTarget{Name: comp, Kind: target.Kind})
+		if err != nil {
+			return nil, fmt.Errorf("component %q: %w", comp, err)
+		}
+		if len(hrefs) == 0 {
+			return nil, fmt.Errorf("component %q resolved to no labels", comp)
+		}
+		seen := map[string]struct{}{}
+		uniq := make([]string, 0, len(hrefs))
+		for _, h := range hrefs {
+			h = strings.TrimSpace(h)
+			if h == "" {
+				continue
+			}
+			if _, ok := seen[h]; ok {
+				continue
+			}
+			seen[h] = struct{}{}
+			uniq = append(uniq, h)
+		}
+		if len(uniq) == 0 {
+			return nil, fmt.Errorf("component %q resolved to no labels", comp)
+		}
+		sort.Strings(uniq)
+		componentHRefs = append(componentHRefs, uniq)
+	}
+
+	clauses := [][]string{{}}
+	for _, hrefs := range componentHRefs {
+		next := make([][]string, 0, len(clauses)*len(hrefs))
+		for _, clause := range clauses {
+			for _, href := range hrefs {
+				c := make([]string, 0, len(clause)+1)
+				c = append(c, clause...)
+				exists := false
+				for _, existing := range c {
+					if existing == href {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					c = append(c, href)
+				}
+				next = append(next, c)
+				if len(next) > maxMultiLabelClauses {
+					return nil, fmt.Errorf("multilabel target expands to too many clauses (%d+); simplify target", maxMultiLabelClauses)
+				}
+			}
+		}
+		clauses = next
+	}
+
+	includeAny := make([]interface{}, 0, len(clauses))
+	for _, clause := range clauses {
+		andClause := make([]interface{}, 0, len(clause))
+		for _, href := range clause {
+			andClause = append(andClause, map[string]interface{}{"label": map[string]string{"href": href}})
+		}
+		includeAny = append(includeAny, andClause)
+	}
+	return includeAny, nil
+}
+
 func getBlockedCountTargetLabelHRefs(baseURL string, target TrafficTarget) ([]string, error) {
 	kind := strings.ToLower(strings.TrimSpace(target.Kind))
 	if kind == "" {
@@ -7537,23 +7653,7 @@ func getBlockedCountTargetLabelHRefs(baseURL string, target TrafficTarget) ([]st
 	}
 }
 
-func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
-	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
-	seen := make(map[string]struct{}, len(labelHRefs))
-	for _, h := range labelHRefs {
-		if h == "" {
-			continue
-		}
-		if _, ok := seen[h]; ok {
-			continue
-		}
-		seen[h] = struct{}{}
-		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
-	}
-	includeAny := make([]interface{}, 0, len(includeList))
-	for _, item := range includeList {
-		includeAny = append(includeAny, []interface{}{item})
-	}
+func performAsyncTrafficQueryWindowWithInclude(baseURL string, includeAny []interface{}, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
 	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
 	for _, h := range sourceExcludeHRefs {
 		if strings.TrimSpace(h) == "" {
@@ -7629,23 +7729,11 @@ func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceE
 	return trafficQueryResult{}, fmt.Errorf("async job timed out")
 }
 
-func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
-	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
-	seen := make(map[string]struct{}, len(labelHRefs))
-	for _, h := range labelHRefs {
-		if h == "" {
-			continue
-		}
-		if _, ok := seen[h]; ok {
-			continue
-		}
-		seen[h] = struct{}{}
-		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
-	}
-	includeAny := make([]interface{}, 0, len(includeList))
-	for _, item := range includeList {
-		includeAny = append(includeAny, []interface{}{item})
-	}
+func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
+	return performAsyncTrafficQueryWindowWithInclude(baseURL, includeAnyFromLabelHRefs(labelHRefs), sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
+}
+
+func performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL string, includeAny []interface{}, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
 	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
 	for _, h := range sourceExcludeHRefs {
 		if strings.TrimSpace(h) == "" {
@@ -7710,28 +7798,16 @@ func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []strin
 	return nil, fmt.Errorf("async job timed out")
 }
 
+func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
+	return performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAnyFromLabelHRefs(labelHRefs), sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
+}
+
 func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, error) {
 	res, ports, _, _, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
 	return res, ports, err
 }
 
-func performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
-	includeList := make([]map[string]interface{}, 0, len(labelHRefs))
-	seen := make(map[string]struct{}, len(labelHRefs))
-	for _, h := range labelHRefs {
-		if h == "" {
-			continue
-		}
-		if _, ok := seen[h]; ok {
-			continue
-		}
-		seen[h] = struct{}{}
-		includeList = append(includeList, map[string]interface{}{"label": map[string]string{"href": h}})
-	}
-	includeAny := make([]interface{}, 0, len(includeList))
-	for _, item := range includeList {
-		includeAny = append(includeAny, []interface{}{item})
-	}
+func performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL string, includeAny []interface{}, allScope bool, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
 	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
 	for _, h := range sourceExcludeHRefs {
 		if strings.TrimSpace(h) == "" {
@@ -7806,7 +7882,7 @@ func performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL string, lab
 				res.Warning = fmt.Sprintf("result may be truncated at max_results=%d", trafficQueryMaxResults)
 			}
 			samples := extractBlockedFlowSamples(rows, queryName, endUTC)
-			hosts := aggregateHostCounts(rows, asSource, len(labelHRefs) == 0)
+			hosts := aggregateHostCounts(rows, asSource, allScope)
 			return res, aggregatePortCounts(rows), hosts, samples, nil
 		case "failed":
 			return trafficQueryResult{}, nil, nil, nil, fmt.Errorf("async job failed: %s", statusMessage(status))
@@ -7814,6 +7890,11 @@ func performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL string, lab
 		time.Sleep(2 * time.Second)
 	}
 	return trafficQueryResult{}, nil, nil, nil, fmt.Errorf("async job timed out")
+}
+
+func performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
+	includeAny := includeAnyFromLabelHRefs(labelHRefs)
+	return performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, len(labelHRefs) == 0, sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
 }
 
 func getAsyncQueryResultRows(jobURL string) ([]map[string]interface{}, error) {
