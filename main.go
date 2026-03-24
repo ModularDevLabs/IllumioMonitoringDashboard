@@ -2001,12 +2001,31 @@ func targetKeyForReconcile(t TrafficTarget) string {
 	if name == "" {
 		return ""
 	}
-	kind := strings.ToLower(strings.TrimSpace(t.Kind))
+	kind := normalizeTrafficTargetKind(t.Kind, t.Name)
 	return kind + ":" + name
 }
 
+func normalizeTrafficTargetKind(kindRaw, nameRaw string) string {
+	kind := strings.ToLower(strings.TrimSpace(kindRaw))
+	if strings.HasPrefix(kind, "all") {
+		return "all"
+	}
+	switch kind {
+	case "", "auto", "label", "label_group":
+		if kind == "" && strings.EqualFold(strings.TrimSpace(nameRaw), allBlockedTargetDefaultName) {
+			return "all"
+		}
+		return kind
+	default:
+		if strings.EqualFold(strings.TrimSpace(nameRaw), allBlockedTargetDefaultName) {
+			return "all"
+		}
+		return "auto"
+	}
+}
+
 func isAllTrafficTarget(t TrafficTarget) bool {
-	return strings.EqualFold(strings.TrimSpace(t.Kind), "all")
+	return normalizeTrafficTargetKind(t.Kind, t.Name) == "all"
 }
 
 func (m blockedHistoryReconcileMarker) HasTarget(key string) bool {
@@ -6913,12 +6932,7 @@ func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, 
 func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
 	cleaned := make([]TrafficTarget, 0, len(targets))
 	for _, t := range targets {
-		kind := strings.ToLower(strings.TrimSpace(t.Kind))
-		switch kind {
-		case "", "auto", "label", "label_group", "all":
-		default:
-			kind = "auto"
-		}
+		kind := normalizeTrafficTargetKind(t.Kind, t.Name)
 		if kind == "" {
 			kind = "auto"
 		}
@@ -7522,38 +7536,6 @@ func splitTargetComponents(raw string) []string {
 	return out
 }
 
-func combineTargetIncludeClauses(componentHRefs [][]string) ([][]string, error) {
-	clauses := [][]string{{}}
-	for _, hrefs := range componentHRefs {
-		next := make([][]string, 0, len(clauses)*len(hrefs))
-		for _, clause := range clauses {
-			for _, href := range hrefs {
-				if strings.TrimSpace(href) == "" {
-					continue
-				}
-				c := make([]string, 0, len(clause)+1)
-				c = append(c, clause...)
-				exists := false
-				for _, v := range c {
-					if v == href {
-						exists = true
-						break
-					}
-				}
-				if !exists {
-					c = append(c, href)
-				}
-				next = append(next, c)
-				if len(next) > maxMultiLabelClauses {
-					return nil, fmt.Errorf("multilabel target expands to too many query clauses (%d+); simplify target or use fewer groups", maxMultiLabelClauses)
-				}
-			}
-		}
-		clauses = next
-	}
-	return clauses, nil
-}
-
 func buildTargetIncludeAny(baseURL string, target TrafficTarget) ([]interface{}, []string, error) {
 	if isAllTrafficTarget(target) {
 		return nil, nil, nil
@@ -7562,7 +7544,6 @@ func buildTargetIncludeAny(baseURL string, target TrafficTarget) ([]interface{},
 	if len(components) == 0 {
 		return nil, nil, fmt.Errorf("target name is empty")
 	}
-	componentHRefs := make([][]string, 0, len(components))
 	flatSet := map[string]struct{}{}
 	for _, comp := range components {
 		hrefs, err := getBlockedCountTargetLabelHRefs(baseURL, TrafficTarget{Name: comp, Kind: target.Kind})
@@ -7572,7 +7553,6 @@ func buildTargetIncludeAny(baseURL string, target TrafficTarget) ([]interface{},
 		if len(hrefs) == 0 {
 			return nil, nil, fmt.Errorf("target component %q resolved to no labels", comp)
 		}
-		componentHRefs = append(componentHRefs, hrefs)
 		for _, h := range hrefs {
 			if strings.TrimSpace(h) != "" {
 				flatSet[h] = struct{}{}
@@ -7585,37 +7565,18 @@ func buildTargetIncludeAny(baseURL string, target TrafficTarget) ([]interface{},
 	}
 	sort.Strings(flat)
 
-	// Single-component targets preserve prior OR semantics.
-	if len(componentHRefs) == 1 {
-		includeAny := make([]interface{}, 0, len(componentHRefs[0]))
-		for _, h := range componentHRefs[0] {
-			if strings.TrimSpace(h) == "" {
-				continue
-			}
-			includeAny = append(includeAny, []interface{}{
-				map[string]interface{}{"label": map[string]string{"href": h}},
-			})
+	includeAny := make([]interface{}, 0, len(flat))
+	for _, h := range flat {
+		if strings.TrimSpace(h) == "" {
+			continue
 		}
-		return includeAny, flat, nil
-	}
-
-	clauses, err := combineTargetIncludeClauses(componentHRefs)
-	if err != nil {
-		return nil, nil, err
-	}
-	includeAny := make([]interface{}, 0, len(clauses))
-	for _, clause := range clauses {
-		items := make([]interface{}, 0, len(clause))
-		for _, h := range clause {
-			items = append(items, map[string]interface{}{"label": map[string]string{"href": h}})
-		}
-		includeAny = append(includeAny, items)
+		includeAny = append(includeAny, map[string]interface{}{"label": map[string]string{"href": h}})
 	}
 	return includeAny, flat, nil
 }
 
 func getBlockedCountTargetLabelHRefs(baseURL string, target TrafficTarget) ([]string, error) {
-	kind := strings.ToLower(strings.TrimSpace(target.Kind))
+	kind := normalizeTrafficTargetKind(target.Kind, target.Name)
 	if kind == "" {
 		kind = "auto"
 	}
