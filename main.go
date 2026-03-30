@@ -963,6 +963,7 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 	target := strings.TrimSpace(r.URL.Query().Get("target"))
 	includePorts := parseBoolQuery(r.URL.Query().Get("include_ports"))
 	includeLivePorts := parseBoolQuery(r.URL.Query().Get("include_live_ports"))
+	includeLiveHosts := parseBoolQuery(r.URL.Query().Get("include_live_hosts"))
 
 	statsMutex.RLock()
 	snapshot := currentStats
@@ -1129,7 +1130,7 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		}
 		if resp.BlockedHostMetrics && includePorts && resp.BlockedHostRetention != "daily_only" {
 			resp.BlockedHosts24h = blockedHost24hAggregate(target)
-			if len(resp.BlockedHosts24h) == 0 && baseURL != "" {
+			if includeLiveHosts && len(resp.BlockedHosts24h) == 0 && baseURL != "" {
 				if tt, ok := configuredTrafficTargetByName(target); ok {
 					sourceExclusions := configuredSourceExclusions()
 					sourceExcludeHRefs := resolveSourceExclusionHRefsBestEffort(baseURL, sourceExclusions)
@@ -1144,6 +1145,9 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		}
 		if includeLivePorts {
 			log.Printf("[DRILLDOWN] include_live_ports requested for target=%s but live query path is disabled; serving persisted history only", target)
+		}
+		if includeLiveHosts && len(resp.BlockedHosts24h) == 0 {
+			log.Printf("[DRILLDOWN] include_live_hosts requested for target=%s but no live host data was returned", target)
 		}
 		resp.BlockedMAWindow = window
 		resp.BlockedAnomalyPct = pct
