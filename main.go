@@ -224,6 +224,7 @@ type DrilldownResponse struct {
 	MovingAvgValue          float64          `json:"moving_avg_value,omitempty"`
 	Baseline24h             int              `json:"baseline_24h,omitempty"`
 	BaselineCapturedUTC     *time.Time       `json:"baseline_captured_utc,omitempty"`
+	BlockedPorts24h         []PortCount      `json:"blocked_ports_24h,omitempty"`
 	BlockedPortsDaily       []BlockedPortDay `json:"blocked_ports_daily,omitempty"`
 	BlockedPortDailyEnabled bool             `json:"blocked_port_daily_enabled"`
 	BlockedHostsDaily       []BlockedHostDay `json:"blocked_hosts_daily,omitempty"`
@@ -1120,6 +1121,7 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.BlockedHostMetrics = configuredBlockedHostMetricsEnabled()
 		resp.BlockedHostRetention = configuredBlockedHostRetentionMode()
 		if resp.BlockedPortDailyEnabled && includePorts {
+			resp.BlockedPorts24h = blockedPort24hAggregate(target)
 			resp.BlockedPortsDaily = blockedPortDailySeries(target, configuredHistoryDays())
 		}
 		if resp.BlockedHostMetrics && includePorts && (resp.BlockedHostRetention == "rolling_24h_plus_daily" || resp.BlockedHostRetention == "daily_only") {
@@ -3882,6 +3884,18 @@ func blockedPortDailySeries(target string, keepDays int) []BlockedPortDay {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.Before(out[j].Timestamp) })
+	return out
+}
+
+func blockedPort24hAggregate(target string) []PortCount {
+	if !blockedPortStoreIsSQLite() {
+		return nil
+	}
+	out, err := sqliteBlockedPort24hAggregate(target, time.Now().UTC().Add(-24*time.Hour))
+	if err != nil {
+		log.Printf("[HISTORY] blocked port 24h aggregate failed target=%s err=%v", target, err)
+		return nil
+	}
 	return out
 }
 
@@ -9666,6 +9680,49 @@ func sqliteLoadBlockedHostDaily() ([]dailyBlockedHostRecord, error) {
 		out = append(out, rec)
 	}
 	return out, rows.Err()
+}
+
+func sqliteBlockedPort24hAggregate(target string, sinceUTC time.Time) ([]PortCount, error) {
+	if metricsDB == nil {
+		return nil, errors.New("sqlite not initialized")
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, nil
+	}
+	sinceUnix := sinceUTC.UTC().Unix()
+	rows, err := metricsDB.Query(`
+		SELECT port, COALESCE(SUM(count), 0)
+		FROM blocked_ports_5m
+		WHERE target = ? AND ts_unix >= ?
+		GROUP BY port
+	`, target, sinceUnix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]PortCount, 0, 256)
+	for rows.Next() {
+		var rec PortCount
+		if err := rows.Scan(&rec.Key, &rec.Count); err != nil {
+			return nil, err
+		}
+		rec.Key = strings.TrimSpace(rec.Key)
+		if rec.Key == "" || rec.Count <= 0 {
+			continue
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count == out[j].Count {
+			return out[i].Key < out[j].Key
+		}
+		return out[i].Count > out[j].Count
+	})
+	return out, nil
 }
 
 func sqliteBlockedHost24hAggregate(target string, sinceUTC time.Time) ([]HostCount, error) {

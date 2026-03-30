@@ -178,7 +178,7 @@
             </div>
             <div id="blocked-ports-wrap" class="d-none mb-3">
                 <details class="section-toggle" id="blocked-ports-section" open>
-                    <summary>Blocked Ports (Daily Aggregate)</summary>
+                    <summary>Blocked Ports (Aggregate)</summary>
                     <div class="text-muted small mb-2 mt-1" id="blocked-ports-meta"></div>
                     <div class="table-responsive">
                         <table class="table table-sm">
@@ -194,7 +194,7 @@
                 </details>
             </div>
             <div id="blocked-hosts-wrap" class="d-none mb-3">
-                <h6>Blocked Hostnames (Daily Aggregate)</h6>
+                <h6>Blocked Hostnames (Aggregate)</h6>
                 <div class="text-muted small mb-2" id="blocked-hosts-meta"></div>
                 <div class="table-responsive">
                     <table class="table table-sm">
@@ -231,6 +231,7 @@
         let blockedAnomalyPct = 50;
         let blockedAnomalySource = '5m';
         let blockedPortDailyEnabled = true;
+        let blockedPorts24h = [];
         let blockedPortsDaily = [];
         let blockedHostMetricsEnabled = false;
         let blockedHostRetentionMode = 'rolling_24h_plus_daily';
@@ -484,6 +485,31 @@
                 meta.innerText = 'Disabled.';
                 return;
             }
+            if (trendMode === 'raw') {
+                const rows24 = (blockedPorts24h || [])
+                    .map((p) => ({ key: String(p.key || '').trim(), count: Number(p.count || 0) }))
+                    .filter((p) => p.key && Number.isFinite(p.count) && p.count > 0)
+                    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+                body.innerHTML = '';
+                if (!rows24.length) {
+                    body.innerHTML = '<tr><td colspan="2" class="text-muted">No blocked ports recorded in rolling 24h snapshots.</td></tr>';
+                } else {
+                    rows24.forEach((r) => {
+                        const tr = document.createElement('tr');
+                        const keyTd = document.createElement('td');
+                        keyTd.className = 'mono';
+                        keyTd.innerText = String(r.key || '');
+                        const countTd = document.createElement('td');
+                        countTd.className = 'text-end';
+                        countTd.innerText = Number(r.count || 0).toLocaleString();
+                        tr.appendChild(keyTd);
+                        tr.appendChild(countTd);
+                        body.appendChild(tr);
+                    });
+                }
+                meta.innerText = 'All blocked ports across rolling 24h (5m snapshots).';
+                return;
+            }
             const cutoff = Date.now() - dayRange * 24 * 60 * 60 * 1000;
             const totals = new Map();
             (blockedPortsDaily || []).forEach((d) => {
@@ -533,7 +559,12 @@
                 meta.innerText = 'Disabled.';
                 return;
             }
-            if (blockedHostRetentionMode === 'rolling_24h_only') {
+            if (trendMode === 'raw') {
+                if (blockedHostRetentionMode === 'daily_only') {
+                    body.innerHTML = '<tr><td colspan="4" class="text-muted">Rolling 24h host snapshots are disabled in daily-only retention mode.</td></tr>';
+                    meta.innerText = 'Daily-only retention mode: rolling 24h host snapshots unavailable.';
+                    return;
+                }
                 const rows24 = (blockedHosts24h || [])
                     .map((h) => ({
                         hostname: String(h.hostname || '').trim(),
@@ -569,6 +600,11 @@
                     });
                 }
                 meta.innerText = 'All blocked hostnames across rolling 24h (5m snapshots).';
+                return;
+            }
+            if (blockedHostRetentionMode === 'rolling_24h_only') {
+                body.innerHTML = '<tr><td colspan="4" class="text-muted">Daily host aggregation is unavailable in rolling-24h-only retention mode.</td></tr>';
+                meta.innerText = 'Rolling-24h-only retention mode: switch to 24h (5m) view for host aggregates.';
                 return;
             }
             if (blockedHostRetentionMode === 'daily_only') {
@@ -701,6 +737,7 @@
                 trendMA24h = d.trend_ma_24h || [];
                 trendMADaily = d.trend_ma_daily || [];
                 blockedPortDailyEnabled = d.blocked_port_daily_enabled !== false;
+                blockedPorts24h = d.blocked_ports_24h || [];
                 blockedPortsDaily = d.blocked_ports_daily || [];
                 blockedHostMetricsEnabled = d.blocked_host_metrics_enabled === true;
                 blockedHostRetentionMode = normalizeBlockedHostRetentionModeClient(d.blocked_host_retention_mode || 'rolling_24h_plus_daily');
@@ -720,6 +757,7 @@
                 renderTrend(trendPoints, d.target ? `${d.target} blocked traffic` : 'Blocked traffic', { hideList: true, showControls: true });
                 return;
             }
+            blockedPorts24h = [];
             blockedPortsDaily = [];
             blockedPortDailyEnabled = true;
             blockedHostMetricsEnabled = false;
