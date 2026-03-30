@@ -178,7 +178,7 @@
             </div>
             <div id="blocked-ports-wrap" class="d-none mb-3">
                 <details class="section-toggle" id="blocked-ports-section" open>
-                    <summary>Blocked Ports (Aggregate)</summary>
+                    <summary id="blocked-ports-title">Blocked Ports (Aggregate)</summary>
                     <div class="text-muted small mb-2 mt-1" id="blocked-ports-meta"></div>
                     <div class="table-responsive">
                         <table class="table table-sm">
@@ -194,7 +194,7 @@
                 </details>
             </div>
             <div id="blocked-hosts-wrap" class="d-none mb-3">
-                <h6>Blocked Hostnames (Aggregate)</h6>
+                <h6 id="blocked-hosts-title">Blocked Hostnames (Aggregate)</h6>
                 <div class="text-muted small mb-2" id="blocked-hosts-meta"></div>
                 <div class="table-responsive">
                     <table class="table table-sm">
@@ -475,11 +475,13 @@
             const wrap = document.getElementById('blocked-ports-wrap');
             const body = document.getElementById('blocked-ports-body');
             const meta = document.getElementById('blocked-ports-meta');
+            const title = document.getElementById('blocked-ports-title');
             if (currentMetric !== 'blocked_target') {
                 wrap.classList.add('d-none');
                 return;
             }
             wrap.classList.remove('d-none');
+            if (title) title.innerText = trendMode === 'raw' ? 'Blocked Ports (24h Aggregate)' : 'Blocked Ports (Daily Aggregate)';
             if (!blockedPortDailyEnabled) {
                 body.innerHTML = '<tr><td colspan="2" class="text-muted">Blocked port daily aggregation is disabled in settings.</td></tr>';
                 meta.innerText = 'Disabled.';
@@ -507,7 +509,7 @@
                         body.appendChild(tr);
                     });
                 }
-                meta.innerText = 'All blocked ports across rolling 24h (5m snapshots).';
+                meta.innerText = 'All blocked ports across the last 24 hours.';
                 return;
             }
             const cutoff = Date.now() - dayRange * 24 * 60 * 60 * 1000;
@@ -549,11 +551,13 @@
             const wrap = document.getElementById('blocked-hosts-wrap');
             const body = document.getElementById('blocked-hosts-body');
             const meta = document.getElementById('blocked-hosts-meta');
+            const title = document.getElementById('blocked-hosts-title');
             if (currentMetric !== 'blocked_target') {
                 wrap.classList.add('d-none');
                 return;
             }
             wrap.classList.remove('d-none');
+            if (title) title.innerText = trendMode === 'raw' ? 'Blocked Hostnames (24h Aggregate)' : 'Blocked Hostnames (Daily Aggregate)';
             if (!blockedHostMetricsEnabled) {
                 body.innerHTML = '<tr><td colspan="4" class="text-muted">Blocked hostname metrics are disabled in settings.</td></tr>';
                 meta.innerText = 'Disabled.';
@@ -599,7 +603,7 @@
                         body.appendChild(tr);
                     });
                 }
-                meta.innerText = 'All blocked hostnames across rolling 24h (5m snapshots).';
+                meta.innerText = 'All blocked hostnames across the last 24 hours.';
                 return;
             }
             if (blockedHostRetentionMode === 'rolling_24h_only') {
@@ -716,13 +720,15 @@
                 return;
             }
             const d = await r.json();
-            try {
-                const s = await fetch('/api/stats?ts=' + Date.now(), { cache: 'no-store' });
-                if (s.ok) {
-                    const sj = await s.json();
-                    lastSnapshotTS = sj.timestamp;
-                }
-            } catch (e) {}
+            fetch('/api/stats?ts=' + Date.now(), { cache: 'no-store' })
+                .then((s) => (s.ok ? s.json() : null))
+                .then((sj) => {
+                    if (sj && sj.timestamp) {
+                        lastSnapshotTS = sj.timestamp;
+                        updateRefreshMeta();
+                    }
+                })
+                .catch(() => {});
             nextRefreshAt = Date.now() + 300000;
             updateRefreshMeta();
             currentMetric = d.metric || metric;
