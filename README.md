@@ -503,6 +503,8 @@ Use `/settings` to manage webhook alerting:
   - body: `{ "pce_url": "...", "org_id": "1", "api_key": "...", "api_secret": "..." }`
 - `POST /api/webhook/test`:
   - Sends test webhook events for all enabled webhook configs (anomaly webhook and/or daily reconcile summary webhook)
+- `POST /api/webhook/daily-summary/send`:
+  - Sends blocked daily reconcile summary immediately for the previous local-day window using current stored daily blocked totals
 - `GET /api/anomalies/history`:
   - Returns persisted anomaly trigger/resolved transitions
   - Includes blocked target, VEN warning/error, and tampering anomaly transitions

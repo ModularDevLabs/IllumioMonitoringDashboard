@@ -450,6 +450,7 @@
                 <div class="d-flex flex-wrap gap-2 mb-3">
                     <button class="btn btn-outline-primary btn-sm" id="btn-save-alerts" type="button">Save Alerting</button>
                     <button class="btn btn-outline-warning btn-sm" id="btn-test-webhook" type="button">Send Test Webhooks</button>
+                    <button class="btn btn-outline-success btn-sm" id="btn-send-daily-summary" type="button">Send Daily Summary Now</button>
                 </div>
 
                 <div class="mb-2">
@@ -1156,6 +1157,17 @@
             showMsg('msg-alerts', d.message || 'Webhook test sent.', 'success');
         }
 
+        async function sendDailySummaryNow() {
+            const r = await fetch('/api/webhook/daily-summary/send', { method: 'POST' });
+            if (!r.ok) {
+                const txt = await r.text();
+                showMsg('msg-alerts', `Daily summary send failed: ${txt || r.status}`, 'danger');
+                return;
+            }
+            const d = await r.json().catch(() => ({}));
+            showMsg('msg-alerts', d.message || 'Daily summary sent.', 'success');
+        }
+
         UICommon.applyTheme(THEME_KEY, 'btn-theme');
         document.getElementById('btn-theme').addEventListener('click', () => {
             UICommon.setTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark', THEME_KEY, 'btn-theme');
@@ -1179,6 +1191,7 @@
         document.getElementById('btn-reconcile-tampering-history').addEventListener('click', triggerTamperingReconcile);
         document.getElementById('btn-save-alerts').addEventListener('click', saveAlertSettings);
         document.getElementById('btn-test-webhook').addEventListener('click', testWebhook);
+        document.getElementById('btn-send-daily-summary').addEventListener('click', sendDailySummaryNow);
 
         Promise.all([loadTrafficSettings(), loadAlertSettings(), loadCredentialSettings(), loadReconcileStatus(), loadTamperingReconcileStatus()]).catch((e) => {
             showMsg('msg-traffic', e.message, 'danger');

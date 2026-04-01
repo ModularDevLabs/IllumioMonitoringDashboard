@@ -870,6 +870,7 @@ func main() {
 	http.HandleFunc("/api/reconcile/tampering-history", withRequestTiming("api.reconcile.tampering_history", withTrustedOrigin("api.reconcile.tampering_history", handleReconcileTamperingHistory)))
 	http.HandleFunc("/api/reconcile/tampering-history/status", withRequestTiming("api.reconcile.tampering_history_status", handleReconcileTamperingHistoryStatus))
 	http.HandleFunc("/api/webhook/test", withRequestTiming("api.webhook.test", withTrustedOrigin("api.webhook.test", handleWebhookTest)))
+	http.HandleFunc("/api/webhook/daily-summary/send", withRequestTiming("api.webhook.daily_summary.send", withTrustedOrigin("api.webhook.daily_summary.send", handleDailySummaryWebhookSend)))
 	http.HandleFunc("/api/anomalies/history", withRequestTiming("api.anomalies.history", handleAnomalyHistory))
 	http.HandleFunc("/api/diagnostics/perf", withRequestTiming("api.diagnostics.perf", handleDiagnosticsPerf))
 
@@ -2467,6 +2468,57 @@ func handleWebhookTest(w http.ResponseWriter, r *http.Request) {
 		"ok":      true,
 		"sent":    sent,
 		"message": fmt.Sprintf("webhook test sent: %s", strings.Join(sent, ", ")),
+	})
+}
+
+func handleDailySummaryWebhookSend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !configuredDailySummaryWebhookEnabled() {
+		http.Error(w, "daily summary webhook is not enabled", http.StatusBadRequest)
+		return
+	}
+	nowUTC := time.Now().UTC()
+	loc := configuredDayLocation()
+	dayEnd := localDayStart(nowUTC, loc)
+	dayStart := dayEnd.AddDate(0, 0, -1)
+	dayKey := dayStart.Format("2006-01-02")
+	targets := configuredTrafficTargets()
+
+	historyMu.Lock()
+	dayCounts := make(map[string]int, len(blockedDaily[dayKey]))
+	for k, v := range blockedDaily[dayKey] {
+		dayCounts[k] = v
+	}
+	historyMu.Unlock()
+
+	totalTargets := 0
+	reconciledTargets := 0
+	for _, t := range targets {
+		name := strings.TrimSpace(t.Name)
+		if name == "" {
+			continue
+		}
+		totalTargets++
+		if _, ok := dayCounts[name]; ok {
+			reconciledTargets++
+		}
+	}
+	failedTargets := 0
+	if totalTargets > reconciledTargets {
+		failedTargets = totalTargets - reconciledTargets
+	}
+	sendBlockedDailyReconcileSummaryWebhook(dayKey, dayStart.UTC(), dayEnd.UTC(), targets, reconciledTargets, totalTargets, failedTargets)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":               true,
+		"message":          fmt.Sprintf("daily blocked reconcile summary sent for %s", dayKey),
+		"reconcile_day":    dayKey,
+		"reconciled_count": reconciledTargets,
+		"total_targets":    totalTargets,
+		"failed_targets":   failedTargets,
 	})
 }
 
