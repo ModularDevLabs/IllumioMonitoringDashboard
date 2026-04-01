@@ -766,7 +766,7 @@
             blockedHosts24h = [];
             renderBlockedPortsTable();
             renderBlockedHostsTable();
-            if (d.metric === 'ven_warning' || d.metric === 'ven_error') {
+            if (d.metric === 'ven_warning' || d.metric === 'ven_error' || d.metric === 'ven_suspended') {
                 document.getElementById('trend-raw').innerText = '24h (5m)';
                 document.getElementById('trend-sum').innerText = 'Daily';
             }
@@ -806,7 +806,7 @@
                     });
                 }
             }
-            if (d.metric === 'ven_warning' || d.metric === 'ven_error' || String(d.metric || '').startsWith('mode_')) {
+            if (d.metric === 'ven_warning' || d.metric === 'ven_error' || d.metric === 'ven_suspended' || String(d.metric || '').startsWith('mode_')) {
                 trend24h = d.trend_24h || d.trend || [];
                 trendDaily = d.trend_daily || [];
                 trendMA24h = d.trend_ma_24h || [];

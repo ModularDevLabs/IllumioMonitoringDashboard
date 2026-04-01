@@ -269,6 +269,7 @@ type rollingBucket struct {
 	EndUTC             time.Time
 	VENWarningCount    int
 	VENErrorCount      int
+	VENSuspendedCount  int
 	ModeIdleCount      int
 	ModeVisCount       int
 	ModeSelectiveCount int
@@ -303,6 +304,7 @@ type persistedRollingBucket struct {
 	EndUTC             time.Time      `json:"end_utc"`
 	VENWarningCount    int            `json:"ven_warning_count"`
 	VENErrorCount      int            `json:"ven_error_count"`
+	VENSuspendedCount  int            `json:"ven_suspended_count,omitempty"`
 	ModeIdleCount      int            `json:"mode_idle_count"`
 	ModeVisCount       int            `json:"mode_vis_count"`
 	ModeSelectiveCount int            `json:"mode_selective_count"`
@@ -436,6 +438,7 @@ type tamperingHistoryReconcileStatus struct {
 type venDailySnapshot struct {
 	WarningMax       int `json:"warning_max"`
 	ErrorMax         int `json:"error_max"`
+	SuspendedMax     int `json:"suspended_max,omitempty"`
 	TamperingMax     int `json:"tampering_max,omitempty"`
 	RulesetsMax      int `json:"rulesets_max,omitempty"`
 	RulesMax         int `json:"rules_max,omitempty"`
@@ -450,6 +453,7 @@ type venDailyRecord struct {
 	Day              string `json:"day"`
 	WarningMax       int    `json:"warning_max"`
 	ErrorMax         int    `json:"error_max"`
+	SuspendedMax     int    `json:"suspended_max,omitempty"`
 	TamperingMax     int    `json:"tampering_max,omitempty"`
 	RulesetsMax      int    `json:"rulesets_max,omitempty"`
 	RulesMax         int    `json:"rules_max,omitempty"`
@@ -1049,6 +1053,35 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Trend = resp.Trend24h
 	}
+	if metric == "ven_suspended" {
+		window := configuredVENMAWindow()
+		dailyWindow := configuredDailyMAWindow()
+		pct := configuredVENAnomalyPct()
+		baselineSource := configuredVENAnomalyBaselineSource()
+		baselineDays := configuredVENAnomalyBaselineDays()
+		minCoverage := configuredVENAnomalyMinCoveragePct()
+		resp.Trend24h = venTrendSeries("suspended")
+		resp.TrendDaily = venDailyTrendSeries("suspended", configuredHistoryDays())
+		resp.AnomalySource = baselineSource
+		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
+		resp.Anomalous = eval.Anomalous
+		resp.AnomalyReason = eval.Reason
+		resp.AnomalyWindow = eval.Window
+		resp.AnomalyPct = pct
+		resp.AnomalyCoveragePct = eval.CoveragePct
+		resp.LatestValue = eval.Latest
+		resp.MovingAvgValue = eval.Baseline
+		resp.BlockedMAWindow = window
+		resp.BlockedAnomalyPct = pct
+		if baselineSource == "daily" {
+			resp.TrendMA24h = flatTrendLine(resp.Trend24h, eval.Baseline)
+			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
+		} else {
+			resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
+			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
+		}
+		resp.Trend = resp.Trend24h
+	}
 	if metric == "tampering" {
 		window := configuredTamperingMAWindow()
 		dailyWindow := configuredDailyMAWindow()
@@ -1203,6 +1236,9 @@ func handleExportDrilldownCSV(w http.ResponseWriter, r *http.Request) {
 	} else if metric == "ven_error" {
 		trend24h = venTrendSeries("error")
 		trendDaily = venDailyTrendSeries("error", configuredHistoryDays())
+	} else if metric == "ven_suspended" {
+		trend24h = venTrendSeries("suspended")
+		trendDaily = venDailyTrendSeries("suspended", configuredHistoryDays())
 	} else if isEnforcementMetric(metric) {
 		mode := enforcementModeFromMetric(metric)
 		trend24h = modeTrendSeries(mode)
@@ -3053,7 +3089,7 @@ func drilldownData(metric, target string, stats DashboardStats) (string, []strin
 	case "ven_error":
 		return "VEN Errors", append([]string(nil), stats.VENStatus.Error...), venTrendSeries("error")
 	case "ven_suspended":
-		return "Suspended VENs", append([]string(nil), stats.VENStatus.Suspended...), nil
+		return "Suspended VENs", append([]string(nil), stats.VENStatus.Suspended...), venTrendSeries("suspended")
 	case "mode_idle":
 		return "Workloads in Idle Mode", append([]string(nil), stats.Workloads.ModeMembers["idle"]...), modeTrendSeries("idle")
 	case "mode_visibility_only":
@@ -3390,8 +3426,10 @@ func venTrendSeries(kind string) []TrendPoint {
 		v := 0
 		if kind == "warning" {
 			v = b.VENWarningCount
-		} else {
+		} else if kind == "error" {
 			v = b.VENErrorCount
+		} else if kind == "suspended" {
+			v = b.VENSuspendedCount
 		}
 		points = append(points, TrendPoint{
 			Timestamp: b.EndUTC,
@@ -3486,6 +3524,8 @@ func venDailyTrendSeries(kind string, keepDays int) []TrendPoint {
 		v := snap.WarningMax
 		if kind == "error" {
 			v = snap.ErrorMax
+		} else if kind == "suspended" {
+			v = snap.SuspendedMax
 		}
 		points = append(points, TrendPoint{
 			Timestamp: d.Add(12 * time.Hour).UTC(),
@@ -4876,7 +4916,7 @@ func getIllumioStats() DashboardStats {
 		stats.VENStatus.Error = append(stats.VENStatus.Error, venDisplayWithReason(v))
 	}
 	for _, v := range suspendedVENs {
-		stats.VENStatus.Suspended = append(stats.VENStatus.Suspended, venDisplayWithReason(v))
+		stats.VENStatus.Suspended = append(stats.VENStatus.Suspended, venDisplayName(v))
 	}
 	if warnErr != nil || errErr != nil || suspendedErr != nil {
 		errs := make([]string, 0, 3)
@@ -4964,6 +5004,7 @@ func getIllumioStats() DashboardStats {
 		baseline,
 		len(stats.VENStatus.Warning),
 		len(stats.VENStatus.Error),
+		len(stats.VENStatus.Suspended),
 		stats.Workloads.EnforcementModes["idle"],
 		stats.Workloads.EnforcementModes["visibility_only"],
 		stats.Workloads.EnforcementModes["selective"],
@@ -4982,6 +5023,7 @@ func getIllumioStats() DashboardStats {
 	updateVENDailyHistory(nowUTC,
 		len(stats.VENStatus.Warning),
 		len(stats.VENStatus.Error),
+		len(stats.VENStatus.Suspended),
 		tamperingTodayCount,
 		stats.Workloads.EnforcementModes["idle"],
 		stats.Workloads.EnforcementModes["visibility_only"],
@@ -5399,6 +5441,7 @@ func updateRollingAndBuildView(
 	baseline bool,
 	venWarningCount int,
 	venErrorCount int,
+	venSuspendedCount int,
 	modeIdleCount int,
 	modeVisCount int,
 	modeSelectiveCount int,
@@ -5438,6 +5481,7 @@ func updateRollingAndBuildView(
 			EndUTC:             nowUTC,
 			VENWarningCount:    venWarningCount,
 			VENErrorCount:      venErrorCount,
+			VENSuspendedCount:  venSuspendedCount,
 			ModeIdleCount:      modeIdleCount,
 			ModeVisCount:       modeVisCount,
 			ModeSelectiveCount: modeSelectiveCount,
@@ -5453,6 +5497,7 @@ func updateRollingAndBuildView(
 			EndUTC:             nowUTC,
 			VENWarningCount:    venWarningCount,
 			VENErrorCount:      venErrorCount,
+			VENSuspendedCount:  venSuspendedCount,
 			ModeIdleCount:      modeIdleCount,
 			ModeVisCount:       modeVisCount,
 			ModeSelectiveCount: modeSelectiveCount,
@@ -10067,6 +10112,7 @@ func loadVENHistory() {
 		venDaily[day] = venDailySnapshot{
 			WarningMax:       rec.WarningMax,
 			ErrorMax:         rec.ErrorMax,
+			SuspendedMax:     rec.SuspendedMax,
 			TamperingMax:     rec.TamperingMax,
 			RulesetsMax:      rec.RulesetsMax,
 			RulesMax:         rec.RulesMax,
@@ -10144,6 +10190,7 @@ func loadRollingState() {
 			EndUTC:             b.EndUTC.UTC(),
 			VENWarningCount:    b.VENWarningCount,
 			VENErrorCount:      b.VENErrorCount,
+			VENSuspendedCount:  b.VENSuspendedCount,
 			ModeIdleCount:      b.ModeIdleCount,
 			ModeVisCount:       b.ModeVisCount,
 			ModeSelectiveCount: b.ModeSelectiveCount,
@@ -10216,6 +10263,7 @@ func saveRollingState() {
 			EndUTC:             b.EndUTC.UTC(),
 			VENWarningCount:    b.VENWarningCount,
 			VENErrorCount:      b.VENErrorCount,
+			VENSuspendedCount:  b.VENSuspendedCount,
 			ModeIdleCount:      b.ModeIdleCount,
 			ModeVisCount:       b.ModeVisCount,
 			ModeSelectiveCount: b.ModeSelectiveCount,
@@ -10672,6 +10720,7 @@ func saveVENHistory() {
 			Day:              day,
 			WarningMax:       snap.WarningMax,
 			ErrorMax:         snap.ErrorMax,
+			SuspendedMax:     snap.SuspendedMax,
 			TamperingMax:     snap.TamperingMax,
 			RulesetsMax:      snap.RulesetsMax,
 			RulesMax:         snap.RulesMax,
@@ -10700,6 +10749,7 @@ func updateVENDailyHistory(
 	nowUTC time.Time,
 	warningCount int,
 	errorCount int,
+	suspendedCount int,
 	tamperingCount int,
 	modeIdle int,
 	modeVisibility int,
@@ -10718,6 +10768,10 @@ func updateVENDailyHistory(
 	}
 	if errorCount > prev.ErrorMax {
 		prev.ErrorMax = errorCount
+		changed = true
+	}
+	if suspendedCount > prev.SuspendedMax {
+		prev.SuspendedMax = suspendedCount
 		changed = true
 	}
 	if tamperingCount != prev.TamperingMax {
