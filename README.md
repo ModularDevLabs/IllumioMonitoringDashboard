@@ -502,7 +502,7 @@ Use `/settings` to manage webhook alerting:
   - Rotate PCE/API credentials at runtime (applies on next outbound API call)
   - body: `{ "pce_url": "...", "org_id": "1", "api_key": "...", "api_secret": "..." }`
 - `POST /api/webhook/test`:
-  - Sends a test webhook event using current config
+  - Sends test webhook events for all enabled webhook configs (anomaly webhook and/or daily reconcile summary webhook)
 - `GET /api/anomalies/history`:
   - Returns persisted anomaly trigger/resolved transitions
   - Includes blocked target, VEN warning/error, and tampering anomaly transitions

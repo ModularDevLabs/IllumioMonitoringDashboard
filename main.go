@@ -2415,23 +2415,96 @@ func handleWebhookTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !configuredWebhookEnabled() {
-		http.Error(w, "webhook is not enabled", http.StatusBadRequest)
+	if !configuredWebhookEnabled() && !configuredDailySummaryWebhookEnabled() {
+		http.Error(w, "no enabled webhook configurations", http.StatusBadRequest)
 		return
 	}
-	if err := sendWebhookEvent(map[string]interface{}{
-		"event":      "webhook_test",
-		"state":      "test",
-		"timestamp":  time.Now().UTC().Format(time.RFC3339),
-		"message":    "Illumio dashboard webhook test event",
-		"dashboard":  configuredPublicBaseURL(),
-		"source_app": "illumio-monitoring-dashboard",
-	}); err != nil {
-		http.Error(w, "webhook test failed: "+err.Error(), http.StatusBadGateway)
+	sent := make([]string, 0, 2)
+	failures := make([]string, 0, 2)
+	nowUTC := time.Now().UTC()
+	if configuredWebhookEnabled() {
+		if err := sendWebhookEvent(map[string]interface{}{
+			"event":      "webhook_test",
+			"state":      "test",
+			"timestamp":  nowUTC.Format(time.RFC3339),
+			"message":    "Illumio dashboard anomaly webhook test event",
+			"dashboard":  configuredPublicBaseURL(),
+			"source_app": "illumio-monitoring-dashboard",
+		}); err != nil {
+			failures = append(failures, "anomaly: "+err.Error())
+		} else {
+			sent = append(sent, "anomaly")
+		}
+	}
+	if configuredDailySummaryWebhookEnabled() {
+		targetRows, blockedTotal := buildDailySummaryWebhookTestTargets()
+		yesterday := nowUTC.AddDate(0, 0, -1).Format("2006-01-02")
+		if err := sendDailySummaryWebhookEvent(map[string]interface{}{
+			"event":              "blocked_daily_reconcile_summary",
+			"state":              "test",
+			"timestamp":          nowUTC.Format(time.RFC3339),
+			"reconcile_day":      yesterday,
+			"window_start_utc":   fmt.Sprintf("%sT00:00:00Z", yesterday),
+			"window_end_utc":     fmt.Sprintf("%sT23:59:59Z", yesterday),
+			"blocked_total":      blockedTotal,
+			"reconciled_targets": len(targetRows),
+			"total_targets":      len(targetRows),
+			"failed_targets":     0,
+			"targets":            targetRows,
+			"source_app":         "illumio-monitoring-dashboard",
+		}); err != nil {
+			failures = append(failures, "daily_summary: "+err.Error())
+		} else {
+			sent = append(sent, "daily_summary")
+		}
+	}
+	if len(failures) > 0 {
+		http.Error(w, "webhook test failed: "+strings.Join(failures, " | "), http.StatusBadGateway)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "message": "webhook test sent"})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":      true,
+		"sent":    sent,
+		"message": fmt.Sprintf("webhook test sent: %s", strings.Join(sent, ", ")),
+	})
+}
+
+func buildDailySummaryWebhookTestTargets() ([]map[string]interface{}, int) {
+	statsMutex.RLock()
+	targets := append([]BlockedTargetResult(nil), currentStats.Blocked.Targets...)
+	statsMutex.RUnlock()
+	rows := make([]map[string]interface{}, 0, len(targets))
+	total := 0
+	for _, t := range targets {
+		name := strings.TrimSpace(t.Name)
+		if name == "" {
+			continue
+		}
+		total += t.Count
+		rows = append(rows, map[string]interface{}{
+			"name":          name,
+			"kind":          strings.TrimSpace(t.Kind),
+			"blocked_count": t.Count,
+		})
+	}
+	if len(rows) > 0 {
+		return rows, total
+	}
+	cfgTargets := configuredTrafficTargets()
+	rows = make([]map[string]interface{}, 0, len(cfgTargets))
+	for _, t := range cfgTargets {
+		name := strings.TrimSpace(t.Name)
+		if name == "" {
+			continue
+		}
+		rows = append(rows, map[string]interface{}{
+			"name":          name,
+			"kind":          strings.TrimSpace(t.Kind),
+			"blocked_count": 0,
+		})
+	}
+	return rows, 0
 }
 
 func handleDiagnosticsPerf(w http.ResponseWriter, r *http.Request) {
@@ -3061,13 +3134,10 @@ func buildWebhookText(payload map[string]interface{}) string {
 		if failedTargets != "" {
 			lines = append(lines, "Failed Targets: "+failedTargets)
 		}
-		if rawTargets, ok := payload["targets"].([]interface{}); ok && len(rawTargets) > 0 {
+		targetRows := webhookTargetRows(payload["targets"])
+		if len(targetRows) > 0 {
 			lines = append(lines, "Target Counts:")
-			for _, t := range rawTargets {
-				row, ok := t.(map[string]interface{})
-				if !ok {
-					continue
-				}
+			for _, row := range targetRows {
 				name := strings.TrimSpace(fmt.Sprint(row["name"]))
 				count := strings.TrimSpace(fmt.Sprint(row["blocked_count"]))
 				if name == "" {
@@ -3095,6 +3165,25 @@ func buildWebhookText(payload map[string]interface{}) string {
 		lines = append(lines, "Details: "+dashboard)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func webhookTargetRows(raw interface{}) []map[string]interface{} {
+	switch v := raw.(type) {
+	case []map[string]interface{}:
+		return v
+	case []interface{}:
+		out := make([]map[string]interface{}, 0, len(v))
+		for _, item := range v {
+			row, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			out = append(out, row)
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func buildTeamsFacts(payload map[string]interface{}) []map[string]string {

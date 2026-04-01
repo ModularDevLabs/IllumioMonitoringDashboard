@@ -449,7 +449,7 @@
                 <p class="text-muted small mb-3 mt-1">Configure webhook notifications for anomaly triggered/resolved events.</p>
                 <div class="d-flex flex-wrap gap-2 mb-3">
                     <button class="btn btn-outline-primary btn-sm" id="btn-save-alerts" type="button">Save Alerting</button>
-                    <button class="btn btn-outline-warning btn-sm" id="btn-test-webhook" type="button">Send Test Webhook</button>
+                    <button class="btn btn-outline-warning btn-sm" id="btn-test-webhook" type="button">Send Test Webhooks</button>
                 </div>
 
                 <div class="mb-2">
@@ -1152,7 +1152,8 @@
                 showMsg('msg-alerts', `Webhook test failed: ${txt || r.status}`, 'danger');
                 return;
             }
-            showMsg('msg-alerts', 'Webhook test sent.', 'success');
+            const d = await r.json().catch(() => ({}));
+            showMsg('msg-alerts', d.message || 'Webhook test sent.', 'success');
         }
 
         UICommon.applyTheme(THEME_KEY, 'btn-theme');
