@@ -4298,30 +4298,11 @@ func getAllVENsByStatus(baseURL, status string) ([]map[string]interface{}, error
 	if needle == "" {
 		return nil, nil
 	}
-	candidates := []map[string]string{
-		{"status": needle},
-		{"ven_status": needle},
-		{"state": needle},
+	rows, err := getAllVENsWithFilters(baseURL, map[string]string{"status": needle})
+	if err == nil {
+		return rows, nil
 	}
-	var firstErr error
-	for _, f := range candidates {
-		rows, err := getAllVENsWithFilters(baseURL, f)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		filtered := make([]map[string]interface{}, 0, len(rows))
-		for _, v := range rows {
-			if venStatusMatches(v, needle) {
-				filtered = append(filtered, v)
-			}
-		}
-		if len(filtered) > 0 {
-			return filtered, nil
-		}
-	}
+	firstErr := err
 	all, err := getAllVENs(baseURL)
 	if err != nil {
 		if firstErr != nil {
