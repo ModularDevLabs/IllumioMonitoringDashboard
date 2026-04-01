@@ -356,11 +356,12 @@ Click these cards/badges to open detailed lists:
 
 - VEN Warnings
 - VEN Errors
+- Suspended VENs (status-based)
 - Enforcement mode blocks (Idle/Visibility/Selective/Full)
 - Tampered VENs (deduped VEN/workload names)
 - Any blocked traffic target tile (5-minute line trend for that environment/target)
-- VEN warning/error drilldowns also show a 24h trend line (while keeping workload name lists)
-  - VEN warning/error drilldowns include toggle:
+- VEN warning/error/suspended drilldowns also show a 24h trend line (while keeping workload name lists)
+  - VEN warning/error/suspended drilldowns include toggle:
     - `24h (5m)` recent trend
     - `Daily` retained trend (bounded by `history_days`)
   - Enforcement mode drilldowns include toggle:
@@ -437,7 +438,7 @@ Use `/settings` to manage webhook alerting:
   - Dashboard aggregate stats JSON
 - `GET /api/drilldown?metric=<metric>`:
   - Drilldown list for a metric
-  - metrics: `ven_warning`, `ven_error`, `mode_idle`, `mode_visibility_only`, `mode_selective`, `mode_full`, `mode_unmanaged`, `tampering`
+  - metrics: `ven_warning`, `ven_error`, `ven_suspended`, `mode_idle`, `mode_visibility_only`, `mode_selective`, `mode_full`, `mode_unmanaged`, `tampering`
   - additional daily policy metrics (when enabled): `policy_rulesets`, `policy_rules`, `policy_ruleset` (requires `target=<ruleset name>`)
   - for `metric=blocked_target`, optional flags:
     - `include_ports=1`: include persisted daily blocked port/proto aggregates

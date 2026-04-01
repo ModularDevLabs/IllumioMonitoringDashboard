@@ -1,5 +1,19 @@
 # Release Notes
 
+## v1.2.7
+
+Stable release focused on VEN status observability and suspended VEN workflow parity.
+
+### Added
+- New `Suspended VENs` card on the main dashboard, inline with VEN warnings/errors/tampering.
+- New drilldown metric: `ven_suspended`.
+  - Includes workload/VEN name list.
+  - Includes `24h (5m)` and `Daily` trend modes, aligned with warning/error drilldowns.
+
+### Changed
+- Suspended VEN detection now uses VEN **status** semantics (not health semantics).
+- Suspended VEN drilldown entries display VEN/workload name only (no forced reason suffix when API reason text is absent).
+
 ## v1.2.5-branch (feature/experiments-2026-03-19)
 
 Experimental feature branch updates (not merged to stable main):
