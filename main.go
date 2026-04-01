@@ -159,9 +159,10 @@ type BlockedTargetResult struct {
 
 type DashboardStats struct {
 	VENStatus struct {
-		Warning []string    `json:"warning"`
-		Error   []string    `json:"error"`
-		Status  FetchStatus `json:"status"`
+		Warning   []string    `json:"warning"`
+		Error     []string    `json:"error"`
+		Suspended []string    `json:"suspended"`
+		Status    FetchStatus `json:"status"`
 	} `json:"ven_status"`
 	Workloads struct {
 		Total            int                 `json:"total"`
@@ -3051,6 +3052,8 @@ func drilldownData(metric, target string, stats DashboardStats) (string, []strin
 		return "VEN Warnings", append([]string(nil), stats.VENStatus.Warning...), venTrendSeries("warning")
 	case "ven_error":
 		return "VEN Errors", append([]string(nil), stats.VENStatus.Error...), venTrendSeries("error")
+	case "ven_suspended":
+		return "Suspended VENs", append([]string(nil), stats.VENStatus.Suspended...), nil
 	case "mode_idle":
 		return "Workloads in Idle Mode", append([]string(nil), stats.Workloads.ModeMembers["idle"]...), modeTrendSeries("idle")
 	case "mode_visibility_only":
@@ -4770,20 +4773,27 @@ func getIllumioStats() DashboardStats {
 
 	warningVENs, warnErr := getAllVENsByHealth(baseURL, "warning")
 	errorVENs, errErr := getAllVENsByHealth(baseURL, "error")
-	log.Printf("[COLLECTOR] VEN warning=%d error=%d warnErr=%v errErr=%v", len(warningVENs), len(errorVENs), warnErr, errErr)
+	suspendedVENs, suspendedErr := getAllVENsByHealth(baseURL, "suspended")
+	log.Printf("[COLLECTOR] VEN warning=%d error=%d suspended=%d warnErr=%v errErr=%v suspendedErr=%v", len(warningVENs), len(errorVENs), len(suspendedVENs), warnErr, errErr, suspendedErr)
 	for _, v := range warningVENs {
 		stats.VENStatus.Warning = append(stats.VENStatus.Warning, venDisplayWithReason(v))
 	}
 	for _, v := range errorVENs {
 		stats.VENStatus.Error = append(stats.VENStatus.Error, venDisplayWithReason(v))
 	}
-	if warnErr != nil || errErr != nil {
-		errs := make([]string, 0, 2)
+	for _, v := range suspendedVENs {
+		stats.VENStatus.Suspended = append(stats.VENStatus.Suspended, venDisplayWithReason(v))
+	}
+	if warnErr != nil || errErr != nil || suspendedErr != nil {
+		errs := make([]string, 0, 3)
 		if warnErr != nil {
 			errs = append(errs, "warning query: "+warnErr.Error())
 		}
 		if errErr != nil {
 			errs = append(errs, "error query: "+errErr.Error())
+		}
+		if suspendedErr != nil {
+			errs = append(errs, "suspended query: "+suspendedErr.Error())
 		}
 		stats.VENStatus.Status = FetchStatus{Success: false, Error: "VENs partial: " + strings.Join(errs, " | ")}
 	} else {
@@ -10775,6 +10785,9 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !writeRow("VEN Errors", strconv.Itoa(len(snapshot.VENStatus.Error))) {
+		return
+	}
+	if !writeRow("Suspended VENs", strconv.Itoa(len(snapshot.VENStatus.Suspended))) {
 		return
 	}
 	tamperedCount := len(snapshot.Tampering.Workloads)

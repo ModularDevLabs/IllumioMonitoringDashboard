@@ -352,21 +352,28 @@
         </div>
 
         <div class="row">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card p-3 text-center metric-link" data-metric="ven_warning">
                     <h6>VEN Warnings</h6>
                     <h2 class="text-warning" id="v-warn">0</h2>
                     <div id="v-warn-list" class="small text-muted">Click to view workload names</div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card p-3 text-center metric-link" data-metric="ven_error">
                     <h6>VEN Errors</h6>
                     <h2 class="text-danger" id="v-err">0</h2>
                     <div id="v-err-list" class="small text-muted">Click to view workload names</div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
+                <div class="card p-3 text-center metric-link" data-metric="ven_suspended">
+                    <h6>Suspended VENs</h6>
+                    <h2 class="text-secondary" id="v-suspended">0</h2>
+                    <div id="v-suspended-list" class="small text-muted">Click to view workload names</div>
+                </div>
+            </div>
+            <div class="col-md-3">
                 <div class="card p-3 text-center metric-link" data-metric="tampering">
                     <h6>Tampered VENs</h6>
                     <h2 class="text-dark" id="tamp">0</h2>
@@ -620,6 +627,8 @@
                 document.getElementById('v-warn-list').innerText = 'Click to view workload names';
                 document.getElementById('v-err').innerText = d.ven_status.error?.length || 0;
                 document.getElementById('v-err-list').innerText = 'Click to view workload names';
+                document.getElementById('v-suspended').innerText = d.ven_status.suspended?.length || 0;
+                document.getElementById('v-suspended-list').innerText = 'Click to view workload names';
                 document.getElementById('tamp').innerText = d.tampering.workloads?.length || d.tampering.count || 0;
                 const policyRow = document.getElementById('policy-overview-row');
                 const policyEnabled = d.rules?.enabled === true;
