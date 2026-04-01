@@ -4293,6 +4293,51 @@ func getAllVENsByHealth(baseURL, health string) ([]map[string]interface{}, error
 	return getAllVENsWithFilters(baseURL, map[string]string{"health": strings.TrimSpace(strings.ToLower(health))})
 }
 
+func getAllVENsByStatus(baseURL, status string) ([]map[string]interface{}, error) {
+	needle := strings.TrimSpace(strings.ToLower(status))
+	if needle == "" {
+		return nil, nil
+	}
+	candidates := []map[string]string{
+		{"status": needle},
+		{"ven_status": needle},
+		{"state": needle},
+	}
+	var firstErr error
+	for _, f := range candidates {
+		rows, err := getAllVENsWithFilters(baseURL, f)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		filtered := make([]map[string]interface{}, 0, len(rows))
+		for _, v := range rows {
+			if venStatusMatches(v, needle) {
+				filtered = append(filtered, v)
+			}
+		}
+		if len(filtered) > 0 {
+			return filtered, nil
+		}
+	}
+	all, err := getAllVENs(baseURL)
+	if err != nil {
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		return nil, err
+	}
+	out := make([]map[string]interface{}, 0, len(all))
+	for _, v := range all {
+		if venStatusMatches(v, needle) {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
 func getAllVENsWithFilters(baseURL string, extraFilters map[string]string) ([]map[string]interface{}, error) {
 	const pageSize = 500
 	all := make([]map[string]interface{}, 0, pageSize)
@@ -4599,6 +4644,49 @@ func venStatusFromVEN(v map[string]interface{}) string {
 	return ""
 }
 
+func venStatusMatches(v map[string]interface{}, status string) bool {
+	needle := strings.TrimSpace(strings.ToLower(status))
+	if needle == "" {
+		return false
+	}
+	contains := func(s string) bool {
+		s = strings.TrimSpace(strings.ToLower(s))
+		return s != "" && strings.Contains(s, needle)
+	}
+	for _, s := range []string{
+		stringFromMap(v, "status"),
+		stringFromMap(v, "status", "status"),
+		stringFromMap(v, "status", "state"),
+		stringFromMap(v, "status", "name"),
+		stringFromMap(v, "status", "status_code"),
+		stringFromMap(v, "ven_status"),
+		stringFromMap(v, "ven_status", "status"),
+		stringFromMap(v, "ven_status", "state"),
+		stringFromMap(v, "ven", "status"),
+		stringFromMap(v, "agent", "status"),
+		stringFromMap(v, "lifecycle", "status"),
+		stringFromMap(v, "lifecycle", "state"),
+		stringFromMap(v, "status", "reason"),
+		stringFromMap(v, "status", "description"),
+	} {
+		if contains(s) {
+			return true
+		}
+	}
+	if raw, ok := v["conditions"].([]interface{}); ok {
+		for _, c := range raw {
+			m, ok := c.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if contains(venMapString(m, "notification_type")) || contains(venMapString(m, "latest_event")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func venDisplayName(v map[string]interface{}) string {
 	name, _ := v["name"].(string)
 	if strings.TrimSpace(name) != "" {
@@ -4798,15 +4886,7 @@ func getIllumioStats() DashboardStats {
 
 	warningVENs, warnErr := getAllVENsByHealth(baseURL, "warning")
 	errorVENs, errErr := getAllVENsByHealth(baseURL, "error")
-	allVENs, suspendedErr := getAllVENs(baseURL)
-	suspendedVENs := make([]map[string]interface{}, 0)
-	if suspendedErr == nil {
-		for _, v := range allVENs {
-			if venStatusFromVEN(v) == "suspended" {
-				suspendedVENs = append(suspendedVENs, v)
-			}
-		}
-	}
+	suspendedVENs, suspendedErr := getAllVENsByStatus(baseURL, "suspended")
 	log.Printf("[COLLECTOR] VEN warning=%d error=%d suspended=%d warnErr=%v errErr=%v suspendedErr=%v", len(warningVENs), len(errorVENs), len(suspendedVENs), warnErr, errErr, suspendedErr)
 	for _, v := range warningVENs {
 		stats.VENStatus.Warning = append(stats.VENStatus.Warning, venDisplayWithReason(v))
