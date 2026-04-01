@@ -55,6 +55,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
     - `generic` (raw JSON event payload)
     - `slack` (Incoming Webhook `text` payload)
     - `teams` (MessageCard payload)
+  - Optional separate daily-summary webhook for blocked end-of-day reconcile output (blocked data only)
   - Configurable in UI or `config.json`
   - Test webhook button in `/settings`
   - Dedicated UI page: `/settings`
@@ -214,7 +215,10 @@ Runtime state is stored in a shared data directory:
   "tampering_daily_anomaly_pct": 50,
   "webhook_enabled": false,
   "webhook_provider": "generic",
-  "webhook_url": "https://hooks.example.com/..."
+  "webhook_url": "https://hooks.example.com/...",
+  "daily_summary_webhook_enabled": false,
+  "daily_summary_webhook_provider": "generic",
+  "daily_summary_webhook_url": "https://hooks.example.com/..."
 }
 ```
 
@@ -264,6 +268,13 @@ Runtime state is stored in a shared data directory:
 | `webhook_slack_username` | Optional Slack username override | empty | Some endpoints ignore override |
 | `webhook_slack_icon_emoji` | Optional Slack emoji override | empty | Some endpoints ignore override |
 | `webhook_teams_title_prefix` | Optional Teams title prefix | empty | Added to MessageCard title |
+| `daily_summary_webhook_enabled` | Enable blocked daily reconcile summary webhook | `false` | Requires valid `daily_summary_webhook_url` |
+| `daily_summary_webhook_url` | Daily summary webhook endpoint | empty | Separate destination from anomaly webhook |
+| `daily_summary_webhook_provider` | Daily summary payload format | `generic` | `generic`, `slack`, `teams` |
+| `daily_summary_webhook_slack_channel` | Optional Slack channel override | empty | For daily summary webhook |
+| `daily_summary_webhook_slack_username` | Optional Slack username override | empty | For daily summary webhook |
+| `daily_summary_webhook_slack_icon_emoji` | Optional Slack emoji override | empty | For daily summary webhook |
+| `daily_summary_webhook_teams_title_prefix` | Optional Teams title prefix | empty | For daily summary webhook |
 
 ### Storage Growth Estimates (Rough)
 
@@ -431,6 +442,8 @@ Use `/settings` to manage webhook alerting:
 - Optional Slack fields: channel, username, icon emoji
 - Optional Teams field: title prefix
 - Send test webhook
+- Optional separate webhook section for blocked end-of-day reconcile summaries (`daily_summary_webhook_*`)
+- Daily summary webhook sends blocked reconcile totals by target and does not include tampering counts
 
 ## API Endpoints
 
@@ -480,9 +493,9 @@ Use `/settings` to manage webhook alerting:
 - `GET /api/reconcile/tampering-history/status`:
   - Returns current tampering reconcile state and last run summary (days/updated/failed, startup-skip reason, completion marker timestamp)
 - `GET /api/config/alerts`:
-  - Read alerting/webhook settings
+  - Read alerting/webhook settings (anomaly webhook + daily reconcile summary webhook)
 - `PUT /api/config/alerts`:
-  - Save alerting/webhook settings
+  - Save alerting/webhook settings (anomaly webhook + daily reconcile summary webhook)
 - `GET /api/config/credentials`:
   - Read current PCE/API credentials (`api_secret_set` is returned, secret value is never returned)
 - `PUT /api/config/credentials`:

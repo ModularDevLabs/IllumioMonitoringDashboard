@@ -80,49 +80,56 @@ const defaultLogFileName = "illumiomonitoringdashboard.log"
 const maxMultiLabelClauses = 2000
 
 type Config struct {
-	PCEURL                      string          `json:"pce_url"`
-	APIKey                      string          `json:"api_key"`
-	APISecret                   string          `json:"api_secret"`
-	OrgID                       string          `json:"org_id"`
-	Timezone                    string          `json:"timezone,omitempty"`
-	BindAddress                 string          `json:"bind_address,omitempty"`
-	PublicBaseURL               string          `json:"public_base_url,omitempty"`
-	DataDir                     string          `json:"data_dir,omitempty"`
-	TrafficTargets              []TrafficTarget `json:"traffic_targets,omitempty"`
-	SourceExclusions            []TrafficTarget `json:"traffic_source_exclusions,omitempty"`
-	HistoryDays                 int             `json:"history_days,omitempty"`
-	BlockedPortDailyEnabled     *bool           `json:"blocked_port_daily_enabled,omitempty"`
-	BlockedMAWindow             int             `json:"blocked_ma_window,omitempty"`
-	BlockedAnomalyPct           float64         `json:"blocked_anomaly_pct,omitempty"`
-	BlockedAnomalyBaseline      string          `json:"blocked_anomaly_baseline,omitempty"`
-	BlockedAnomalyDays          int             `json:"blocked_anomaly_days,omitempty"`
-	BlockedAnomalyMinPct        float64         `json:"blocked_anomaly_min_coverage_pct,omitempty"`
-	DailyMAWindow               int             `json:"daily_ma_window,omitempty"`
-	VENMAWindow                 int             `json:"ven_ma_window,omitempty"`
-	VENAnomalyPct               float64         `json:"ven_anomaly_pct,omitempty"`
-	VENAnomalyBaseline          string          `json:"ven_anomaly_baseline,omitempty"`
-	VENAnomalyDays              int             `json:"ven_anomaly_days,omitempty"`
-	VENAnomalyMinPct            float64         `json:"ven_anomaly_min_coverage_pct,omitempty"`
-	TamperingMAWindow           int             `json:"tampering_ma_window,omitempty"`
-	TamperingAnomalyPct         float64         `json:"tampering_anomaly_pct,omitempty"`
-	TamperingAnomalyBaseline    string          `json:"tampering_anomaly_baseline,omitempty"`
-	TamperingAnomalyDays        int             `json:"tampering_anomaly_days,omitempty"`
-	TamperingAnomalyMinPct      float64         `json:"tampering_anomaly_min_coverage_pct,omitempty"`
-	TamperingDailyAnomalyPct    float64         `json:"tampering_daily_anomaly_pct,omitempty"`
-	WebhookURL                  string          `json:"webhook_url,omitempty"`
-	WebhookEnabled              bool            `json:"webhook_enabled,omitempty"`
-	WebhookProvider             string          `json:"webhook_provider,omitempty"`
-	WebhookSlackChannel         string          `json:"webhook_slack_channel,omitempty"`
-	WebhookSlackUsername        string          `json:"webhook_slack_username,omitempty"`
-	WebhookSlackIconEmoji       string          `json:"webhook_slack_icon_emoji,omitempty"`
-	WebhookTeamsTitlePrefix     string          `json:"webhook_teams_title_prefix,omitempty"`
-	BlockedPortStoreBackend     string          `json:"blocked_port_store_backend,omitempty"`
-	BlockedRollingDedupeBackend string          `json:"blocked_rolling_dedupe_backend,omitempty"`
-	BlockedHostMetricsEnabled   *bool           `json:"blocked_host_metrics_enabled,omitempty"`
-	BlockedHostRetentionMode    string          `json:"blocked_host_retention_mode,omitempty"`
-	RulesMetricsEnabled         *bool           `json:"rules_metrics_enabled,omitempty"`
-	APIMaxRPM                   int             `json:"api_max_rpm,omitempty"`
-	DiagnosticsEnabled          bool            `json:"diagnostics_enabled,omitempty"`
+	PCEURL                       string          `json:"pce_url"`
+	APIKey                       string          `json:"api_key"`
+	APISecret                    string          `json:"api_secret"`
+	OrgID                        string          `json:"org_id"`
+	Timezone                     string          `json:"timezone,omitempty"`
+	BindAddress                  string          `json:"bind_address,omitempty"`
+	PublicBaseURL                string          `json:"public_base_url,omitempty"`
+	DataDir                      string          `json:"data_dir,omitempty"`
+	TrafficTargets               []TrafficTarget `json:"traffic_targets,omitempty"`
+	SourceExclusions             []TrafficTarget `json:"traffic_source_exclusions,omitempty"`
+	HistoryDays                  int             `json:"history_days,omitempty"`
+	BlockedPortDailyEnabled      *bool           `json:"blocked_port_daily_enabled,omitempty"`
+	BlockedMAWindow              int             `json:"blocked_ma_window,omitempty"`
+	BlockedAnomalyPct            float64         `json:"blocked_anomaly_pct,omitempty"`
+	BlockedAnomalyBaseline       string          `json:"blocked_anomaly_baseline,omitempty"`
+	BlockedAnomalyDays           int             `json:"blocked_anomaly_days,omitempty"`
+	BlockedAnomalyMinPct         float64         `json:"blocked_anomaly_min_coverage_pct,omitempty"`
+	DailyMAWindow                int             `json:"daily_ma_window,omitempty"`
+	VENMAWindow                  int             `json:"ven_ma_window,omitempty"`
+	VENAnomalyPct                float64         `json:"ven_anomaly_pct,omitempty"`
+	VENAnomalyBaseline           string          `json:"ven_anomaly_baseline,omitempty"`
+	VENAnomalyDays               int             `json:"ven_anomaly_days,omitempty"`
+	VENAnomalyMinPct             float64         `json:"ven_anomaly_min_coverage_pct,omitempty"`
+	TamperingMAWindow            int             `json:"tampering_ma_window,omitempty"`
+	TamperingAnomalyPct          float64         `json:"tampering_anomaly_pct,omitempty"`
+	TamperingAnomalyBaseline     string          `json:"tampering_anomaly_baseline,omitempty"`
+	TamperingAnomalyDays         int             `json:"tampering_anomaly_days,omitempty"`
+	TamperingAnomalyMinPct       float64         `json:"tampering_anomaly_min_coverage_pct,omitempty"`
+	TamperingDailyAnomalyPct     float64         `json:"tampering_daily_anomaly_pct,omitempty"`
+	WebhookURL                   string          `json:"webhook_url,omitempty"`
+	WebhookEnabled               bool            `json:"webhook_enabled,omitempty"`
+	WebhookProvider              string          `json:"webhook_provider,omitempty"`
+	WebhookSlackChannel          string          `json:"webhook_slack_channel,omitempty"`
+	WebhookSlackUsername         string          `json:"webhook_slack_username,omitempty"`
+	WebhookSlackIconEmoji        string          `json:"webhook_slack_icon_emoji,omitempty"`
+	WebhookTeamsTitlePrefix      string          `json:"webhook_teams_title_prefix,omitempty"`
+	DailySummaryWebhookURL       string          `json:"daily_summary_webhook_url,omitempty"`
+	DailySummaryWebhookEnabled   bool            `json:"daily_summary_webhook_enabled,omitempty"`
+	DailySummaryWebhookProvider  string          `json:"daily_summary_webhook_provider,omitempty"`
+	DailySummarySlackChannel     string          `json:"daily_summary_webhook_slack_channel,omitempty"`
+	DailySummarySlackUsername    string          `json:"daily_summary_webhook_slack_username,omitempty"`
+	DailySummarySlackIconEmoji   string          `json:"daily_summary_webhook_slack_icon_emoji,omitempty"`
+	DailySummaryTeamsTitlePrefix string          `json:"daily_summary_webhook_teams_title_prefix,omitempty"`
+	BlockedPortStoreBackend      string          `json:"blocked_port_store_backend,omitempty"`
+	BlockedRollingDedupeBackend  string          `json:"blocked_rolling_dedupe_backend,omitempty"`
+	BlockedHostMetricsEnabled    *bool           `json:"blocked_host_metrics_enabled,omitempty"`
+	BlockedHostRetentionMode     string          `json:"blocked_host_retention_mode,omitempty"`
+	RulesMetricsEnabled          *bool           `json:"rules_metrics_enabled,omitempty"`
+	APIMaxRPM                    int             `json:"api_max_rpm,omitempty"`
+	DiagnosticsEnabled           bool            `json:"diagnostics_enabled,omitempty"`
 }
 
 type TrafficTarget struct {
@@ -384,9 +391,9 @@ type dailyBlockedHostRecord struct {
 }
 
 type dailyPolicyRulesetRecord struct {
-	Day      string `json:"day"`
-	Ruleset  string `json:"ruleset"`
-	RuleCount int   `json:"rule_count"`
+	Day       string `json:"day"`
+	Ruleset   string `json:"ruleset"`
+	RuleCount int    `json:"rule_count"`
 }
 
 type blockedHistoryReconcileMarker struct {
@@ -532,6 +539,7 @@ var (
 	reconcileMu              sync.Mutex
 	reconcileDayKey          string
 	reconcileDoneByT         = map[string]bool{}
+	reconcileSummarySentByD  = map[string]bool{}
 	fullReconcileInProgress  atomic.Bool
 	reconcileStatusMu        sync.Mutex
 	reconcileStatus          blockedHistoryReconcileStatus
@@ -1369,6 +1377,13 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		slackUsername := strings.TrimSpace(config.WebhookSlackUsername)
 		slackIconEmoji := strings.TrimSpace(config.WebhookSlackIconEmoji)
 		teamsTitlePrefix := strings.TrimSpace(config.WebhookTeamsTitlePrefix)
+		dailySummaryWebhookURL := strings.TrimSpace(config.DailySummaryWebhookURL)
+		dailySummaryWebhookEnabled := config.DailySummaryWebhookEnabled && dailySummaryWebhookURL != ""
+		dailySummaryWebhookProvider := configuredDailySummaryWebhookProviderLocked()
+		dailySummarySlackChannel := strings.TrimSpace(config.DailySummarySlackChannel)
+		dailySummarySlackUsername := strings.TrimSpace(config.DailySummarySlackUsername)
+		dailySummarySlackIconEmoji := strings.TrimSpace(config.DailySummarySlackIconEmoji)
+		dailySummaryTeamsTitlePrefix := strings.TrimSpace(config.DailySummaryTeamsTitlePrefix)
 		configMutex.RUnlock()
 		if len(targets) == 0 {
 			targets = configuredTrafficTargets()
@@ -1378,84 +1393,98 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"traffic_targets":                targets,
-			"traffic_source_exclusions":      exclusions,
-			"history_days":                   historyDays,
-			"blocked_port_daily_enabled":     blockedPortDailyEnabled,
-			"blocked_ma_window":              maWindow,
-			"daily_ma_window":                dailyMAWindow,
-			"blocked_anomaly_pct":            anomalyPct,
-			"blocked_anomaly_baseline":       anomalyBaseline,
-			"blocked_anomaly_days":           anomalyDays,
-			"blocked_anomaly_min_pct":        anomalyMinCoverage,
-			"ven_ma_window":                  venMAWindow,
-			"ven_anomaly_pct":                venAnomalyPct,
-			"ven_anomaly_baseline":           venAnomalyBaseline,
-			"ven_anomaly_days":               venAnomalyDays,
-			"ven_anomaly_min_pct":            venAnomalyMinCoverage,
-			"tampering_ma_window":            tamperMAWindow,
-			"tampering_anomaly_pct":          tamperAnomalyPct,
-			"tampering_anomaly_baseline":     tamperAnomalyBaseline,
-			"tampering_anomaly_days":         tamperAnomalyDays,
-			"tampering_anomaly_min_pct":      tamperAnomalyMinCoverage,
-			"tampering_daily_anomaly_pct":    tamperDailyAnomalyPct,
-			"timezone":                       timezone,
-			"timezone_effective":             effectiveTimezone,
-			"bind_address":                   bindAddress,
-			"public_base_url":                publicBaseURL,
-			"blocked_port_store_backend":     blockedPortStoreBackend,
-			"blocked_rolling_dedupe_backend": blockedRollingDedupeBackend,
-			"blocked_host_metrics_enabled":   blockedHostMetricsEnabled,
-			"blocked_host_retention_mode":    blockedHostRetentionMode,
-			"rules_metrics_enabled":          rulesMetricsEnabled,
-			"diagnostics_enabled":            diagnosticsEnabled,
-			"webhook_url":                    webhookURL,
-			"webhook_enabled":                webhookEnabled,
-			"webhook_provider":               webhookProvider,
-			"webhook_slack_channel":          slackChannel,
-			"webhook_slack_username":         slackUsername,
-			"webhook_slack_icon_emoji":       slackIconEmoji,
-			"webhook_teams_title_prefix":     teamsTitlePrefix,
+			"traffic_targets":                          targets,
+			"traffic_source_exclusions":                exclusions,
+			"history_days":                             historyDays,
+			"blocked_port_daily_enabled":               blockedPortDailyEnabled,
+			"blocked_ma_window":                        maWindow,
+			"daily_ma_window":                          dailyMAWindow,
+			"blocked_anomaly_pct":                      anomalyPct,
+			"blocked_anomaly_baseline":                 anomalyBaseline,
+			"blocked_anomaly_days":                     anomalyDays,
+			"blocked_anomaly_min_pct":                  anomalyMinCoverage,
+			"ven_ma_window":                            venMAWindow,
+			"ven_anomaly_pct":                          venAnomalyPct,
+			"ven_anomaly_baseline":                     venAnomalyBaseline,
+			"ven_anomaly_days":                         venAnomalyDays,
+			"ven_anomaly_min_pct":                      venAnomalyMinCoverage,
+			"tampering_ma_window":                      tamperMAWindow,
+			"tampering_anomaly_pct":                    tamperAnomalyPct,
+			"tampering_anomaly_baseline":               tamperAnomalyBaseline,
+			"tampering_anomaly_days":                   tamperAnomalyDays,
+			"tampering_anomaly_min_pct":                tamperAnomalyMinCoverage,
+			"tampering_daily_anomaly_pct":              tamperDailyAnomalyPct,
+			"timezone":                                 timezone,
+			"timezone_effective":                       effectiveTimezone,
+			"bind_address":                             bindAddress,
+			"public_base_url":                          publicBaseURL,
+			"blocked_port_store_backend":               blockedPortStoreBackend,
+			"blocked_rolling_dedupe_backend":           blockedRollingDedupeBackend,
+			"blocked_host_metrics_enabled":             blockedHostMetricsEnabled,
+			"blocked_host_retention_mode":              blockedHostRetentionMode,
+			"rules_metrics_enabled":                    rulesMetricsEnabled,
+			"diagnostics_enabled":                      diagnosticsEnabled,
+			"webhook_url":                              webhookURL,
+			"webhook_enabled":                          webhookEnabled,
+			"webhook_provider":                         webhookProvider,
+			"webhook_slack_channel":                    slackChannel,
+			"webhook_slack_username":                   slackUsername,
+			"webhook_slack_icon_emoji":                 slackIconEmoji,
+			"webhook_teams_title_prefix":               teamsTitlePrefix,
+			"daily_summary_webhook_url":                dailySummaryWebhookURL,
+			"daily_summary_webhook_enabled":            dailySummaryWebhookEnabled,
+			"daily_summary_webhook_provider":           dailySummaryWebhookProvider,
+			"daily_summary_webhook_slack_channel":      dailySummarySlackChannel,
+			"daily_summary_webhook_slack_username":     dailySummarySlackUsername,
+			"daily_summary_webhook_slack_icon_emoji":   dailySummarySlackIconEmoji,
+			"daily_summary_webhook_teams_title_prefix": dailySummaryTeamsTitlePrefix,
 		})
 	case http.MethodPut:
 		var req struct {
-			TrafficTargets              []TrafficTarget `json:"traffic_targets"`
-			SourceExclusions            []TrafficTarget `json:"traffic_source_exclusions"`
-			HistoryDays                 int             `json:"history_days"`
-			BlockedPortDailyEnabled     *bool           `json:"blocked_port_daily_enabled"`
-			BlockedMAWindow             int             `json:"blocked_ma_window"`
-			DailyMAWindow               int             `json:"daily_ma_window"`
-			BlockedAnomalyPct           float64         `json:"blocked_anomaly_pct"`
-			BlockedAnomalyBaseline      *string         `json:"blocked_anomaly_baseline"`
-			BlockedAnomalyDays          int             `json:"blocked_anomaly_days"`
-			BlockedAnomalyMinPct        float64         `json:"blocked_anomaly_min_pct"`
-			VENMAWindow                 int             `json:"ven_ma_window"`
-			VENAnomalyPct               float64         `json:"ven_anomaly_pct"`
-			VENAnomalyBaseline          *string         `json:"ven_anomaly_baseline"`
-			VENAnomalyDays              int             `json:"ven_anomaly_days"`
-			VENAnomalyMinPct            float64         `json:"ven_anomaly_min_pct"`
-			TamperingMAWindow           int             `json:"tampering_ma_window"`
-			TamperingAnomalyPct         float64         `json:"tampering_anomaly_pct"`
-			TamperingAnomalyBaseline    *string         `json:"tampering_anomaly_baseline"`
-			TamperingAnomalyDays        int             `json:"tampering_anomaly_days"`
-			TamperingAnomalyMinPct      float64         `json:"tampering_anomaly_min_pct"`
-			TamperingDailyAnomalyPct    float64         `json:"tampering_daily_anomaly_pct"`
-			Timezone                    *string         `json:"timezone"`
-			BindAddress                 *string         `json:"bind_address"`
-			PublicBaseURL               *string         `json:"public_base_url"`
-			BlockedPortStoreBackend     *string         `json:"blocked_port_store_backend"`
-			BlockedRollingDedupeBackend *string         `json:"blocked_rolling_dedupe_backend"`
-			BlockedHostMetricsEnabled   *bool           `json:"blocked_host_metrics_enabled"`
-			BlockedHostRetentionMode    *string         `json:"blocked_host_retention_mode"`
-			RulesMetricsEnabled         *bool           `json:"rules_metrics_enabled"`
-			DiagnosticsEnabled          *bool           `json:"diagnostics_enabled"`
-			WebhookURL                  *string         `json:"webhook_url"`
-			WebhookEnabled              *bool           `json:"webhook_enabled"`
-			WebhookProvider             *string         `json:"webhook_provider"`
-			WebhookSlackChannel         *string         `json:"webhook_slack_channel"`
-			WebhookSlackUsername        *string         `json:"webhook_slack_username"`
-			WebhookSlackIconEmoji       *string         `json:"webhook_slack_icon_emoji"`
-			WebhookTeamsTitlePrefix     *string         `json:"webhook_teams_title_prefix"`
+			TrafficTargets               []TrafficTarget `json:"traffic_targets"`
+			SourceExclusions             []TrafficTarget `json:"traffic_source_exclusions"`
+			HistoryDays                  int             `json:"history_days"`
+			BlockedPortDailyEnabled      *bool           `json:"blocked_port_daily_enabled"`
+			BlockedMAWindow              int             `json:"blocked_ma_window"`
+			DailyMAWindow                int             `json:"daily_ma_window"`
+			BlockedAnomalyPct            float64         `json:"blocked_anomaly_pct"`
+			BlockedAnomalyBaseline       *string         `json:"blocked_anomaly_baseline"`
+			BlockedAnomalyDays           int             `json:"blocked_anomaly_days"`
+			BlockedAnomalyMinPct         float64         `json:"blocked_anomaly_min_pct"`
+			VENMAWindow                  int             `json:"ven_ma_window"`
+			VENAnomalyPct                float64         `json:"ven_anomaly_pct"`
+			VENAnomalyBaseline           *string         `json:"ven_anomaly_baseline"`
+			VENAnomalyDays               int             `json:"ven_anomaly_days"`
+			VENAnomalyMinPct             float64         `json:"ven_anomaly_min_pct"`
+			TamperingMAWindow            int             `json:"tampering_ma_window"`
+			TamperingAnomalyPct          float64         `json:"tampering_anomaly_pct"`
+			TamperingAnomalyBaseline     *string         `json:"tampering_anomaly_baseline"`
+			TamperingAnomalyDays         int             `json:"tampering_anomaly_days"`
+			TamperingAnomalyMinPct       float64         `json:"tampering_anomaly_min_pct"`
+			TamperingDailyAnomalyPct     float64         `json:"tampering_daily_anomaly_pct"`
+			Timezone                     *string         `json:"timezone"`
+			BindAddress                  *string         `json:"bind_address"`
+			PublicBaseURL                *string         `json:"public_base_url"`
+			BlockedPortStoreBackend      *string         `json:"blocked_port_store_backend"`
+			BlockedRollingDedupeBackend  *string         `json:"blocked_rolling_dedupe_backend"`
+			BlockedHostMetricsEnabled    *bool           `json:"blocked_host_metrics_enabled"`
+			BlockedHostRetentionMode     *string         `json:"blocked_host_retention_mode"`
+			RulesMetricsEnabled          *bool           `json:"rules_metrics_enabled"`
+			DiagnosticsEnabled           *bool           `json:"diagnostics_enabled"`
+			WebhookURL                   *string         `json:"webhook_url"`
+			WebhookEnabled               *bool           `json:"webhook_enabled"`
+			WebhookProvider              *string         `json:"webhook_provider"`
+			WebhookSlackChannel          *string         `json:"webhook_slack_channel"`
+			WebhookSlackUsername         *string         `json:"webhook_slack_username"`
+			WebhookSlackIconEmoji        *string         `json:"webhook_slack_icon_emoji"`
+			WebhookTeamsTitlePrefix      *string         `json:"webhook_teams_title_prefix"`
+			DailySummaryWebhookURL       *string         `json:"daily_summary_webhook_url"`
+			DailySummaryWebhookEnabled   *bool           `json:"daily_summary_webhook_enabled"`
+			DailySummaryWebhookProvider  *string         `json:"daily_summary_webhook_provider"`
+			DailySummarySlackChannel     *string         `json:"daily_summary_webhook_slack_channel"`
+			DailySummarySlackUsername    *string         `json:"daily_summary_webhook_slack_username"`
+			DailySummarySlackIconEmoji   *string         `json:"daily_summary_webhook_slack_icon_emoji"`
+			DailySummaryTeamsTitlePrefix *string         `json:"daily_summary_webhook_teams_title_prefix"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid json body", http.StatusBadRequest)
@@ -1580,6 +1609,27 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		if req.WebhookTeamsTitlePrefix != nil {
 			config.WebhookTeamsTitlePrefix = strings.TrimSpace(*req.WebhookTeamsTitlePrefix)
 		}
+		if req.DailySummaryWebhookURL != nil {
+			config.DailySummaryWebhookURL = strings.TrimSpace(*req.DailySummaryWebhookURL)
+		}
+		if req.DailySummaryWebhookEnabled != nil {
+			config.DailySummaryWebhookEnabled = *req.DailySummaryWebhookEnabled && strings.TrimSpace(config.DailySummaryWebhookURL) != ""
+		}
+		if req.DailySummaryWebhookProvider != nil {
+			config.DailySummaryWebhookProvider = normalizeWebhookProvider(*req.DailySummaryWebhookProvider)
+		}
+		if req.DailySummarySlackChannel != nil {
+			config.DailySummarySlackChannel = strings.TrimSpace(*req.DailySummarySlackChannel)
+		}
+		if req.DailySummarySlackUsername != nil {
+			config.DailySummarySlackUsername = strings.TrimSpace(*req.DailySummarySlackUsername)
+		}
+		if req.DailySummarySlackIconEmoji != nil {
+			config.DailySummarySlackIconEmoji = strings.TrimSpace(*req.DailySummarySlackIconEmoji)
+		}
+		if req.DailySummaryTeamsTitlePrefix != nil {
+			config.DailySummaryTeamsTitlePrefix = strings.TrimSpace(*req.DailySummaryTeamsTitlePrefix)
+		}
 		historyDays := configuredHistoryDaysLocked()
 		blockedPortDailyEnabled := configuredBlockedPortDailyEnabledLocked()
 		maWindow := configuredBlockedMAWindowLocked()
@@ -1616,6 +1666,13 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		slackUsername := strings.TrimSpace(config.WebhookSlackUsername)
 		slackIconEmoji := strings.TrimSpace(config.WebhookSlackIconEmoji)
 		teamsTitlePrefix := strings.TrimSpace(config.WebhookTeamsTitlePrefix)
+		dailySummaryWebhookURL := strings.TrimSpace(config.DailySummaryWebhookURL)
+		dailySummaryWebhookEnabled := configuredDailySummaryWebhookEnabledLocked()
+		dailySummaryWebhookProvider := configuredDailySummaryWebhookProviderLocked()
+		dailySummarySlackChannel := strings.TrimSpace(config.DailySummarySlackChannel)
+		dailySummarySlackUsername := strings.TrimSpace(config.DailySummarySlackUsername)
+		dailySummarySlackIconEmoji := strings.TrimSpace(config.DailySummarySlackIconEmoji)
+		dailySummaryTeamsTitlePrefix := strings.TrimSpace(config.DailySummaryTeamsTitlePrefix)
 		saveConfigLocked()
 		configMutex.Unlock()
 		pruneBlockedHistory(time.Now().UTC(), historyDays)
@@ -1623,46 +1680,53 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"saved":                          true,
-			"traffic_targets":                cleaned,
-			"traffic_source_exclusions":      config.SourceExclusions,
-			"history_days":                   historyDays,
-			"blocked_port_daily_enabled":     blockedPortDailyEnabled,
-			"blocked_ma_window":              maWindow,
-			"daily_ma_window":                dailyMAWindow,
-			"blocked_anomaly_pct":            anomalyPct,
-			"blocked_anomaly_baseline":       anomalyBaseline,
-			"blocked_anomaly_days":           anomalyDays,
-			"blocked_anomaly_min_pct":        anomalyMinCoverage,
-			"ven_ma_window":                  venMAWindow,
-			"ven_anomaly_pct":                venAnomalyPct,
-			"ven_anomaly_baseline":           venAnomalyBaseline,
-			"ven_anomaly_days":               venAnomalyDays,
-			"ven_anomaly_min_pct":            venAnomalyMinCoverage,
-			"tampering_ma_window":            tamperMAWindow,
-			"tampering_anomaly_pct":          tamperAnomalyPct,
-			"tampering_anomaly_baseline":     tamperAnomalyBaseline,
-			"tampering_anomaly_days":         tamperAnomalyDays,
-			"tampering_anomaly_min_pct":      tamperAnomalyMinCoverage,
-			"tampering_daily_anomaly_pct":    tamperDailyAnomalyPct,
-			"timezone":                       timezone,
-			"timezone_effective":             effectiveTimezone,
-			"bind_address":                   bindAddress,
-			"public_base_url":                publicBaseURL,
-			"blocked_port_store_backend":     blockedPortStoreBackend,
-			"blocked_rolling_dedupe_backend": blockedRollingDedupeBackend,
-			"blocked_host_metrics_enabled":   blockedHostMetricsEnabled,
-			"blocked_host_retention_mode":    blockedHostRetentionMode,
-			"rules_metrics_enabled":          rulesMetricsEnabled,
-			"diagnostics_enabled":            diagnosticsEnabled,
-			"webhook_url":                    webhookURL,
-			"webhook_enabled":                webhookEnabled,
-			"webhook_provider":               webhookProvider,
-			"webhook_slack_channel":          slackChannel,
-			"webhook_slack_username":         slackUsername,
-			"webhook_slack_icon_emoji":       slackIconEmoji,
-			"webhook_teams_title_prefix":     teamsTitlePrefix,
-			"message":                        "Saved. Click Refresh Now to apply immediately.",
+			"saved":                                    true,
+			"traffic_targets":                          cleaned,
+			"traffic_source_exclusions":                config.SourceExclusions,
+			"history_days":                             historyDays,
+			"blocked_port_daily_enabled":               blockedPortDailyEnabled,
+			"blocked_ma_window":                        maWindow,
+			"daily_ma_window":                          dailyMAWindow,
+			"blocked_anomaly_pct":                      anomalyPct,
+			"blocked_anomaly_baseline":                 anomalyBaseline,
+			"blocked_anomaly_days":                     anomalyDays,
+			"blocked_anomaly_min_pct":                  anomalyMinCoverage,
+			"ven_ma_window":                            venMAWindow,
+			"ven_anomaly_pct":                          venAnomalyPct,
+			"ven_anomaly_baseline":                     venAnomalyBaseline,
+			"ven_anomaly_days":                         venAnomalyDays,
+			"ven_anomaly_min_pct":                      venAnomalyMinCoverage,
+			"tampering_ma_window":                      tamperMAWindow,
+			"tampering_anomaly_pct":                    tamperAnomalyPct,
+			"tampering_anomaly_baseline":               tamperAnomalyBaseline,
+			"tampering_anomaly_days":                   tamperAnomalyDays,
+			"tampering_anomaly_min_pct":                tamperAnomalyMinCoverage,
+			"tampering_daily_anomaly_pct":              tamperDailyAnomalyPct,
+			"timezone":                                 timezone,
+			"timezone_effective":                       effectiveTimezone,
+			"bind_address":                             bindAddress,
+			"public_base_url":                          publicBaseURL,
+			"blocked_port_store_backend":               blockedPortStoreBackend,
+			"blocked_rolling_dedupe_backend":           blockedRollingDedupeBackend,
+			"blocked_host_metrics_enabled":             blockedHostMetricsEnabled,
+			"blocked_host_retention_mode":              blockedHostRetentionMode,
+			"rules_metrics_enabled":                    rulesMetricsEnabled,
+			"diagnostics_enabled":                      diagnosticsEnabled,
+			"webhook_url":                              webhookURL,
+			"webhook_enabled":                          webhookEnabled,
+			"webhook_provider":                         webhookProvider,
+			"webhook_slack_channel":                    slackChannel,
+			"webhook_slack_username":                   slackUsername,
+			"webhook_slack_icon_emoji":                 slackIconEmoji,
+			"webhook_teams_title_prefix":               teamsTitlePrefix,
+			"daily_summary_webhook_url":                dailySummaryWebhookURL,
+			"daily_summary_webhook_enabled":            dailySummaryWebhookEnabled,
+			"daily_summary_webhook_provider":           dailySummaryWebhookProvider,
+			"daily_summary_webhook_slack_channel":      dailySummarySlackChannel,
+			"daily_summary_webhook_slack_username":     dailySummarySlackUsername,
+			"daily_summary_webhook_slack_icon_emoji":   dailySummarySlackIconEmoji,
+			"daily_summary_webhook_teams_title_prefix": dailySummaryTeamsTitlePrefix,
+			"message":                                  "Saved. Click Refresh Now to apply immediately.",
 		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1762,26 +1826,47 @@ func handleConfigAlerts(w http.ResponseWriter, r *http.Request) {
 		slackUsername := strings.TrimSpace(config.WebhookSlackUsername)
 		slackIconEmoji := strings.TrimSpace(config.WebhookSlackIconEmoji)
 		teamsTitlePrefix := strings.TrimSpace(config.WebhookTeamsTitlePrefix)
+		dailySummaryWebhookURL := strings.TrimSpace(config.DailySummaryWebhookURL)
+		dailySummaryWebhookEnabled := configuredDailySummaryWebhookEnabledLocked()
+		dailySummaryWebhookProvider := configuredDailySummaryWebhookProviderLocked()
+		dailySummarySlackChannel := strings.TrimSpace(config.DailySummarySlackChannel)
+		dailySummarySlackUsername := strings.TrimSpace(config.DailySummarySlackUsername)
+		dailySummarySlackIconEmoji := strings.TrimSpace(config.DailySummarySlackIconEmoji)
+		dailySummaryTeamsTitlePrefix := strings.TrimSpace(config.DailySummaryTeamsTitlePrefix)
 		configMutex.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"webhook_enabled":            webhookEnabled,
-			"webhook_url":                webhookURL,
-			"webhook_provider":           webhookProvider,
-			"webhook_slack_channel":      slackChannel,
-			"webhook_slack_username":     slackUsername,
-			"webhook_slack_icon_emoji":   slackIconEmoji,
-			"webhook_teams_title_prefix": teamsTitlePrefix,
+			"webhook_enabled":                          webhookEnabled,
+			"webhook_url":                              webhookURL,
+			"webhook_provider":                         webhookProvider,
+			"webhook_slack_channel":                    slackChannel,
+			"webhook_slack_username":                   slackUsername,
+			"webhook_slack_icon_emoji":                 slackIconEmoji,
+			"webhook_teams_title_prefix":               teamsTitlePrefix,
+			"daily_summary_webhook_enabled":            dailySummaryWebhookEnabled,
+			"daily_summary_webhook_url":                dailySummaryWebhookURL,
+			"daily_summary_webhook_provider":           dailySummaryWebhookProvider,
+			"daily_summary_webhook_slack_channel":      dailySummarySlackChannel,
+			"daily_summary_webhook_slack_username":     dailySummarySlackUsername,
+			"daily_summary_webhook_slack_icon_emoji":   dailySummarySlackIconEmoji,
+			"daily_summary_webhook_teams_title_prefix": dailySummaryTeamsTitlePrefix,
 		})
 	case http.MethodPut:
 		var req struct {
-			WebhookEnabled          bool   `json:"webhook_enabled"`
-			WebhookURL              string `json:"webhook_url"`
-			WebhookProvider         string `json:"webhook_provider"`
-			WebhookSlackChannel     string `json:"webhook_slack_channel"`
-			WebhookSlackUsername    string `json:"webhook_slack_username"`
-			WebhookSlackIconEmoji   string `json:"webhook_slack_icon_emoji"`
-			WebhookTeamsTitlePrefix string `json:"webhook_teams_title_prefix"`
+			WebhookEnabled                      bool   `json:"webhook_enabled"`
+			WebhookURL                          string `json:"webhook_url"`
+			WebhookProvider                     string `json:"webhook_provider"`
+			WebhookSlackChannel                 string `json:"webhook_slack_channel"`
+			WebhookSlackUsername                string `json:"webhook_slack_username"`
+			WebhookSlackIconEmoji               string `json:"webhook_slack_icon_emoji"`
+			WebhookTeamsTitlePrefix             string `json:"webhook_teams_title_prefix"`
+			DailySummaryWebhookEnabled          bool   `json:"daily_summary_webhook_enabled"`
+			DailySummaryWebhookURL              string `json:"daily_summary_webhook_url"`
+			DailySummaryWebhookProvider         string `json:"daily_summary_webhook_provider"`
+			DailySummaryWebhookSlackChannel     string `json:"daily_summary_webhook_slack_channel"`
+			DailySummaryWebhookSlackUsername    string `json:"daily_summary_webhook_slack_username"`
+			DailySummaryWebhookSlackIconEmoji   string `json:"daily_summary_webhook_slack_icon_emoji"`
+			DailySummaryWebhookTeamsTitlePrefix string `json:"daily_summary_webhook_teams_title_prefix"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid json body", http.StatusBadRequest)
@@ -1795,6 +1880,13 @@ func handleConfigAlerts(w http.ResponseWriter, r *http.Request) {
 		config.WebhookSlackUsername = strings.TrimSpace(req.WebhookSlackUsername)
 		config.WebhookSlackIconEmoji = strings.TrimSpace(req.WebhookSlackIconEmoji)
 		config.WebhookTeamsTitlePrefix = strings.TrimSpace(req.WebhookTeamsTitlePrefix)
+		config.DailySummaryWebhookURL = strings.TrimSpace(req.DailySummaryWebhookURL)
+		config.DailySummaryWebhookEnabled = req.DailySummaryWebhookEnabled && config.DailySummaryWebhookURL != ""
+		config.DailySummaryWebhookProvider = normalizeWebhookProvider(req.DailySummaryWebhookProvider)
+		config.DailySummarySlackChannel = strings.TrimSpace(req.DailySummaryWebhookSlackChannel)
+		config.DailySummarySlackUsername = strings.TrimSpace(req.DailySummaryWebhookSlackUsername)
+		config.DailySummarySlackIconEmoji = strings.TrimSpace(req.DailySummaryWebhookSlackIconEmoji)
+		config.DailySummaryTeamsTitlePrefix = strings.TrimSpace(req.DailySummaryWebhookTeamsTitlePrefix)
 		saveConfigLocked()
 		webhookURL := strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := configuredWebhookEnabledLocked()
@@ -1803,18 +1895,32 @@ func handleConfigAlerts(w http.ResponseWriter, r *http.Request) {
 		slackUsername := strings.TrimSpace(config.WebhookSlackUsername)
 		slackIconEmoji := strings.TrimSpace(config.WebhookSlackIconEmoji)
 		teamsTitlePrefix := strings.TrimSpace(config.WebhookTeamsTitlePrefix)
+		dailySummaryWebhookURL := strings.TrimSpace(config.DailySummaryWebhookURL)
+		dailySummaryWebhookEnabled := configuredDailySummaryWebhookEnabledLocked()
+		dailySummaryWebhookProvider := configuredDailySummaryWebhookProviderLocked()
+		dailySummarySlackChannel := strings.TrimSpace(config.DailySummarySlackChannel)
+		dailySummarySlackUsername := strings.TrimSpace(config.DailySummarySlackUsername)
+		dailySummarySlackIconEmoji := strings.TrimSpace(config.DailySummarySlackIconEmoji)
+		dailySummaryTeamsTitlePrefix := strings.TrimSpace(config.DailySummaryTeamsTitlePrefix)
 		configMutex.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"saved":                      true,
-			"webhook_enabled":            webhookEnabled,
-			"webhook_url":                webhookURL,
-			"webhook_provider":           webhookProvider,
-			"webhook_slack_channel":      slackChannel,
-			"webhook_slack_username":     slackUsername,
-			"webhook_slack_icon_emoji":   slackIconEmoji,
-			"webhook_teams_title_prefix": teamsTitlePrefix,
-			"message":                    "Alerting settings saved.",
+			"saved":                                    true,
+			"webhook_enabled":                          webhookEnabled,
+			"webhook_url":                              webhookURL,
+			"webhook_provider":                         webhookProvider,
+			"webhook_slack_channel":                    slackChannel,
+			"webhook_slack_username":                   slackUsername,
+			"webhook_slack_icon_emoji":                 slackIconEmoji,
+			"webhook_teams_title_prefix":               teamsTitlePrefix,
+			"daily_summary_webhook_enabled":            dailySummaryWebhookEnabled,
+			"daily_summary_webhook_url":                dailySummaryWebhookURL,
+			"daily_summary_webhook_provider":           dailySummaryWebhookProvider,
+			"daily_summary_webhook_slack_channel":      dailySummarySlackChannel,
+			"daily_summary_webhook_slack_username":     dailySummarySlackUsername,
+			"daily_summary_webhook_slack_icon_emoji":   dailySummarySlackIconEmoji,
+			"daily_summary_webhook_teams_title_prefix": dailySummaryTeamsTitlePrefix,
+			"message": "Alerting settings saved.",
 		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -2823,6 +2929,19 @@ func sendWebhookEvent(payload map[string]interface{}) error {
 		return errors.New("webhook URL is empty")
 	}
 	opts := configuredWebhookFormatOptions()
+	return sendWebhookEventWith(webhookURL, opts, payload)
+}
+
+func sendDailySummaryWebhookEvent(payload map[string]interface{}) error {
+	webhookURL := configuredDailySummaryWebhookURL()
+	if strings.TrimSpace(webhookURL) == "" {
+		return errors.New("daily summary webhook URL is empty")
+	}
+	opts := configuredDailySummaryWebhookFormatOptions()
+	return sendWebhookEventWith(webhookURL, opts, payload)
+}
+
+func sendWebhookEventWith(webhookURL string, opts webhookFormatOptions, payload map[string]interface{}) error {
 	bodyPayload := formatWebhookPayload(opts, payload)
 	b, err := json.Marshal(bodyPayload)
 	if err != nil {
@@ -2923,6 +3042,42 @@ func buildWebhookText(payload map[string]interface{}) string {
 		}
 		return msg
 	}
+	if event == "blocked_daily_reconcile_summary" {
+		reconcileDay := payloadString(payload, "reconcile_day")
+		blockedTotal := payloadString(payload, "blocked_total")
+		reconciled := payloadString(payload, "reconciled_targets")
+		targetsTotal := payloadString(payload, "total_targets")
+		failedTargets := payloadString(payload, "failed_targets")
+		lines := []string{"Illumio Daily Blocked Reconcile Summary"}
+		if reconcileDay != "" {
+			lines = append(lines, "Day: "+reconcileDay)
+		}
+		if blockedTotal != "" {
+			lines = append(lines, "Blocked Total: "+blockedTotal)
+		}
+		if reconciled != "" || targetsTotal != "" {
+			lines = append(lines, fmt.Sprintf("Reconciled Targets: %s/%s", reconciled, targetsTotal))
+		}
+		if failedTargets != "" {
+			lines = append(lines, "Failed Targets: "+failedTargets)
+		}
+		if rawTargets, ok := payload["targets"].([]interface{}); ok && len(rawTargets) > 0 {
+			lines = append(lines, "Target Counts:")
+			for _, t := range rawTargets {
+				row, ok := t.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				name := strings.TrimSpace(fmt.Sprint(row["name"]))
+				count := strings.TrimSpace(fmt.Sprint(row["blocked_count"]))
+				if name == "" {
+					continue
+				}
+				lines = append(lines, fmt.Sprintf("- %s: %s", name, count))
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
 	lines := []string{fmt.Sprintf("Illumio Alert: %s (%s)", event, state)}
 	if target != "" {
 		lines = append(lines, "Target: "+target)
@@ -2955,6 +3110,13 @@ func buildTeamsFacts(payload map[string]interface{}) []map[string]string {
 		{"moving_avg_5m", "Moving Avg 5m"},
 		{"anomaly_threshold_pct", "Threshold %"},
 		{"ma_window_points", "MA Window"},
+		{"reconcile_day", "Reconcile Day"},
+		{"window_start_utc", "Window Start UTC"},
+		{"window_end_utc", "Window End UTC"},
+		{"blocked_total", "Blocked Total"},
+		{"reconciled_targets", "Reconciled Targets"},
+		{"total_targets", "Total Targets"},
+		{"failed_targets", "Failed Targets"},
 		{"reason", "Reason"},
 		{"dashboard_url", "Dashboard"},
 		{"timestamp", "Timestamp"},
@@ -6351,6 +6513,32 @@ func configuredWebhookProviderLocked() string {
 	return normalizeWebhookProvider(config.WebhookProvider)
 }
 
+func configuredDailySummaryWebhookEnabled() bool {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredDailySummaryWebhookEnabledLocked()
+}
+
+func configuredDailySummaryWebhookEnabledLocked() bool {
+	return config.DailySummaryWebhookEnabled && strings.TrimSpace(config.DailySummaryWebhookURL) != ""
+}
+
+func configuredDailySummaryWebhookURL() string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return strings.TrimSpace(config.DailySummaryWebhookURL)
+}
+
+func configuredDailySummaryWebhookProvider() string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredDailySummaryWebhookProviderLocked()
+}
+
+func configuredDailySummaryWebhookProviderLocked() string {
+	return normalizeWebhookProvider(config.DailySummaryWebhookProvider)
+}
+
 func normalizeWebhookProvider(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "slack":
@@ -6502,6 +6690,18 @@ func configuredWebhookFormatOptions() webhookFormatOptions {
 		SlackUsername:    strings.TrimSpace(config.WebhookSlackUsername),
 		SlackIconEmoji:   strings.TrimSpace(config.WebhookSlackIconEmoji),
 		TeamsTitlePrefix: strings.TrimSpace(config.WebhookTeamsTitlePrefix),
+	}
+}
+
+func configuredDailySummaryWebhookFormatOptions() webhookFormatOptions {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return webhookFormatOptions{
+		Provider:         configuredDailySummaryWebhookProviderLocked(),
+		SlackChannel:     strings.TrimSpace(config.DailySummarySlackChannel),
+		SlackUsername:    strings.TrimSpace(config.DailySummarySlackUsername),
+		SlackIconEmoji:   strings.TrimSpace(config.DailySummarySlackIconEmoji),
+		TeamsTitlePrefix: strings.TrimSpace(config.DailySummaryTeamsTitlePrefix),
 	}
 }
 
@@ -6818,6 +7018,7 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 	if reconcileDayKey != dayKey {
 		reconcileDayKey = dayKey
 		reconcileDoneByT = map[string]bool{}
+		reconcileSummarySentByD = map[string]bool{}
 	}
 	pending := make([]TrafficTarget, 0, len(targets))
 	for _, t := range targets {
@@ -6885,6 +7086,33 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 		reconcileMu.Unlock()
 	}
 
+	shouldSendSummary := false
+	reconciledTargetsCount := 0
+	totalTargetsCount := 0
+	reconcileMu.Lock()
+	allDone := true
+	for _, t := range targets {
+		name := strings.TrimSpace(t.Name)
+		if name == "" {
+			continue
+		}
+		totalTargetsCount++
+		if reconcileDoneByT[name] {
+			reconciledTargetsCount++
+			continue
+		}
+		allDone = false
+	}
+	if allDone && totalTargetsCount > 0 && !reconcileSummarySentByD[dayKey] {
+		reconcileSummarySentByD[dayKey] = true
+		shouldSendSummary = true
+	}
+	reconcileMu.Unlock()
+
+	if shouldSendSummary {
+		sendBlockedDailyReconcileSummaryWebhook(dayKey, dayStart.UTC(), dayEnd.UTC(), targets, reconciledTargetsCount, totalTargetsCount, 0)
+	}
+
 	pruneBlockedHistory(nowUTC, configuredHistoryDays())
 	if changedCounts {
 		saveBlockedHistory()
@@ -6895,6 +7123,53 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 	if verboseBlockedLoggingEnabled() {
 		log.Printf("[HISTORY] previous-day reconcile complete day=%s changed_counts=%t changed_ports=%t", dayKey, changedCounts, changedPorts)
 	}
+}
+
+func sendBlockedDailyReconcileSummaryWebhook(dayKey string, windowStartUTC time.Time, windowEndUTC time.Time, targets []TrafficTarget, reconciledTargets int, totalTargets int, failedTargets int) {
+	if !configuredDailySummaryWebhookEnabled() {
+		return
+	}
+	historyMu.Lock()
+	dayCounts := make(map[string]int, len(blockedDaily[dayKey]))
+	for k, v := range blockedDaily[dayKey] {
+		dayCounts[k] = v
+	}
+	historyMu.Unlock()
+
+	targetPayload := make([]map[string]interface{}, 0, len(targets))
+	totalBlocked := 0
+	for _, t := range targets {
+		name := strings.TrimSpace(t.Name)
+		if name == "" {
+			continue
+		}
+		count := dayCounts[name]
+		totalBlocked += count
+		targetPayload = append(targetPayload, map[string]interface{}{
+			"name":          name,
+			"kind":          strings.TrimSpace(t.Kind),
+			"blocked_count": count,
+		})
+	}
+	payload := map[string]interface{}{
+		"event":              "blocked_daily_reconcile_summary",
+		"state":              "completed",
+		"timestamp":          time.Now().UTC().Format(time.RFC3339),
+		"reconcile_day":      dayKey,
+		"window_start_utc":   windowStartUTC.Format(time.RFC3339),
+		"window_end_utc":     windowEndUTC.Format(time.RFC3339),
+		"blocked_total":      totalBlocked,
+		"reconciled_targets": reconciledTargets,
+		"total_targets":      totalTargets,
+		"failed_targets":     failedTargets,
+		"targets":            targetPayload,
+		"source_app":         "illumio-monitoring-dashboard",
+	}
+	if err := sendDailySummaryWebhookEvent(payload); err != nil {
+		log.Printf("[WEBHOOK] blocked daily reconcile summary send failed day=%s: %v", dayKey, err)
+		return
+	}
+	log.Printf("[WEBHOOK] blocked daily reconcile summary sent day=%s targets=%d blocked_total=%d", dayKey, len(targetPayload), totalBlocked)
 }
 
 func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) (int, int, int) {
@@ -9062,6 +9337,8 @@ func loadConfigFile() (Config, time.Time, bool) {
 	cfg.BlockedPortStoreBackend = normalizeBlockedPortStoreBackend(cfg.BlockedPortStoreBackend)
 	cfg.BlockedRollingDedupeBackend = normalizeBlockedRollingDedupeBackend(cfg.BlockedRollingDedupeBackend)
 	cfg.BlockedHostRetentionMode = normalizeBlockedHostRetentionMode(cfg.BlockedHostRetentionMode)
+	cfg.WebhookProvider = normalizeWebhookProvider(cfg.WebhookProvider)
+	cfg.DailySummaryWebhookProvider = normalizeWebhookProvider(cfg.DailySummaryWebhookProvider)
 	cfg.APIMaxRPM = normalizeAPIMaxRPM(cfg.APIMaxRPM)
 	cfg.HistoryDays = normalizeHistoryDays(cfg.HistoryDays)
 	cfg.TrafficTargets = sanitizeTargets(cfg.TrafficTargets)

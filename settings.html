@@ -498,6 +498,55 @@
                     <button class="btn btn-outline-primary btn-sm" id="btn-save-alerts" type="button">Save Alerting</button>
                     <button class="btn btn-outline-warning btn-sm" id="btn-test-webhook" type="button">Send Test Webhook</button>
                 </div>
+
+                <hr>
+                <div class="small fw-semibold text-uppercase text-muted mb-2">Daily Reconcile Summary Webhook</div>
+                <p class="text-muted small mb-2">Optional separate webhook for blocked end-of-day reconcile summaries (blocked metrics only).</p>
+
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="summary-webhook-enabled">Enabled</label>
+                    <select class="form-select form-select-sm" id="summary-webhook-enabled">
+                        <option value="false">Disabled</option>
+                        <option value="true">Enabled</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="summary-webhook-provider">Provider</label>
+                    <select class="form-select form-select-sm" id="summary-webhook-provider">
+                        <option value="generic">Generic JSON</option>
+                        <option value="slack">Slack Incoming Webhook</option>
+                        <option value="teams">Microsoft Teams Incoming Webhook</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label form-label-sm small text-muted mb-1" for="summary-webhook-url">Webhook URL</label>
+                    <input type="text" class="form-control form-control-sm" id="summary-webhook-url" placeholder="https://hooks.example.com/...">
+                </div>
+
+                <div id="summary-slack-fields" class="d-none">
+                    <div class="small text-muted mb-2">Slack Optional Overrides (may be ignored by some webhook setups)</div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="summary-slack-channel">Channel</label>
+                        <input type="text" class="form-control form-control-sm" id="summary-slack-channel" placeholder="#daily-summaries">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="summary-slack-username">Username</label>
+                        <input type="text" class="form-control form-control-sm" id="summary-slack-username" placeholder="Illumio Monitor">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="summary-slack-icon">Icon Emoji</label>
+                        <input type="text" class="form-control form-control-sm" id="summary-slack-icon" placeholder=":bar_chart:">
+                    </div>
+                </div>
+
+                <div id="summary-teams-fields" class="d-none">
+                    <div class="small text-muted mb-2">Teams Optional Overrides</div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="summary-teams-title-prefix">Title Prefix</label>
+                        <input type="text" class="form-control form-control-sm" id="summary-teams-title-prefix" placeholder="DAILY SUMMARY">
+                    </div>
+                </div>
+
                 <div class="small mt-2" id="msg-alerts"></div>
             </details>
         </div>
@@ -992,6 +1041,12 @@
             document.getElementById('teams-fields').classList.toggle('d-none', provider !== 'teams');
         }
 
+        function updateSummaryProviderSections() {
+            const provider = String(document.getElementById('summary-webhook-provider').value || 'generic');
+            document.getElementById('summary-slack-fields').classList.toggle('d-none', provider !== 'slack');
+            document.getElementById('summary-teams-fields').classList.toggle('d-none', provider !== 'teams');
+        }
+
         async function loadAlertSettings() {
             const r = await fetch('/api/config/alerts');
             if (!r.ok) throw new Error(`Load alert settings failed (${r.status})`);
@@ -1003,7 +1058,15 @@
             document.getElementById('slack-username').value = d.webhook_slack_username || '';
             document.getElementById('slack-icon').value = d.webhook_slack_icon_emoji || '';
             document.getElementById('teams-title-prefix').value = d.webhook_teams_title_prefix || '';
+            document.getElementById('summary-webhook-enabled').value = d.daily_summary_webhook_enabled ? 'true' : 'false';
+            document.getElementById('summary-webhook-provider').value = d.daily_summary_webhook_provider || 'generic';
+            document.getElementById('summary-webhook-url').value = d.daily_summary_webhook_url || '';
+            document.getElementById('summary-slack-channel').value = d.daily_summary_webhook_slack_channel || '';
+            document.getElementById('summary-slack-username').value = d.daily_summary_webhook_slack_username || '';
+            document.getElementById('summary-slack-icon').value = d.daily_summary_webhook_slack_icon_emoji || '';
+            document.getElementById('summary-teams-title-prefix').value = d.daily_summary_webhook_teams_title_prefix || '';
             updateProviderSections();
+            updateSummaryProviderSections();
         }
 
         async function loadCredentialSettings() {
@@ -1062,7 +1125,14 @@
                 webhook_slack_channel: String(document.getElementById('slack-channel').value || '').trim(),
                 webhook_slack_username: String(document.getElementById('slack-username').value || '').trim(),
                 webhook_slack_icon_emoji: String(document.getElementById('slack-icon').value || '').trim(),
-                webhook_teams_title_prefix: String(document.getElementById('teams-title-prefix').value || '').trim()
+                webhook_teams_title_prefix: String(document.getElementById('teams-title-prefix').value || '').trim(),
+                daily_summary_webhook_enabled: document.getElementById('summary-webhook-enabled').value === 'true',
+                daily_summary_webhook_provider: String(document.getElementById('summary-webhook-provider').value || 'generic').trim(),
+                daily_summary_webhook_url: String(document.getElementById('summary-webhook-url').value || '').trim(),
+                daily_summary_webhook_slack_channel: String(document.getElementById('summary-slack-channel').value || '').trim(),
+                daily_summary_webhook_slack_username: String(document.getElementById('summary-slack-username').value || '').trim(),
+                daily_summary_webhook_slack_icon_emoji: String(document.getElementById('summary-slack-icon').value || '').trim(),
+                daily_summary_webhook_teams_title_prefix: String(document.getElementById('summary-teams-title-prefix').value || '').trim()
             };
             const r = await fetch('/api/config/alerts', {
                 method: 'PUT',
@@ -1091,6 +1161,7 @@
             UICommon.setTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark', THEME_KEY, 'btn-theme');
         });
         document.getElementById('webhook-provider').addEventListener('change', updateProviderSections);
+        document.getElementById('summary-webhook-provider').addEventListener('change', updateSummaryProviderSections);
         document.getElementById('btn-add-target').addEventListener('click', () => {
             editableTargets.push({ name: '', kind: 'auto', blocked_ma_window: 0, blocked_anomaly_pct: 0 });
             renderTargetEditor();

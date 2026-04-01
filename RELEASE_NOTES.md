@@ -1,5 +1,13 @@
 # Release Notes
 
+## Unreleased
+
+### Added
+- Separate webhook channel support for blocked daily reconcile summaries.
+  - New optional settings for `daily_summary_webhook_*` (provider/url/enabled plus Slack/Teams overrides).
+  - Summary payload is blocked-traffic-only by design (does not include tampering metrics).
+  - Triggered when previous-day blocked reconciliation completes for all configured targets.
+
 ## v1.2.7
 
 Stable release focused on VEN status observability and suspended VEN workflow parity.
