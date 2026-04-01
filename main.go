@@ -4574,6 +4574,31 @@ func venHealthFromVEN(v map[string]interface{}) string {
 	return ""
 }
 
+func venStatusFromVEN(v map[string]interface{}) string {
+	if s := stringFromMap(v, "status"); s != "" {
+		return s
+	}
+	if s := stringFromMap(v, "ven_status"); s != "" {
+		return s
+	}
+	if s := stringFromMap(v, "status", "status"); s != "" {
+		return s
+	}
+	if s := stringFromMap(v, "status", "state"); s != "" {
+		return s
+	}
+	if s := stringFromMap(v, "status", "name"); s != "" {
+		return s
+	}
+	if s := stringFromMap(v, "ven", "status"); s != "" {
+		return s
+	}
+	if s := stringFromMap(v, "agent", "status"); s != "" {
+		return s
+	}
+	return ""
+}
+
 func venDisplayName(v map[string]interface{}) string {
 	name, _ := v["name"].(string)
 	if strings.TrimSpace(name) != "" {
@@ -4773,7 +4798,15 @@ func getIllumioStats() DashboardStats {
 
 	warningVENs, warnErr := getAllVENsByHealth(baseURL, "warning")
 	errorVENs, errErr := getAllVENsByHealth(baseURL, "error")
-	suspendedVENs, suspendedErr := getAllVENsByHealth(baseURL, "suspended")
+	allVENs, suspendedErr := getAllVENs(baseURL)
+	suspendedVENs := make([]map[string]interface{}, 0)
+	if suspendedErr == nil {
+		for _, v := range allVENs {
+			if venStatusFromVEN(v) == "suspended" {
+				suspendedVENs = append(suspendedVENs, v)
+			}
+		}
+	}
 	log.Printf("[COLLECTOR] VEN warning=%d error=%d suspended=%d warnErr=%v errErr=%v suspendedErr=%v", len(warningVENs), len(errorVENs), len(suspendedVENs), warnErr, errErr, suspendedErr)
 	for _, v := range warningVENs {
 		stats.VENStatus.Warning = append(stats.VENStatus.Warning, venDisplayWithReason(v))

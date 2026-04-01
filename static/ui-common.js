@@ -34,7 +34,7 @@
       'm-unmanaged': 'Workloads without active/managed VEN association.',
       'v-warn': 'Count of VENs from /vens?health=warning.',
       'v-err': 'Count of VENs from /vens?health=error.',
-      'v-suspended': 'Count of VENs from /vens?health=suspended.',
+      'v-suspended': 'Count of VENs whose status is suspended.',
       'tamp': 'Unique deduped VEN/workload names with agent.tampering events in window.'
     };
   }
