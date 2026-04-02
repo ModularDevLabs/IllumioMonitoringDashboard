@@ -7186,11 +7186,7 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 		var qRes trafficQueryResult
 		var portCounts map[string]int
 		var err error
-		if portDailyEnabled {
-			qRes, portCounts, err = getBlockedCountAndPortCountsForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
-		} else {
-			qRes, err = getBlockedCountForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
-		}
+		qRes, portCounts, err = getBlockedReconciledCountAndPortCountsForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
 		if err != nil {
 			log.Printf("[HISTORY] previous-day reconciliation failed for %s (%s): %v", target.Name, dayKey, err)
 			continue
@@ -7363,11 +7359,7 @@ func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, n
 			}
 			var qRes trafficQueryResult
 			var portCounts map[string]int
-			if portDailyEnabled {
-				qRes, portCounts, err = getBlockedCountAndPortCountsForTargetWindow(baseURL, target, dayStartLocal.UTC(), dayEndLocal.UTC(), sourceExcludeHRefs)
-			} else {
-				qRes, err = getBlockedCountForTargetWindow(baseURL, target, dayStartLocal.UTC(), dayEndLocal.UTC(), sourceExcludeHRefs)
-			}
+			qRes, portCounts, err = getBlockedReconciledCountAndPortCountsForTargetWindow(baseURL, target, dayStartLocal.UTC(), dayEndLocal.UTC(), sourceExcludeHRefs)
 			if err != nil {
 				failed++
 				log.Printf("[HISTORY] full reconcile failed day=%s target=%s: %v", dayKey, target.Name, err)
@@ -7443,11 +7435,7 @@ func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, 
 			portCounts map[string]int
 			err        error
 		)
-		if portDailyEnabled {
-			qRes, portCounts, err = getBlockedCountAndPortCountsForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
-		} else {
-			qRes, err = getBlockedCountForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
-		}
+		qRes, portCounts, err = getBlockedReconciledCountAndPortCountsForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
 		if err != nil {
 			failed++
 			log.Printf("[HISTORY] today reconcile failed day=%s target=%s: %v", dayKey, target.Name, err)
@@ -7560,6 +7548,18 @@ func getBlockedCountAndPortCountsForTargetWindow(baseURL string, target TrafficT
 	return res, ports, err
 }
 
+func getBlockedReconciledCountAndPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, error) {
+	res, ports, _, samples, err := getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, startUTC, endUTC, sourceExcludeHRefs)
+	if err != nil {
+		return trafficQueryResult{}, nil, err
+	}
+	// Reconcile counts should dedupe source+destination legs to avoid double-counting intra-target flows.
+	if unique := blockedUniqueCountFromSamples(samples); unique > 0 {
+		res.Count = unique
+	}
+	return res, ports, nil
+}
+
 func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
 	if isAllTrafficTarget(target) {
 		res, ports, hosts, samples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, nil, true, sourceExcludeHRefs, target.Name+"_combined_all", startUTC, endUTC, false)
@@ -7600,6 +7600,33 @@ func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, targ
 	samples = append(samples, srcSamples...)
 	samples = append(samples, dstSamples...)
 	return combined, ports, hosts, samples, nil
+}
+
+func blockedUniqueCountFromSamples(samples []blockedFlowSample) int {
+	if len(samples) == 0 {
+		return 0
+	}
+	seen := make(map[string]struct{}, len(samples))
+	for _, sample := range samples {
+		sig := normalizeBlockedSignatureForCrossLegDedupe(sample.Signature)
+		if sig == "" {
+			continue
+		}
+		seen[sig] = struct{}{}
+	}
+	return len(seen)
+}
+
+func normalizeBlockedSignatureForCrossLegDedupe(sig string) string {
+	sig = strings.TrimSpace(sig)
+	if sig == "" {
+		return ""
+	}
+	if idx := strings.Index(sig, "|"); idx > 0 && idx+1 < len(sig) {
+		// Signatures are prefixed with leg ("src|..." / "dst|..."); drop that for cross-leg dedupe.
+		return sig[idx+1:]
+	}
+	return sig
 }
 
 func collectBlockedTargetPaced(
