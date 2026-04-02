@@ -441,9 +441,11 @@ Use `/settings` to manage webhook alerting:
 - Set webhook URL
 - Optional Slack fields: channel, username, icon emoji
 - Optional Teams field: title prefix
-- Send test webhook
+- Send test webhooks (tests every enabled webhook configuration)
 - Optional separate webhook section for blocked end-of-day reconcile summaries (`daily_summary_webhook_*`)
 - Daily summary webhook sends blocked reconcile totals by target and does not include tampering counts
+- Daily summary webhook is sent automatically after previous-day blocked reconciliation completes
+- `Send Daily Summary Now` sends the same blocked summary payload on demand for the previous local-day window
 
 ## API Endpoints
 

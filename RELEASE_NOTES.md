@@ -1,12 +1,20 @@
 # Release Notes
 
-## Unreleased
+## v1.2.8 - 2026-04-02
 
 ### Added
 - Separate webhook channel support for blocked daily reconcile summaries.
   - New optional settings for `daily_summary_webhook_*` (provider/url/enabled plus Slack/Teams overrides).
   - Summary payload is blocked-traffic-only by design (does not include tampering metrics).
   - Triggered when previous-day blocked reconciliation completes for all configured targets.
+- Daily summary manual send endpoint:
+  - `POST /api/webhook/daily-summary/send`
+  - Sends previous-day blocked reconcile summary on demand.
+
+### Changed
+- Webhook test now validates all enabled webhook configurations (anomaly + daily summary).
+- Daily summary webhook message now includes per-target blocked totals by target name.
+- Alerting Settings action row moved to the top of the section for clearer save/test/send flow.
 
 ## v1.2.7
 
