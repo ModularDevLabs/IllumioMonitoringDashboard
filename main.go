@@ -37,6 +37,7 @@ var templateFS embed.FS
 
 const configFileName = "config.json"
 const blockedHistoryFileName = "blocked_daily_history.json"
+const blockedHistory5mCapturedFileName = "blocked_daily_5m_captured_history.json"
 const blockedPortHistoryFileName = "blocked_port_daily_history.json"
 const venHistoryFileName = "ven_daily_history.json"
 const rollingStateFileName = "rolling_state.json"
@@ -56,6 +57,7 @@ const defaultBlockedRollingDedupeBackend = "sqlite"
 const defaultBlockedHostRetentionMode = "rolling_24h_plus_daily"
 const allBlockedTargetDefaultName = "ALL-BLOCKED-TRAFFIC"
 const stateKeyBlockedDaily = "blocked_daily_records_v1"
+const stateKeyBlockedDaily5mCaptured = "blocked_daily_5m_captured_records_v1"
 const stateKeyVENDaily = "ven_daily_records_v1"
 const stateKeyRolling = "rolling_state_v1"
 const stateKeyAlert = "alert_state_v1"
@@ -218,6 +220,7 @@ type DrilldownResponse struct {
 	Trend                   []TrendPoint     `json:"trend,omitempty"`
 	Trend24h                []TrendPoint     `json:"trend_24h,omitempty"`
 	TrendDaily              []TrendPoint     `json:"trend_daily,omitempty"`
+	TrendDaily5mCaptured    []TrendPoint     `json:"trend_daily_5m_captured,omitempty"`
 	TrendMA24h              []TrendPointF    `json:"trend_ma_24h,omitempty"`
 	TrendMADaily            []TrendPointF    `json:"trend_ma_daily,omitempty"`
 	BlockedMAWindow         int              `json:"blocked_ma_window,omitempty"`
@@ -527,6 +530,7 @@ var (
 	rollingCache             rollingState
 	historyMu                sync.Mutex
 	blockedDaily             = map[string]map[string]int{}
+	blockedDaily5mCaptured   = map[string]map[string]int{}
 	blockedPortsDaily        = map[string]map[string]map[string]int{}
 	blockedHostsDaily        = map[string]map[string]map[string]hostTrafficCount{}
 	policyRulesetDaily       = map[string]map[string]int{}
@@ -831,6 +835,7 @@ func main() {
 	initDataDir()
 	initBlockedPortStore()
 	loadBlockedHistory()
+	loadBlockedHistory5mCaptured()
 	loadBlockedPortHistory()
 	loadBlockedHostHistory()
 	loadVENHistory()
@@ -1160,6 +1165,7 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Trend24h = blockedTrendSeries(target)
 		resp.TrendDaily = blockedDailyTrendSeries(target, configuredHistoryDays())
+		resp.TrendDaily5mCaptured = blockedDaily5mCapturedTrendSeries(target, configuredHistoryDays())
 		resp.BlockedPortDailyEnabled = configuredBlockedPortDailyEnabled()
 		resp.BlockedHostMetrics = configuredBlockedHostMetricsEnabled()
 		resp.BlockedHostRetention = configuredBlockedHostRetentionMode()
@@ -4159,6 +4165,34 @@ func blockedDailyTrendSeries(target string, keepDays int) []TrendPoint {
 	return points
 }
 
+func blockedDaily5mCapturedTrendSeries(target string, keepDays int) []TrendPoint {
+	if keepDays <= 0 {
+		keepDays = 365
+	}
+	loc := configuredDayLocation()
+	now := time.Now()
+	cutoff := localDayStart(now, loc).AddDate(0, 0, -keepDays)
+	historyMu.Lock()
+	points := make([]TrendPoint, 0, len(blockedDaily5mCaptured))
+	for day, targets := range blockedDaily5mCaptured {
+		d, err := parseDayKeyInLocation(day, loc)
+		if err != nil || d.Before(cutoff) {
+			continue
+		}
+		v, ok := targets[target]
+		if !ok {
+			continue
+		}
+		points = append(points, TrendPoint{
+			Timestamp: d.Add(12 * time.Hour).UTC(),
+			Value:     v,
+		})
+	}
+	historyMu.Unlock()
+	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
+	return points
+}
+
 func blockedTodaySoFarCount(target string, todayStartUTC, nowUTC time.Time) int {
 	target = strings.TrimSpace(target)
 	if target == "" {
@@ -6952,11 +6986,15 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 		if blockedDaily[dayKey] == nil {
 			blockedDaily[dayKey] = map[string]int{}
 		}
+		if blockedDaily5mCaptured[dayKey] == nil {
+			blockedDaily5mCaptured[dayKey] = map[string]int{}
+		}
 		for target, n := range blockedCounts {
 			if strings.TrimSpace(target) == "" || n <= 0 {
 				continue
 			}
 			blockedDaily[dayKey][target] += n
+			blockedDaily5mCaptured[dayKey][target] += n
 			changedCounts = true
 		}
 	}
@@ -7011,6 +7049,7 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 	pruneBlockedHistory(nowUTC, configuredHistoryDays())
 	if changedCounts {
 		saveBlockedHistory()
+		saveBlockedHistory5mCaptured()
 	}
 	if changedPorts {
 		saveBlockedPortHistory()
@@ -9961,6 +10000,7 @@ func migrateLegacyJSONStateToSQLite() {
 		return
 	}
 	migrateKVFromJSONFile(stateKeyBlockedDaily, dataFilePath(blockedHistoryFileName), &[]dailyBlockedRecord{})
+	migrateKVFromJSONFile(stateKeyBlockedDaily5mCaptured, dataFilePath(blockedHistory5mCapturedFileName), &[]dailyBlockedRecord{})
 	migrateKVFromJSONFile(stateKeyVENDaily, dataFilePath(venHistoryFileName), &[]venDailyRecord{})
 	migrateKVFromJSONFile(stateKeyRolling, dataFilePath(rollingStateFileName), &persistedRollingState{})
 	migrateKVFromJSONFile(stateKeyAlert, dataFilePath(alertStateFileName), &persistedAlertState{})
@@ -10375,6 +10415,44 @@ func loadBlockedHistory() {
 			blockedDaily[day] = map[string]int{}
 		}
 		blockedDaily[day][target] = rec.Count
+	}
+}
+
+func loadBlockedHistory5mCaptured() {
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	blockedDaily5mCaptured = map[string]map[string]int{}
+	var records []dailyBlockedRecord
+	if blockedPortStoreIsSQLite() {
+		ok, err := sqliteKVGetJSON(stateKeyBlockedDaily5mCaptured, &records)
+		if err != nil {
+			log.Printf("[HISTORY] failed loading blocked 5m-captured daily history from sqlite: %v", err)
+			return
+		}
+		if !ok {
+			return
+		}
+	} else {
+		file, err := os.Open(dataFilePath(blockedHistory5mCapturedFileName))
+		if err != nil {
+			return
+		}
+		defer file.Close()
+		if err := json.NewDecoder(file).Decode(&records); err != nil {
+			log.Printf("[HISTORY] failed loading blocked 5m-captured daily history: %v", err)
+			return
+		}
+	}
+	for _, rec := range records {
+		day := strings.TrimSpace(rec.Day)
+		target := strings.TrimSpace(rec.Target)
+		if day == "" || target == "" {
+			continue
+		}
+		if blockedDaily5mCaptured[day] == nil {
+			blockedDaily5mCaptured[day] = map[string]int{}
+		}
+		blockedDaily5mCaptured[day][target] = rec.Count
 	}
 }
 
@@ -10931,6 +11009,13 @@ func pruneBlockedHistory(nowUTC time.Time, keepDays int) {
 			changed = true
 		}
 	}
+	for day := range blockedDaily5mCaptured {
+		parsed, err := parseDayKeyInLocation(day, loc)
+		if err != nil || parsed.Before(cutoff) {
+			delete(blockedDaily5mCaptured, day)
+			changed = true
+		}
+	}
 	for day := range blockedPortsDaily {
 		parsed, err := parseDayKeyInLocation(day, loc)
 		if err != nil || parsed.Before(cutoff) {
@@ -10955,6 +11040,7 @@ func pruneBlockedHistory(nowUTC time.Time, keepDays int) {
 	historyMu.Unlock()
 	if changed {
 		saveBlockedHistory()
+		saveBlockedHistory5mCaptured()
 		saveBlockedPortHistory()
 		saveBlockedHostHistory()
 		savePolicyRulesetHistory()
@@ -10989,6 +11075,36 @@ func saveBlockedHistory() {
 
 	if err := writeJSONFileAtomic(dataFilePath(blockedHistoryFileName), records); err != nil {
 		log.Printf("[HISTORY] failed to save blocked history: %v", err)
+	}
+}
+
+func saveBlockedHistory5mCaptured() {
+	historyMu.Lock()
+	records := make([]dailyBlockedRecord, 0)
+	for day, targets := range blockedDaily5mCaptured {
+		for target, count := range targets {
+			records = append(records, dailyBlockedRecord{
+				Day:    day,
+				Target: target,
+				Count:  count,
+			})
+		}
+	}
+	historyMu.Unlock()
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Day == records[j].Day {
+			return records[i].Target < records[j].Target
+		}
+		return records[i].Day < records[j].Day
+	})
+	if blockedPortStoreIsSQLite() {
+		if err := sqliteKVSetJSON(stateKeyBlockedDaily5mCaptured, records); err != nil {
+			log.Printf("[HISTORY] failed to save blocked 5m-captured daily history (sqlite): %v", err)
+		}
+		return
+	}
+	if err := writeJSONFileAtomic(dataFilePath(blockedHistory5mCapturedFileName), records); err != nil {
+		log.Printf("[HISTORY] failed to save blocked 5m-captured daily history: %v", err)
 	}
 }
 

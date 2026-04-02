@@ -225,6 +225,7 @@
         let currentMetric = '';
         let trend24h = [];
         let trendDaily = [];
+        let trendDaily5mCaptured = [];
         let trendMA24h = [];
         let trendMADaily = [];
         let blockedMAWindow = 12;
@@ -417,6 +418,26 @@
                 pointHoverRadius: 5,
                 pointHitRadius: 8
             }];
+            if (currentMetric === 'blocked_target' && isDaily) {
+                const capturedDaily = filteredDaily(trendDaily5mCaptured || []);
+                const capturedByTS = new Map(capturedDaily.map((p) => [new Date(p.timestamp).toISOString(), Number(p.value || 0)]));
+                const capturedValues = points.map((p) => {
+                    const key = new Date(p.timestamp).toISOString();
+                    return capturedByTS.has(key) ? capturedByTS.get(key) : null;
+                });
+                datasets.push({
+                    label: 'Captured 24h(5m) Daily Sum',
+                    data: capturedValues,
+                    borderColor: '#20c997',
+                    backgroundColor: 'rgba(32, 201, 151, 0.08)',
+                    tension: 0.2,
+                    fill: false,
+                    pointRadius: 2,
+                    pointHoverRadius: 4,
+                    pointHitRadius: 7,
+                    borderWidth: 2
+                });
+            }
             if (maPoints && maPoints.length > 0) {
                 const maByTS = new Map(maPoints.map((p) => [new Date(p.timestamp).toISOString(), Number(p.value || 0)]));
                 const maLabel = blockedAnomalySource === 'daily'
@@ -734,6 +755,7 @@
                 trendBaselineCaptured = d.baseline_captured_utc || null;
                 trend24h = d.trend_24h || d.trend || [];
                 trendDaily = d.trend_daily || [];
+                trendDaily5mCaptured = d.trend_daily_5m_captured || [];
                 trendMA24h = d.trend_ma_24h || [];
                 trendMADaily = d.trend_ma_daily || [];
                 blockedPortDailyEnabled = d.blocked_port_daily_enabled !== false;
@@ -751,7 +773,8 @@
                         ? ` | Baseline warming up (target ${blockedMAWindow} day window)`
                         : ` | MA warming up (needs > ${blockedMAWindow} points)`)
                     : ` | MA points: ${trendMA24h.length}`;
-                document.getElementById('count').innerText = `${trend24h.length} point(s) in 24h(5m), ${trendDaily.length} point(s) daily${maWarmup}`;
+                const overlayMeta = trendDaily5mCaptured.length > 0 ? ` | captured-daily points: ${trendDaily5mCaptured.length}` : '';
+                document.getElementById('count').innerText = `${trend24h.length} point(s) in 24h(5m), ${trendDaily.length} point(s) daily${overlayMeta}${maWarmup}`;
                 trendMode = 'raw';
                 trendPoints = trend24h;
                 renderTrend(trendPoints, d.target ? `${d.target} blocked traffic` : 'Blocked traffic', { hideList: true, showControls: true });
@@ -764,6 +787,7 @@
             blockedHostRetentionMode = 'rolling_24h_plus_daily';
             blockedHostsDaily = [];
             blockedHosts24h = [];
+            trendDaily5mCaptured = [];
             renderBlockedPortsTable();
             renderBlockedHostsTable();
             if (d.metric === 'ven_warning' || d.metric === 'ven_error' || d.metric === 'ven_suspended') {
