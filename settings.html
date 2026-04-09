@@ -103,7 +103,7 @@
         .target-row {
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
             margin-bottom: 9px;
             width: 100%;
             border: 1px solid var(--border);
@@ -111,11 +111,19 @@
             background: var(--surface-2);
             padding: 8px;
         }
-        .target-row-controls {
+        .target-row-top {
             display: grid;
-            grid-template-columns: minmax(110px, 1fr) minmax(100px, 1fr) minmax(110px, 1fr) minmax(90px, 100px);
-            gap: 8px;
+            grid-template-columns: minmax(260px, 1fr) 120px 120px 92px;
+            gap: 6px;
             width: 100%;
+            align-items: center;
+        }
+        .target-row-bottom {
+            display: grid;
+            grid-template-columns: 120px 120px 120px;
+            gap: 6px;
+            width: 100%;
+            align-items: center;
         }
         .settings-grid {
             display: grid;
@@ -148,7 +156,8 @@
             color: #fff;
         }
         @media (max-width: 768px) {
-            .target-row-controls { grid-template-columns: 1fr 1fr; }
+            .target-row-top { grid-template-columns: 1fr 1fr; }
+            .target-row-bottom { grid-template-columns: 1fr 1fr 1fr; }
         }
     </style>
 </head>
@@ -621,22 +630,24 @@
                 const row = document.createElement('div');
                 row.className = 'target-row';
                 row.innerHTML = `
-                    <input type="text" class="form-control form-control-sm" placeholder="Target name (optional for kind=all)" value="${escAttr(target.name || '')}" data-type="name" data-idx="${idx}">
-                    <div class="target-row-controls">
+                    <div class="target-row-top">
+                        <input type="text" class="form-control form-control-sm" placeholder="Target name (optional for kind=all)" value="${escAttr(target.name || '')}" data-type="name" data-idx="${idx}">
                         <select class="form-select form-select-sm" data-type="kind" data-idx="${idx}">
                             <option value="auto" ${target.kind === 'auto' ? 'selected' : ''}>auto</option>
                             <option value="label_group" ${target.kind === 'label_group' ? 'selected' : ''}>label_group</option>
                             <option value="label" ${target.kind === 'label' ? 'selected' : ''}>label</option>
                             <option value="all" ${target.kind === 'all' ? 'selected' : ''}>all (blank src/dst)</option>
                         </select>
-                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" placeholder="MA win" title="5m points: 12=1h, 72=6h, 144=12h, 288=24h max. Daily chart MA uses days as points: 7=7d." value="${target.blocked_ma_window || ''}" data-type="ma_window" data-idx="${idx}">
-                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" placeholder="Anomaly %" value="${target.blocked_anomaly_pct || ''}" data-type="anomaly_pct" data-idx="${idx}">
                         <select class="form-select form-select-sm" data-type="alert_enabled" data-idx="${idx}">
                             <option value="true" ${target.blocked_alert_enabled !== false ? 'selected' : ''}>Alert On</option>
                             <option value="false" ${target.blocked_alert_enabled === false ? 'selected' : ''}>Alert Off</option>
                         </select>
+                        <button type="button" class="btn btn-outline-danger btn-sm" data-type="remove" data-idx="${idx}">Remove</button>
+                    </div>
+                    <div class="target-row-bottom">
+                        <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" placeholder="MA win" title="5m points: 12=1h, 72=6h, 144=12h, 288=24h max. Daily chart MA uses days as points: 7=7d." value="${target.blocked_ma_window || ''}" data-type="ma_window" data-idx="${idx}">
+                        <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" placeholder="Anomaly %" value="${target.blocked_anomaly_pct || ''}" data-type="anomaly_pct" data-idx="${idx}">
                         <input type="number" min="0" max="1000000" step="1" class="form-control form-control-sm" placeholder="Min latest" title="Per-target minimum latest 5m value required to alert. 0 = inherit global." value="${target.blocked_alert_min_latest || ''}" data-type="alert_min_latest" data-idx="${idx}">
-                        <button type="button" class="btn btn-outline-danger btn-sm w-100" data-type="remove" data-idx="${idx}">Remove</button>
                     </div>
                 `;
                 root.appendChild(row);
