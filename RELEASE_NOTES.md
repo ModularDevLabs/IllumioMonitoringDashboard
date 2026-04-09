@@ -1,5 +1,14 @@
 # Release Notes
 
+## v1.2.10 - 2026-04-08
+
+### Changed
+- Settings UI for traffic targets is now compact and responsive:
+  - Renders in one row on wider screens
+  - Reflows to two rows on narrower screens
+  - Tightened field spacing/sizing for short per-target anomaly values
+  - Restored clear `Remove` label on target row action button
+
 ## v1.2.9 - 2026-04-08
 
 ### Added
