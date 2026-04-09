@@ -199,6 +199,7 @@ Runtime state is stored in a shared data directory:
   "diagnostics_enabled": false,
   "blocked_ma_window": 12,
   "blocked_anomaly_pct": 50,
+  "blocked_alert_min_latest": 0,
   "blocked_anomaly_baseline": "daily",
   "blocked_anomaly_days": 7,
   "blocked_anomaly_min_coverage_pct": 70,
@@ -245,6 +246,7 @@ Runtime state is stored in a shared data directory:
 | `diagnostics_enabled` | Enable diagnostics endpoint | `false` | When `true`, enables `GET /api/diagnostics/perf` for troubleshooting |
 | `blocked_ma_window` | Global 5m moving-average window points | `12` | Range `2..288` |
 | `blocked_anomaly_pct` | Global blocked anomaly threshold percent | `50` | Range `1..10000` |
+| `blocked_alert_min_latest` | Global minimum latest 5m blocked value required to trigger blocked anomaly alerts | `0` | Range `0..1000000`; `0` disables floor |
 | `blocked_anomaly_baseline` | Baseline source for blocked anomaly detection | `5m` | `5m` compares latest 5m to 5m MA; `daily` compares latest 5m to N-day baseline |
 | `blocked_anomaly_days` | Daily baseline lookback days (when baseline=`daily`) | `7` | Range `1..3650`; averages last N daily totals, then compares latest 5m value vs that daily baseline |
 | `blocked_anomaly_min_coverage_pct` | Minimum daily baseline coverage before anomaly alerts are allowed | `70` | Range `1..100`; lower coverage stays in warmup/suppressed state |
@@ -259,7 +261,7 @@ Runtime state is stored in a shared data directory:
 | `tampering_anomaly_days` | Tampering daily baseline lookback days (when baseline=`daily`) | blocked days fallback | Range `1..3650` |
 | `tampering_anomaly_min_coverage_pct` | Tampering minimum daily baseline coverage before anomaly checks | blocked min coverage fallback | Range `1..100` |
 | `tampering_daily_anomaly_pct` | Tampering threshold when baseline=`daily` | tampering anomaly fallback | Range `1..10000` |
-| `traffic_targets[]` | Blocked traffic targets | built-in defaults | Each item has `name`, `kind`, optional per-target MA/anomaly overrides |
+| `traffic_targets[]` | Blocked traffic targets | built-in defaults | Each item has `name`, `kind`, optional per-target MA/anomaly overrides, and blocked alert controls |
 | `traffic_source_exclusions[]` | Source exclusions for blocked queries | empty | Each item has `name`, `kind`; field can be cleared to disable exclusions |
 | `webhook_enabled` | Enable webhook alert sends | `false` | Requires valid `webhook_url` |
 | `webhook_url` | Webhook endpoint | empty | Used for alert transitions + test webhook |
@@ -312,7 +314,7 @@ Guidance:
 ```json
 {
   "traffic_targets": [
-    { "name": "LG-E-PROD-ENVS", "kind": "label_group", "blocked_ma_window": 12, "blocked_anomaly_pct": 50 },
+    { "name": "LG-E-PROD-ENVS", "kind": "label_group", "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_alert_enabled": true, "blocked_alert_min_latest": 0 },
     { "name": "LG-E-NONPROD-ENVS", "kind": "label_group" },
     { "name": "E-WEB", "kind": "label" },
     { "name": "SOME-NAME", "kind": "auto" }
@@ -341,6 +343,8 @@ Optional source exclusions (leave empty to disable exclusions):
 Optional per-target blocked anomaly overrides:
 - `blocked_ma_window`: MA window points for this target only (2-288)
 - `blocked_anomaly_pct`: anomaly threshold percent for this target only (1-10000)
+- `blocked_alert_enabled`: set `false` to disable blocked anomaly alerts for this target
+- `blocked_alert_min_latest`: per-target minimum latest 5m blocked value required to alert (`0` inherits global `blocked_alert_min_latest`)
 - If omitted, global blocked anomaly settings are used.
 
 If `traffic_targets` is omitted, defaults are used:
@@ -416,6 +420,9 @@ Use `/settings` to manage traffic/data controls:
 5. Set daily blocked history retention days (saved to `config.json`)
 6. If enabling `rules_metrics_enabled`, policy totals populate on the next collector cycle (5 minutes) unless you click **Refresh Now**.
 7. To force policy totals immediately without a full cycle, click **Refresh Policy Metrics** in Settings.
+8. Use blocked anomaly alert controls to reduce noise:
+   - Global floor: `Blocked Alert Minimum Latest 5m Value`
+   - Per-target override: `Alert On/Off` and `Min latest` in each target row
 
 ### Hosting Settings
 
@@ -458,11 +465,12 @@ Use `/settings` to manage webhook alerting:
   - for `metric=blocked_target`, optional flags:
     - `include_ports=1`: include persisted daily blocked port/proto aggregates
     - `include_live_ports=1`: accepted for compatibility; ignored (drilldown uses persisted history only)
-  - for `metric=blocked_target` response (when enabled/configured):
+- for `metric=blocked_target` response (when enabled/configured):
     - `blocked_host_metrics_enabled`
     - `blocked_host_retention_mode`
     - `blocked_hosts_24h`: rolling 24h hostname aggregates (inbound/outbound); if snapshots are empty on first run, drilldown performs a live 24h fallback query
     - `blocked_hosts_daily`: daily hostname snapshots (when retention mode includes daily)
+    - `trend_daily_5m_captured`: daily points representing captured 24h(5m) sums (overlay line for daily blocked chart)
 - `GET /api/export/drilldown.csv?metric=<metric>[&target=<target>]`:
   - Export drilldown list + trend points (`24h (5m)` and `Daily` when available) to CSV
 - `GET /api/config/targets`:
@@ -474,7 +482,7 @@ Use `/settings` to manage webhook alerting:
   - Current `bind_address` and `public_base_url`
 - `PUT /api/config/targets`:
   - Save traffic/data settings
-  - body: `{ "traffic_targets": [{"name":"...","kind":"..."}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "blocked_host_metrics_enabled": false, "blocked_host_retention_mode": "rolling_24h_plus_daily", "rules_metrics_enabled": false, "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
+  - body: `{ "traffic_targets": [{"name":"...","kind":"...","blocked_alert_enabled":true,"blocked_alert_min_latest":0}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "blocked_host_metrics_enabled": false, "blocked_host_retention_mode": "rolling_24h_plus_daily", "rules_metrics_enabled": false, "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_alert_min_latest": 0, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
 - `POST /api/refresh`:
   - Trigger immediate collection cycle
 - `POST /api/refresh/policy-metrics`:

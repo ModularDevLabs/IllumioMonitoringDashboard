@@ -1,5 +1,20 @@
 # Release Notes
 
+## v1.2.9 - 2026-04-08
+
+### Added
+- Blocked alert noise controls:
+  - Global blocked alert floor: `blocked_alert_min_latest` (latest 5m minimum required before blocked anomaly alerts can trigger).
+  - Per-target blocked alert controls in traffic targets:
+    - `blocked_alert_enabled` (on/off per target)
+    - `blocked_alert_min_latest` (per-target override; `0` inherits global floor)
+- Blocked target Daily drilldown chart now overlays two daily lines:
+  - Reconciled daily totals (PCE-style daily query semantics)
+  - Captured 24h(5m) daily sum (`trend_daily_5m_captured`)
+
+### Changed
+- Restored blocked daily reconcile totals to match prior PCE-aligned daily query behavior (after dedupe experiment rollback).
+
 ## v1.2.8 - 2026-04-02
 
 ### Added
