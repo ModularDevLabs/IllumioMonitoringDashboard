@@ -96,6 +96,7 @@ type Config struct {
 	BlockedPortDailyEnabled      *bool           `json:"blocked_port_daily_enabled,omitempty"`
 	BlockedMAWindow              int             `json:"blocked_ma_window,omitempty"`
 	BlockedAnomalyPct            float64         `json:"blocked_anomaly_pct,omitempty"`
+	BlockedAlertMinLatest        int             `json:"blocked_alert_min_latest,omitempty"`
 	BlockedAnomalyBaseline       string          `json:"blocked_anomaly_baseline,omitempty"`
 	BlockedAnomalyDays           int             `json:"blocked_anomaly_days,omitempty"`
 	BlockedAnomalyMinPct         float64         `json:"blocked_anomaly_min_coverage_pct,omitempty"`
@@ -135,10 +136,12 @@ type Config struct {
 }
 
 type TrafficTarget struct {
-	Name              string  `json:"name"`
-	Kind              string  `json:"kind"`
-	BlockedMAWindow   int     `json:"blocked_ma_window,omitempty"`
-	BlockedAnomalyPct float64 `json:"blocked_anomaly_pct,omitempty"`
+	Name                  string  `json:"name"`
+	Kind                  string  `json:"kind"`
+	BlockedMAWindow       int     `json:"blocked_ma_window,omitempty"`
+	BlockedAnomalyPct     float64 `json:"blocked_anomaly_pct,omitempty"`
+	BlockedAlertEnabled   *bool   `json:"blocked_alert_enabled,omitempty"`
+	BlockedAlertMinLatest int     `json:"blocked_alert_min_latest,omitempty"`
 }
 
 type FetchStatus struct {
@@ -147,23 +150,25 @@ type FetchStatus struct {
 }
 
 type BlockedTargetResult struct {
-	Name             string      `json:"name"`
-	Kind             string      `json:"kind"`
-	Count            int         `json:"count"`
-	Baseline24h      int         `json:"baseline_24h,omitempty"`
-	IncrementalCount int         `json:"incremental_count,omitempty"`
-	IncrementalMins  int         `json:"incremental_minutes,omitempty"`
-	Warmup           bool        `json:"warmup"`
-	Warning          string      `json:"warning,omitempty"`
-	Latest5m         int         `json:"latest_5m,omitempty"`
-	MovingAvg5m      float64     `json:"moving_avg_5m,omitempty"`
-	Anomalous        bool        `json:"anomalous"`
-	AnomalyReason    string      `json:"anomaly_reason,omitempty"`
-	AnomalyWindow    int         `json:"anomaly_window,omitempty"`
-	AnomalyPct       float64     `json:"anomaly_pct,omitempty"`
-	AnomalySource    string      `json:"anomaly_source,omitempty"`
-	AnomalyCoverage  float64     `json:"anomaly_coverage_pct,omitempty"`
-	Status           FetchStatus `json:"status"`
+	Name                  string      `json:"name"`
+	Kind                  string      `json:"kind"`
+	Count                 int         `json:"count"`
+	Baseline24h           int         `json:"baseline_24h,omitempty"`
+	IncrementalCount      int         `json:"incremental_count,omitempty"`
+	IncrementalMins       int         `json:"incremental_minutes,omitempty"`
+	Warmup                bool        `json:"warmup"`
+	Warning               string      `json:"warning,omitempty"`
+	Latest5m              int         `json:"latest_5m,omitempty"`
+	MovingAvg5m           float64     `json:"moving_avg_5m,omitempty"`
+	Anomalous             bool        `json:"anomalous"`
+	AnomalyReason         string      `json:"anomaly_reason,omitempty"`
+	AnomalyWindow         int         `json:"anomaly_window,omitempty"`
+	AnomalyPct            float64     `json:"anomaly_pct,omitempty"`
+	BlockedAlertEnabled   bool        `json:"blocked_alert_enabled"`
+	BlockedAlertMinLatest int         `json:"blocked_alert_min_latest,omitempty"`
+	AnomalySource         string      `json:"anomaly_source,omitempty"`
+	AnomalyCoverage       float64     `json:"anomaly_coverage_pct,omitempty"`
+	Status                FetchStatus `json:"status"`
 }
 
 type DashboardStats struct {
@@ -225,6 +230,8 @@ type DrilldownResponse struct {
 	TrendMADaily            []TrendPointF    `json:"trend_ma_daily,omitempty"`
 	BlockedMAWindow         int              `json:"blocked_ma_window,omitempty"`
 	BlockedAnomalyPct       float64          `json:"blocked_anomaly_pct,omitempty"`
+	BlockedAlertEnabled     bool             `json:"blocked_alert_enabled"`
+	BlockedAlertMinLatest   int              `json:"blocked_alert_min_latest,omitempty"`
 	Anomalous               bool             `json:"anomalous,omitempty"`
 	AnomalyReason           string           `json:"anomaly_reason,omitempty"`
 	AnomalyWindow           int              `json:"anomaly_window,omitempty"`
@@ -1157,11 +1164,14 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		}
 		window := configuredBlockedMAWindow()
 		pct := configuredBlockedAnomalyPct()
+		alertMinLatest := configuredBlockedAlertMinLatest()
+		alertEnabled := true
 		baselineSource := configuredBlockedAnomalyBaselineSource()
 		baselineDays := configuredBlockedAnomalyBaselineDays()
 		minCoverage := configuredBlockedAnomalyMinCoveragePct()
 		if tt, ok := configuredTrafficTargetByName(target); ok {
 			window, pct = effectiveBlockedAnomalySettingsForTarget(tt, window, pct)
+			alertEnabled, alertMinLatest = effectiveBlockedAlertSettingsForTarget(tt, alertMinLatest)
 		}
 		resp.Trend24h = blockedTrendSeries(target)
 		resp.TrendDaily = blockedDailyTrendSeries(target, configuredHistoryDays())
@@ -1196,8 +1206,19 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.BlockedMAWindow = window
 		resp.BlockedAnomalyPct = pct
+		resp.BlockedAlertEnabled = alertEnabled
+		resp.BlockedAlertMinLatest = alertMinLatest
 		resp.AnomalySource = baselineSource
 		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
+		if !alertEnabled {
+			eval.Anomalous = false
+			if strings.TrimSpace(eval.Reason) == "" {
+				eval.Reason = "target anomaly alerting disabled"
+			}
+		} else if eval.Anomalous && eval.Latest < alertMinLatest {
+			eval.Anomalous = false
+			eval.Reason = fmt.Sprintf("latest 5m below minimum alert floor (%d)", alertMinLatest)
+		}
 		resp.Anomalous = eval.Anomalous
 		resp.AnomalyReason = eval.Reason
 		resp.AnomalyWindow = eval.Window
@@ -1353,6 +1374,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		maWindow := configuredBlockedMAWindowLocked()
 		dailyMAWindow := configuredDailyMAWindowLocked()
 		anomalyPct := configuredBlockedAnomalyPctLocked()
+		alertMinLatest := configuredBlockedAlertMinLatestLocked()
 		anomalyBaseline := configuredBlockedAnomalyBaselineSourceLocked()
 		anomalyDays := configuredBlockedAnomalyBaselineDaysLocked()
 		anomalyMinCoverage := configuredBlockedAnomalyMinCoveragePctLocked()
@@ -1407,6 +1429,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"blocked_ma_window":                        maWindow,
 			"daily_ma_window":                          dailyMAWindow,
 			"blocked_anomaly_pct":                      anomalyPct,
+			"blocked_alert_min_latest":                 alertMinLatest,
 			"blocked_anomaly_baseline":                 anomalyBaseline,
 			"blocked_anomaly_days":                     anomalyDays,
 			"blocked_anomaly_min_pct":                  anomalyMinCoverage,
@@ -1455,6 +1478,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			BlockedMAWindow              int             `json:"blocked_ma_window"`
 			DailyMAWindow                int             `json:"daily_ma_window"`
 			BlockedAnomalyPct            float64         `json:"blocked_anomaly_pct"`
+			BlockedAlertMinLatest        *int            `json:"blocked_alert_min_latest"`
 			BlockedAnomalyBaseline       *string         `json:"blocked_anomaly_baseline"`
 			BlockedAnomalyDays           int             `json:"blocked_anomaly_days"`
 			BlockedAnomalyMinPct         float64         `json:"blocked_anomaly_min_pct"`
@@ -1523,6 +1547,9 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.BlockedAnomalyPct > 0 {
 			config.BlockedAnomalyPct = req.BlockedAnomalyPct
+		}
+		if req.BlockedAlertMinLatest != nil {
+			config.BlockedAlertMinLatest = normalizeBlockedAlertMinLatest(*req.BlockedAlertMinLatest, configuredBlockedAlertMinLatestLocked())
 		}
 		if req.BlockedAnomalyBaseline != nil {
 			config.BlockedAnomalyBaseline = normalizeAnomalyBaselineSource(*req.BlockedAnomalyBaseline)
@@ -1642,6 +1669,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		maWindow := configuredBlockedMAWindowLocked()
 		dailyMAWindow := configuredDailyMAWindowLocked()
 		anomalyPct := configuredBlockedAnomalyPctLocked()
+		alertMinLatest := configuredBlockedAlertMinLatestLocked()
 		anomalyBaseline := configuredBlockedAnomalyBaselineSourceLocked()
 		anomalyDays := configuredBlockedAnomalyBaselineDaysLocked()
 		anomalyMinCoverage := configuredBlockedAnomalyMinCoveragePctLocked()
@@ -1695,6 +1723,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"blocked_ma_window":                        maWindow,
 			"daily_ma_window":                          dailyMAWindow,
 			"blocked_anomaly_pct":                      anomalyPct,
+			"blocked_alert_min_latest":                 alertMinLatest,
 			"blocked_anomaly_baseline":                 anomalyBaseline,
 			"blocked_anomaly_days":                     anomalyDays,
 			"blocked_anomaly_min_pct":                  anomalyMinCoverage,
@@ -4571,6 +4600,18 @@ func effectiveBlockedAnomalySettingsForTarget(target TrafficTarget, defaultWindo
 	return window, pct
 }
 
+func effectiveBlockedAlertSettingsForTarget(target TrafficTarget, defaultMinLatest int) (bool, int) {
+	enabled := true
+	if target.BlockedAlertEnabled != nil {
+		enabled = *target.BlockedAlertEnabled
+	}
+	minLatest := normalizeBlockedAlertMinLatest(defaultMinLatest, 0)
+	if target.BlockedAlertMinLatest > 0 {
+		minLatest = normalizeBlockedAlertMinLatest(target.BlockedAlertMinLatest, minLatest)
+	}
+	return enabled, minLatest
+}
+
 func configuredTrafficTargetByName(name string) (TrafficTarget, bool) {
 	targets := configuredTrafficTargets()
 	for _, t := range targets {
@@ -5373,6 +5414,7 @@ func getIllumioStats() DashboardStats {
 	anyWarmup := false
 	defaultMAWindow := configuredBlockedMAWindow()
 	defaultAnomalyPct := configuredBlockedAnomalyPct()
+	defaultAlertMinLatest := configuredBlockedAlertMinLatest()
 	defaultBaselineSource := configuredBlockedAnomalyBaselineSource()
 	defaultBaselineDays := configuredBlockedAnomalyBaselineDays()
 	defaultMinCoverage := configuredBlockedAnomalyMinCoveragePct()
@@ -5400,11 +5442,27 @@ func getIllumioStats() DashboardStats {
 		}
 		dailySeries := blockedDailyTrendSeries(name, configuredHistoryDays())
 		eval := blockedAnomalyFromConfig(series, dailySeries, maWindow, anomalyPct, defaultBaselineSource, defaultBaselineDays, defaultMinCoverage)
+		alertEnabled := true
+		alertMinLatest := defaultAlertMinLatest
+		if t, ok := targetCfgByName[strings.ToLower(strings.TrimSpace(name))]; ok {
+			alertEnabled, alertMinLatest = effectiveBlockedAlertSettingsForTarget(t, defaultAlertMinLatest)
+		}
+		if !alertEnabled {
+			eval.Anomalous = false
+			if strings.TrimSpace(eval.Reason) == "" {
+				eval.Reason = "target anomaly alerting disabled"
+			}
+		} else if eval.Anomalous && eval.Latest < alertMinLatest {
+			eval.Anomalous = false
+			eval.Reason = fmt.Sprintf("latest 5m below minimum alert floor (%d)", alertMinLatest)
+		}
 		stats.Blocked.Targets[i].Latest5m = eval.Latest
 		stats.Blocked.Targets[i].MovingAvg5m = eval.Baseline
 		stats.Blocked.Targets[i].Anomalous = eval.Anomalous
 		stats.Blocked.Targets[i].AnomalyWindow = eval.Window
 		stats.Blocked.Targets[i].AnomalyPct = anomalyPct
+		stats.Blocked.Targets[i].BlockedAlertEnabled = alertEnabled
+		stats.Blocked.Targets[i].BlockedAlertMinLatest = alertMinLatest
 		stats.Blocked.Targets[i].AnomalySource = eval.Source
 		stats.Blocked.Targets[i].AnomalyCoverage = eval.CoveragePct
 		if eval.Reason != "" {
@@ -6433,6 +6491,16 @@ func configuredBlockedAnomalyPctLocked() float64 {
 	return normalizeAnomalyPct(config.BlockedAnomalyPct, 50.0)
 }
 
+func configuredBlockedAlertMinLatest() int {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return configuredBlockedAlertMinLatestLocked()
+}
+
+func configuredBlockedAlertMinLatestLocked() int {
+	return normalizeBlockedAlertMinLatest(config.BlockedAlertMinLatest, 0)
+}
+
 func configuredBlockedAnomalyBaselineSource() string {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
@@ -6909,6 +6977,20 @@ func normalizeAnomalyPct(raw float64, fallback float64) float64 {
 		pct = 10000
 	}
 	return pct
+}
+
+func normalizeBlockedAlertMinLatest(raw int, fallback int) int {
+	v := raw
+	if v < 0 {
+		v = fallback
+	}
+	if v < 0 {
+		v = 0
+	}
+	if v > 1000000 {
+		v = 1000000
+	}
+	return v
 }
 
 func normalizeAnomalyBaselineSource(raw string) string {
@@ -7555,11 +7637,22 @@ func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
 		if t.BlockedAnomalyPct > 0 {
 			pct = normalizeAnomalyPct(t.BlockedAnomalyPct, 50.0)
 		}
+		var alertEnabledPtr *bool
+		if t.BlockedAlertEnabled != nil {
+			v := *t.BlockedAlertEnabled
+			alertEnabledPtr = &v
+		}
+		alertMinLatest := 0
+		if t.BlockedAlertMinLatest > 0 {
+			alertMinLatest = normalizeBlockedAlertMinLatest(t.BlockedAlertMinLatest, 0)
+		}
 		cleaned = append(cleaned, TrafficTarget{
-			Name:              name,
-			Kind:              kind,
-			BlockedMAWindow:   window,
-			BlockedAnomalyPct: pct,
+			Name:                  name,
+			Kind:                  kind,
+			BlockedMAWindow:       window,
+			BlockedAnomalyPct:     pct,
+			BlockedAlertEnabled:   alertEnabledPtr,
+			BlockedAlertMinLatest: alertMinLatest,
 		})
 	}
 	return cleaned
@@ -9519,6 +9612,7 @@ func loadConfigFile() (Config, time.Time, bool) {
 	cfg.BlockedHostRetentionMode = normalizeBlockedHostRetentionMode(cfg.BlockedHostRetentionMode)
 	cfg.WebhookProvider = normalizeWebhookProvider(cfg.WebhookProvider)
 	cfg.DailySummaryWebhookProvider = normalizeWebhookProvider(cfg.DailySummaryWebhookProvider)
+	cfg.BlockedAlertMinLatest = normalizeBlockedAlertMinLatest(cfg.BlockedAlertMinLatest, 0)
 	cfg.APIMaxRPM = normalizeAPIMaxRPM(cfg.APIMaxRPM)
 	cfg.HistoryDays = normalizeHistoryDays(cfg.HistoryDays)
 	cfg.TrafficTargets = sanitizeTargets(cfg.TrafficTargets)

@@ -253,6 +253,11 @@
                                 <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" id="blocked-anomaly-pct" value="50">
                             </div>
                             <div class="mb-2">
+                                <label class="form-label form-label-sm small text-muted mb-1" for="blocked-alert-min-latest">Blocked Alert Minimum Latest 5m Value</label>
+                                <input type="number" min="0" max="1000000" step="1" class="form-control form-control-sm" id="blocked-alert-min-latest" value="0">
+                                <div class="small text-muted mt-1">Global floor for blocked target alerts. `0` disables floor. Example: `5` requires latest 5m >= 5.</div>
+                            </div>
+                            <div class="mb-2">
                                 <label class="form-label form-label-sm small text-muted mb-1" for="blocked-anomaly-baseline">Blocked Anomaly Baseline Source</label>
                                 <select class="form-select form-select-sm" id="blocked-anomaly-baseline">
                                     <option value="5m">5m Moving Average</option>
@@ -564,6 +569,7 @@
         let rulesMetricsEnabled = false;
         let blockedMAWindow = 12;
         let blockedAnomalyPct = 50;
+        let blockedAlertMinLatest = 0;
         let blockedAnomalyBaseline = '5m';
         let blockedAnomalyDays = 7;
         let blockedAnomalyMinPct = 70;
@@ -625,6 +631,11 @@
                         </select>
                         <input type="number" min="2" max="288" step="1" class="form-control form-control-sm" placeholder="MA win" title="5m points: 12=1h, 72=6h, 144=12h, 288=24h max. Daily chart MA uses days as points: 7=7d." value="${target.blocked_ma_window || ''}" data-type="ma_window" data-idx="${idx}">
                         <input type="number" min="1" max="10000" step="1" class="form-control form-control-sm" placeholder="Anomaly %" value="${target.blocked_anomaly_pct || ''}" data-type="anomaly_pct" data-idx="${idx}">
+                        <select class="form-select form-select-sm" data-type="alert_enabled" data-idx="${idx}">
+                            <option value="true" ${target.blocked_alert_enabled !== false ? 'selected' : ''}>Alert On</option>
+                            <option value="false" ${target.blocked_alert_enabled === false ? 'selected' : ''}>Alert Off</option>
+                        </select>
+                        <input type="number" min="0" max="1000000" step="1" class="form-control form-control-sm" placeholder="Min latest" title="Per-target minimum latest 5m value required to alert. 0 = inherit global." value="${target.blocked_alert_min_latest || ''}" data-type="alert_min_latest" data-idx="${idx}">
                         <button type="button" class="btn btn-outline-danger btn-sm w-100" data-type="remove" data-idx="${idx}">Remove</button>
                     </div>
                 `;
@@ -645,6 +656,13 @@
                 const raw = String(e.target.value || '').trim();
                 editableTargets[Number(e.target.dataset.idx)].blocked_anomaly_pct = raw === '' ? 0 : Number(raw);
             }));
+            root.querySelectorAll('[data-type="alert_enabled"]').forEach((el) => el.addEventListener('change', (e) => {
+                editableTargets[Number(e.target.dataset.idx)].blocked_alert_enabled = e.target.value !== 'false';
+            }));
+            root.querySelectorAll('[data-type="alert_min_latest"]').forEach((el) => el.addEventListener('input', (e) => {
+                const raw = String(e.target.value || '').trim();
+                editableTargets[Number(e.target.dataset.idx)].blocked_alert_min_latest = raw === '' ? 0 : Number(raw);
+            }));
             root.querySelectorAll('[data-type="remove"]').forEach((el) => el.addEventListener('click', (e) => {
                 editableTargets.splice(Number(e.target.dataset.idx), 1);
                 renderTargetEditor();
@@ -663,6 +681,7 @@
             rulesMetricsEnabled = d.rules_metrics_enabled === true;
             blockedMAWindow = Number(d.blocked_ma_window || 12);
             blockedAnomalyPct = Number(d.blocked_anomaly_pct || 50);
+            blockedAlertMinLatest = Number(d.blocked_alert_min_latest || 0);
             blockedAnomalyBaseline = String(d.blocked_anomaly_baseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
             blockedAnomalyDays = Number(d.blocked_anomaly_days || 7);
             blockedAnomalyMinPct = Number(d.blocked_anomaly_min_pct || 70);
@@ -689,6 +708,7 @@
             document.getElementById('rules-metrics-enabled').value = rulesMetricsEnabled ? 'true' : 'false';
             document.getElementById('blocked-ma-window').value = blockedMAWindow;
             document.getElementById('blocked-anomaly-pct').value = blockedAnomalyPct;
+            document.getElementById('blocked-alert-min-latest').value = blockedAlertMinLatest;
             document.getElementById('blocked-anomaly-baseline').value = blockedAnomalyBaseline;
             document.getElementById('blocked-anomaly-days').value = blockedAnomalyDays;
             document.getElementById('blocked-anomaly-min-pct').value = blockedAnomalyMinPct;
@@ -712,7 +732,9 @@
                 name: t.name || '',
                 kind: t.kind || 'auto',
                 blocked_ma_window: Number(t.blocked_ma_window || 0),
-                blocked_anomaly_pct: Number(t.blocked_anomaly_pct || 0)
+                blocked_anomaly_pct: Number(t.blocked_anomaly_pct || 0),
+                blocked_alert_enabled: t.blocked_alert_enabled !== false,
+                blocked_alert_min_latest: Number(t.blocked_alert_min_latest || 0)
             }));
             renderTargetEditor();
         }
@@ -780,7 +802,9 @@
                     name: (t.name || '').trim(),
                     kind: (t.kind || 'auto').trim(),
                     blocked_ma_window: Number(t.blocked_ma_window || 0),
-                    blocked_anomaly_pct: Number(t.blocked_anomaly_pct || 0)
+                    blocked_anomaly_pct: Number(t.blocked_anomaly_pct || 0),
+                    blocked_alert_enabled: t.blocked_alert_enabled !== false,
+                    blocked_alert_min_latest: Number(t.blocked_alert_min_latest || 0)
                 }))
                 .map((t) => {
                     t.kind = t.kind.toLowerCase();
@@ -789,6 +813,9 @@
                     if (t.blocked_ma_window > 288) t.blocked_ma_window = 288;
                     if (!Number.isFinite(t.blocked_anomaly_pct) || t.blocked_anomaly_pct < 1) t.blocked_anomaly_pct = 0;
                     if (t.blocked_anomaly_pct > 10000) t.blocked_anomaly_pct = 10000;
+                    t.blocked_alert_enabled = t.blocked_alert_enabled !== false;
+                    if (!Number.isFinite(t.blocked_alert_min_latest) || t.blocked_alert_min_latest < 0) t.blocked_alert_min_latest = 0;
+                    if (t.blocked_alert_min_latest > 1000000) t.blocked_alert_min_latest = 1000000;
                     return t;
                 })
                 .filter((t) => t.name !== '' || t.kind === 'all');
@@ -831,6 +858,9 @@
                 let parsedAnomalyPct = Number(document.getElementById('blocked-anomaly-pct').value || blockedAnomalyPct || 50);
                 if (!Number.isFinite(parsedAnomalyPct) || parsedAnomalyPct < 1) parsedAnomalyPct = 50;
                 if (parsedAnomalyPct > 10000) parsedAnomalyPct = 10000;
+                let parsedAlertMinLatest = Number(document.getElementById('blocked-alert-min-latest').value || blockedAlertMinLatest || 0);
+                if (!Number.isFinite(parsedAlertMinLatest) || parsedAlertMinLatest < 0) parsedAlertMinLatest = 0;
+                if (parsedAlertMinLatest > 1000000) parsedAlertMinLatest = 1000000;
                 const parsedBaseline = String(document.getElementById('blocked-anomaly-baseline').value || blockedAnomalyBaseline || '5m').trim().toLowerCase() === 'daily' ? 'daily' : '5m';
                 let parsedBaselineDays = Number(document.getElementById('blocked-anomaly-days').value || blockedAnomalyDays || 7);
                 if (!Number.isFinite(parsedBaselineDays) || parsedBaselineDays < 1) parsedBaselineDays = 7;
@@ -843,6 +873,7 @@
                 if (parsedDailyMAWindow > 3650) parsedDailyMAWindow = 3650;
                 payload.blocked_ma_window = Math.floor(parsedMAWindow);
                 payload.blocked_anomaly_pct = Math.floor(parsedAnomalyPct);
+                payload.blocked_alert_min_latest = Math.floor(parsedAlertMinLatest);
                 payload.blocked_anomaly_baseline = parsedBaseline;
                 payload.blocked_anomaly_days = Math.floor(parsedBaselineDays);
                 payload.blocked_anomaly_min_pct = parsedBaselineMinPct;
@@ -1175,7 +1206,7 @@
         document.getElementById('webhook-provider').addEventListener('change', updateProviderSections);
         document.getElementById('summary-webhook-provider').addEventListener('change', updateSummaryProviderSections);
         document.getElementById('btn-add-target').addEventListener('click', () => {
-            editableTargets.push({ name: '', kind: 'auto', blocked_ma_window: 0, blocked_anomaly_pct: 0 });
+            editableTargets.push({ name: '', kind: 'auto', blocked_ma_window: 0, blocked_anomaly_pct: 0, blocked_alert_enabled: true, blocked_alert_min_latest: 0 });
             renderTargetEditor();
         });
         document.getElementById('btn-save-traffic').addEventListener('click', saveTrafficSettings);
