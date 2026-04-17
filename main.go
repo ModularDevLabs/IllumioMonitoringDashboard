@@ -1210,15 +1210,7 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.BlockedAlertMinLatest = alertMinLatest
 		resp.AnomalySource = baselineSource
 		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
-		if !alertEnabled {
-			eval.Anomalous = false
-			if strings.TrimSpace(eval.Reason) == "" {
-				eval.Reason = "target anomaly alerting disabled"
-			}
-		} else if eval.Anomalous && eval.Latest < alertMinLatest {
-			eval.Anomalous = false
-			eval.Reason = fmt.Sprintf("latest 5m below minimum alert floor (%d)", alertMinLatest)
-		}
+		eval = applyBlockedAlertPolicy(eval, alertEnabled, alertMinLatest)
 		resp.Anomalous = eval.Anomalous
 		resp.AnomalyReason = eval.Reason
 		resp.AnomalyWindow = eval.Window
@@ -4482,6 +4474,31 @@ type anomalyEvalResult struct {
 	CoveragePct float64
 }
 
+func applyBlockedAlertPolicy(eval anomalyEvalResult, alertEnabled bool, alertMinLatest int) anomalyEvalResult {
+	if !alertEnabled {
+		eval.Anomalous = false
+		if strings.TrimSpace(eval.Reason) == "" {
+			eval.Reason = "target anomaly alerting disabled"
+		}
+		return eval
+	}
+	// If the MA baseline is zero (quiet window), allow floor-crossing spikes to trigger.
+	if !eval.Anomalous &&
+		strings.EqualFold(strings.TrimSpace(eval.Source), "5m") &&
+		strings.Contains(strings.ToLower(strings.TrimSpace(eval.Reason)), "moving average is zero") &&
+		alertMinLatest > 0 &&
+		eval.Latest >= alertMinLatest {
+		eval.Anomalous = true
+		eval.Reason = fmt.Sprintf("latest 5m met minimum alert floor (%d) with zero moving-average baseline", alertMinLatest)
+		return eval
+	}
+	if eval.Anomalous && eval.Latest < alertMinLatest {
+		eval.Anomalous = false
+		eval.Reason = fmt.Sprintf("latest 5m below minimum alert floor (%d)", alertMinLatest)
+	}
+	return eval
+}
+
 func latestTrendValue(points []TrendPoint) int {
 	if len(points) == 0 {
 		return 0
@@ -5447,15 +5464,7 @@ func getIllumioStats() DashboardStats {
 		if t, ok := targetCfgByName[strings.ToLower(strings.TrimSpace(name))]; ok {
 			alertEnabled, alertMinLatest = effectiveBlockedAlertSettingsForTarget(t, defaultAlertMinLatest)
 		}
-		if !alertEnabled {
-			eval.Anomalous = false
-			if strings.TrimSpace(eval.Reason) == "" {
-				eval.Reason = "target anomaly alerting disabled"
-			}
-		} else if eval.Anomalous && eval.Latest < alertMinLatest {
-			eval.Anomalous = false
-			eval.Reason = fmt.Sprintf("latest 5m below minimum alert floor (%d)", alertMinLatest)
-		}
+		eval = applyBlockedAlertPolicy(eval, alertEnabled, alertMinLatest)
 		stats.Blocked.Targets[i].Latest5m = eval.Latest
 		stats.Blocked.Targets[i].MovingAvg5m = eval.Baseline
 		stats.Blocked.Targets[i].Anomalous = eval.Anomalous
