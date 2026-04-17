@@ -1,5 +1,13 @@
 # Release Notes
 
+## v1.2.11 - 2026-04-17
+
+### Fixed
+- Blocked target anomaly webhook trigger now handles quiet-window spikes correctly:
+  - when baseline source is `5m` and the prior moving-average window is all zeros,
+  - a latest value that meets/exceeds the configured minimum alert floor now triggers anomaly state and webhook.
+- This prevents missed alerts for large spikes after long zero-traffic periods.
+
 ## v1.2.10 - 2026-04-08
 
 ### Changed
