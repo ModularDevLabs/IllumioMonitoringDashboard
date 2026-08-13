@@ -151,7 +151,6 @@ func (c *Client) requestWithHeaders(ctx context.Context, method, path string, bo
 	// requestURL is derived from a server-side saved PCE profile and is checked
 	// against that exact origin. Async Location URLs and redirects are rejected
 	// unless they retain the same scheme and authority.
-	// codeql[go/request-forgery]
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, 0, nil, err
