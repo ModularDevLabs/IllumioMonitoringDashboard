@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"html"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -103,17 +102,18 @@ func reportTrendSVG(months []reportMonth) string {
 }
 
 func writeExclusiveFile(path string, data []byte) error {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, closeRoot, err := createExclusiveRootedFile(path, 0o600)
 	if err != nil {
 		return err
 	}
+	defer closeRoot()
 	if _, err = file.Write(data); err != nil {
 		_ = file.Close()
-		_ = os.Remove(path)
+		_ = removeRootedFile(path)
 		return err
 	}
 	if err = file.Close(); err != nil {
-		_ = os.Remove(path)
+		_ = removeRootedFile(path)
 		return err
 	}
 	return nil
@@ -279,7 +279,7 @@ func generateScheduledExecutiveArtifacts(csvPath string, template ReportTemplate
 		path := base + "-executive.pdf"
 		if err := generateExecutivePDF(path, metadata, summary, insights, coverage); err != nil {
 			for _, generatedPath := range paths {
-				_ = os.Remove(generatedPath)
+				_ = removeRootedFile(generatedPath)
 			}
 			return paths, fmt.Errorf("generate executive PDF: %w", err)
 		}

@@ -223,6 +223,29 @@ func TestBuildEmailMessageIncludesAttachment(t *testing.T) {
 	}
 }
 
+func TestBuildEmailMessageRejectsHeaderInjection(t *testing.T) {
+	t.Parallel()
+	_, err := buildEmailMessage(
+		DeliveryDestination{SMTPFrom: "sender@example.com", SMTPTo: []string{"recipient@example.com"}},
+		deliveryMessage{Title: "Report\r\nBcc: attacker@example.com", Text: "body"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "single-line") {
+		t.Fatalf("email header injection error = %v", err)
+	}
+}
+
+func TestNormalizeSFTPRemoteDirectoryRejectsTraversal(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"", ".", "../reports", "reports/../../secrets", "reports\\windows"} {
+		if _, err := normalizeSFTPRemoteDirectory(value); err == nil {
+			t.Fatalf("normalizeSFTPRemoteDirectory(%q) should fail", value)
+		}
+	}
+	if got, err := normalizeSFTPRemoteDirectory("/reports/monthly"); err != nil || got != "/reports/monthly" {
+		t.Fatalf("normalized SFTP directory = %q, %v", got, err)
+	}
+}
+
 func TestGenericWebhookMultipartDelivery(t *testing.T) {
 	t.Parallel()
 	artifact := filepath.Join(t.TempDir(), "report.csv")

@@ -119,6 +119,8 @@ This development build embeds the Blocked Traffic Extractor as an isolated modul
 - Extractor credentials remain in the platform user configuration directory under `illumio-monitoring-dashboard-extractor/pce_profiles.json` and drive only extractor requests.
 - Extractor templates, delivery destinations, run history, and saved datasets remain in that same dedicated extractor directory.
 - The integration is based on Blocked Traffic Extractor `v1.5.0`.
+- PCE operations require a saved extractor profile, and non-loopback PCE origins require HTTPS.
+- Artifact reads and writes are root-confined to prevent path and symlink traversal.
 
 See [BLOCKED_TRAFFIC_INTEGRATION.md](BLOCKED_TRAFFIC_INTEGRATION.md) for route, storage, security, and maintenance details.
 

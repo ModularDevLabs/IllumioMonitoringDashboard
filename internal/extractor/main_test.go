@@ -434,7 +434,7 @@ func TestValidatePCEURL(t *testing.T) {
 	if err != nil || got != "https://pce.example.com:8443" {
 		t.Fatalf("validatePCEURL returned %q, %v", got, err)
 	}
-	for _, invalid := range []string{"file:///tmp/pce", "https://user:pass@pce.example.com", "https://pce.example.com/api/v2", "https://pce.example.com?q=x"} {
+	for _, invalid := range []string{"file:///tmp/pce", "http://pce.example.com", "https://user:pass@pce.example.com", "https://pce.example.com/api/v2", "https://pce.example.com?q=x"} {
 		if _, err := validatePCEURL(invalid); err == nil {
 			t.Fatalf("validatePCEURL(%q) should fail", invalid)
 		}
@@ -998,6 +998,15 @@ func TestResolveConfigCredentialsUsesServerSideProfile(t *testing.T) {
 	}
 }
 
+func TestResolveConfigCredentialsRejectsRequestCredentialsWithoutSavedProfile(t *testing.T) {
+	_, err := resolveConfigCredentials(Config{
+		PCEURL: "https://attacker.example", OrgID: "1", APIKey: "request-key", APISecret: "request-secret",
+	})
+	if err == nil || !strings.Contains(err.Error(), "save and select") {
+		t.Fatalf("missing-profile error = %v", err)
+	}
+}
+
 func TestServeEmbeddedHTMLAddsMatchingCSPNonce(t *testing.T) {
 	t.Parallel()
 
@@ -1039,5 +1048,36 @@ func TestSecurityHeadersRejectsNonLoopbackDashboardHost(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("non-loopback dashboard request status = %d, want 403", recorder.Code)
+	}
+}
+
+func TestSecurityHeadersRejectsSpoofedLocalhostFromRemoteClient(t *testing.T) {
+	t.Parallel()
+
+	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://localhost:18443/", nil)
+	request.Host = "localhost:18443"
+	request.RemoteAddr = "192.0.2.25:54321"
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("spoofed localhost request status = %d, want 403", recorder.Code)
+	}
+}
+
+func TestSecurityHeadersAllowLoopbackHostAndRemote(t *testing.T) {
+	t.Parallel()
+
+	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://localhost:18443/", nil)
+	request.RemoteAddr = "127.0.0.1:54321"
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("loopback request status = %d, want 204", recorder.Code)
 	}
 }

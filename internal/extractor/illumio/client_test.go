@@ -77,6 +77,21 @@ func TestRequestRejectsCrossOriginAbsoluteURL(t *testing.T) {
 	}
 }
 
+func TestBuildURLRejectsUnsafeComponents(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient("https://pce.example.com", "1", "key", "secret")
+	for _, raw := range []string{
+		"https://user:pass@pce.example.com/api/v2/orgs/1/workloads",
+		"https://pce.example.com/api/v2/orgs/1/workloads#fragment",
+		"https://pce.example.com.evil.test/api/v2/orgs/1/workloads",
+	} {
+		if _, err := client.buildURL(raw); err == nil {
+			t.Fatalf("buildURL(%q) should fail", raw)
+		}
+	}
+}
+
 func TestRetryAfterDelay(t *testing.T) {
 	t.Parallel()
 

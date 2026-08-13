@@ -781,7 +781,7 @@
         async function saveProfile() {
             const name = document.getElementById('profile_name').value;
             if (!name) return alert("Please enter a profile name");
-            const config = getConfig(); config.name = name;
+            const config = getConfig(true); config.name = name;
             delete config.profile_name;
             const res = await fetch('/blocked-traffic/api/profiles/save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(config) });
             const data = await res.json();
@@ -1031,14 +1031,10 @@
             return { start: '', end: '', days: getRequestedDays() };
         }
 
-        function getConfig() {
-            const dateRange = getRequestedDateRange();
-            return {
+        function getConfig(includeCredentials = false) {
+			const dateRange = getRequestedDateRange();
+			const config = {
                 profile_name: document.getElementById('profileSelect').value,
-                pce_url: document.getElementById('pce_url').value,
-                org_id: document.getElementById('org_id').value,
-                api_key: document.getElementById('api_key').value,
-                api_secret: document.getElementById('api_secret').value,
                 src_labels: document.getElementById('src_labels').value,
                 dst_labels: document.getElementById('dst_labels').value,
                 exclude_src: document.getElementById('exclude_src').value,
@@ -1053,6 +1049,13 @@
 				analysis_primary_label: document.getElementById('analysis_primary_label').value || 'env',
 				analysis_secondary_label: document.getElementById('analysis_secondary_label').value || 'app'
             };
+			if (includeCredentials) {
+				config.pce_url = document.getElementById('pce_url').value;
+				config.org_id = document.getElementById('org_id').value;
+				config.api_key = document.getElementById('api_key').value;
+				config.api_secret = document.getElementById('api_secret').value;
+			}
+			return config;
         }
     </script>
 </body>

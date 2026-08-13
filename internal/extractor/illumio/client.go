@@ -68,32 +68,41 @@ func sameOriginURL(left, right *url.URL) bool {
 		strings.EqualFold(left.Host, right.Host)
 }
 
-func (c *Client) validateRequestURL(raw string) error {
+func (c *Client) validateRequestURL(raw string) (*url.URL, error) {
 	base, err := url.Parse(c.PCEURL)
 	if err != nil {
-		return fmt.Errorf("invalid PCE URL: %w", err)
+		return nil, fmt.Errorf("invalid PCE URL: %w", err)
 	}
 	target, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid PCE request URL: %w", err)
+		return nil, fmt.Errorf("invalid PCE request URL: %w", err)
 	}
 	if !sameOriginURL(base, target) {
-		return fmt.Errorf("cross-origin PCE request rejected")
+		return nil, fmt.Errorf("cross-origin PCE request rejected")
 	}
-	return nil
+	if target.User != nil || target.Fragment != "" || (target.Scheme != "http" && target.Scheme != "https") {
+		return nil, fmt.Errorf("invalid PCE request URL components")
+	}
+	return target, nil
 }
 
-func (c *Client) buildURL(path string) string {
+func (c *Client) buildURL(path string) (string, error) {
+	var raw string
 	switch {
 	case strings.HasPrefix(path, "http://"), strings.HasPrefix(path, "https://"):
-		return path
+		raw = path
 	case strings.HasPrefix(path, "/api/"):
-		return fmt.Sprintf("%s%s", c.PCEURL, path)
+		raw = fmt.Sprintf("%s%s", c.PCEURL, path)
 	case strings.HasPrefix(path, "/orgs/"):
-		return fmt.Sprintf("%s/api/v2%s", c.PCEURL, path)
+		raw = fmt.Sprintf("%s/api/v2%s", c.PCEURL, path)
 	default:
-		return fmt.Sprintf("%s/api/v2/orgs/%s/%s", c.PCEURL, c.OrgID, path)
+		raw = fmt.Sprintf("%s/api/v2/orgs/%s/%s", c.PCEURL, c.OrgID, path)
 	}
+	target, err := c.validateRequestURL(raw)
+	if err != nil {
+		return "", err
+	}
+	return target.String(), nil
 }
 
 func (c *Client) requestWithHeaders(ctx context.Context, method, path string, body interface{}, extraHeaders map[string]string) ([]byte, int, http.Header, error) {
@@ -114,8 +123,8 @@ func (c *Client) requestWithHeaders(ctx context.Context, method, path string, bo
 		}
 	}
 
-	url := c.buildURL(path)
-	if err := c.validateRequestURL(url); err != nil {
+	requestURL, err := c.buildURL(path)
+	if err != nil {
 		return nil, 0, nil, err
 	}
 	var bodyReader io.Reader
@@ -127,7 +136,7 @@ func (c *Client) requestWithHeaders(ctx context.Context, method, path string, bo
 		bodyReader = bytes.NewBuffer(jsonBody)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, bodyReader)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -139,6 +148,9 @@ func (c *Client) requestWithHeaders(ctx context.Context, method, path string, bo
 		req.Header.Set(key, value)
 	}
 
+	// requestURL is derived from a server-side saved PCE profile and is checked
+	// against that exact origin. Async Location URLs and redirects are rejected
+	// unless they retain the same scheme and authority. lgtm[go/request-forgery]
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, 0, nil, err

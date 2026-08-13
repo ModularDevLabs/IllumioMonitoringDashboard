@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -211,11 +210,12 @@ func handleAutomationRunArtifact(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "artifact not found")
 		return
 	}
-	file, err := os.Open(artifactPath)
+	file, closeRoot, err := openRootedFile(artifactPath)
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, "artifact is no longer available")
 		return
 	}
+	defer closeRoot()
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() {

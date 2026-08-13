@@ -1108,7 +1108,7 @@ func (manager *AutomationManager) applyRetention(template ReportTemplate) {
 				log.Printf("retention skipped artifact outside the template output folder: %s", cleaned)
 				continue
 			}
-			info, err := os.Lstat(cleaned)
+			info, err := lstatRootedFile(cleaned)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
@@ -1120,7 +1120,7 @@ func (manager *AutomationManager) applyRetention(template ReportTemplate) {
 				log.Printf("retention refused to remove non-file artifact %s", cleaned)
 				continue
 			}
-			if err := os.Remove(cleaned); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := removeRootedFile(cleaned); err != nil && !errors.Is(err, os.ErrNotExist) {
 				log.Printf("retention could not remove %s: %v", cleaned, err)
 			}
 		}

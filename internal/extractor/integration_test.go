@@ -23,6 +23,7 @@ func TestIntegratedHandlerUsesNamespacedUIAndIndependentCredentials(t *testing.T
 
 	pageRecorder := httptest.NewRecorder()
 	pageRequest := httptest.NewRequest(http.MethodGet, "http://localhost:18443/", nil)
+	pageRequest.RemoteAddr = "127.0.0.1:54321"
 	handler.ServeHTTP(pageRecorder, pageRequest)
 	if pageRecorder.Code != http.StatusOK {
 		t.Fatalf("extractor page status = %d", pageRecorder.Code)
@@ -40,6 +41,7 @@ func TestIntegratedHandlerUsesNamespacedUIAndIndependentCredentials(t *testing.T
 
 	versionRecorder := httptest.NewRecorder()
 	versionRequest := httptest.NewRequest(http.MethodGet, "http://localhost:18443/api/version", nil)
+	versionRequest.RemoteAddr = "[::1]:54321"
 	handler.ServeHTTP(versionRecorder, versionRequest)
 	if versionRecorder.Code != http.StatusOK {
 		t.Fatalf("extractor version status = %d", versionRecorder.Code)

@@ -662,9 +662,19 @@ func loopbackHost(hostport string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+func loopbackRemote(remoteAddress string) bool {
+	host := strings.TrimSpace(remoteAddress)
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !loopbackHost(r.Host) {
+		if !loopbackHost(r.Host) || !loopbackRemote(r.RemoteAddr) {
 			http.Error(w, "the Blocked Traffic Extractor is available only through localhost", http.StatusForbidden)
 			return
 		}
@@ -1150,6 +1160,9 @@ func validatePCEURL(raw string) (string, error) {
 	if parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
 		return "", fmt.Errorf("PCE URL must be an origin only, without a path, query, or fragment")
 	}
+	if parsed.Scheme == "http" && !loopbackHost(parsed.Host) {
+		return "", fmt.Errorf("PCE URL must use HTTPS unless it is a loopback development endpoint")
+	}
 	parsed.Path = ""
 	return strings.TrimSuffix(parsed.String(), "/"), nil
 }
@@ -1174,23 +1187,26 @@ func validatePort(raw string) (string, error) {
 
 func resolveConfigCredentials(cfg Config) (Config, error) {
 	profileName := strings.TrimSpace(cfg.ProfileName)
-	if profileName != "" {
-		state.Mu.Lock()
-		profile, ok := state.Profiles[profileName]
-		state.Mu.Unlock()
-		if !ok {
-			return Config{}, fmt.Errorf("saved profile %q was not found", profileName)
-		}
-		cfg.PCEURL = profile.PCEURL
-		cfg.OrgID = profile.OrgID
-		cfg.APIKey = profile.APIKey
-		cfg.APISecret = profile.APISecret
-		if strings.TrimSpace(cfg.AnalysisPrimary) == "" {
-			cfg.AnalysisPrimary = profile.AnalysisPrimary
-		}
-		if strings.TrimSpace(cfg.AnalysisSecondary) == "" {
-			cfg.AnalysisSecondary = profile.AnalysisSecondary
-		}
+	if profileName == "" {
+		return Config{}, fmt.Errorf("save and select an Extractor PCE profile before connecting")
+	}
+	state.Mu.Lock()
+	profile, ok := state.Profiles[profileName]
+	state.Mu.Unlock()
+	if !ok {
+		return Config{}, fmt.Errorf("saved profile %q was not found", profileName)
+	}
+	// Request bodies may select a profile and report parameters, but they never
+	// provide the network destination or credentials used by the HTTP client.
+	cfg.PCEURL = profile.PCEURL
+	cfg.OrgID = profile.OrgID
+	cfg.APIKey = profile.APIKey
+	cfg.APISecret = profile.APISecret
+	if strings.TrimSpace(cfg.AnalysisPrimary) == "" {
+		cfg.AnalysisPrimary = profile.AnalysisPrimary
+	}
+	if strings.TrimSpace(cfg.AnalysisSecondary) == "" {
+		cfg.AnalysisSecondary = profile.AnalysisSecondary
 	}
 
 	normalizedURL, err := validatePCEURL(cfg.PCEURL)
@@ -3167,7 +3183,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 		return
 	}
 
-	f, err := os.OpenFile(finalPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, closeRoot, err := createExclusiveRootedFile(finalPath, 0600)
 	if err != nil {
 		addLog(fmt.Sprintf("Error: %v", err))
 		markRunFinished("", false)
@@ -3176,8 +3192,9 @@ func runExtraction(ctx context.Context, cfg Config) {
 	outputComplete := false
 	defer func() {
 		_ = f.Close()
+		closeRoot()
 		if !outputComplete {
-			_ = os.Remove(finalPath)
+			_ = removeRootedFile(finalPath)
 		}
 	}()
 
@@ -3376,7 +3393,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 		Name: filepath.Base(finalPath), Rows: len(aggregatedFlows), FirstDetected: rangeStart, LastDetected: coverageEnd,
 		Months: monthSpan(rangeStart, coverageEnd),
 	}}})
-	if info, err := os.Stat(finalPath); err == nil {
+	if info, err := statRootedFile(finalPath); err == nil {
 		coverage.Files[0].Size = info.Size()
 	}
 

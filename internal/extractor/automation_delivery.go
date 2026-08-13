@@ -11,7 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
+	"mime/quotedprintable"
 	"net"
 	"net/http"
 	"net/mail"
@@ -19,6 +21,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -203,6 +206,11 @@ func validateDestination(destination *DeliveryDestination) error {
 		if !filepath.IsAbs(destination.FolderPath) {
 			return fmt.Errorf("shared-folder destination must be an absolute path")
 		}
+		root, err := openExistingRoot(destination.FolderPath)
+		if err != nil {
+			return fmt.Errorf("shared-folder destination must already exist: %w", err)
+		}
+		_ = root.Close()
 	case "sftp":
 		if destination.SFTPHost == "" || destination.SFTPUsername == "" || destination.SFTPRemotePath == "" || destination.SFTPHostKey == "" {
 			return fmt.Errorf("SFTP host, username, remote path, and pinned host public key are required")
@@ -222,6 +230,17 @@ func validateDestination(destination *DeliveryDestination) error {
 		if destination.SFTPPrivateKeyPath != "" && !filepath.IsAbs(destination.SFTPPrivateKeyPath) {
 			return fmt.Errorf("SFTP private-key path must be absolute")
 		}
+		if destination.SFTPPrivateKeyPath != "" {
+			info, err := statRootedFile(destination.SFTPPrivateKeyPath)
+			if err != nil || !info.Mode().IsRegular() {
+				return fmt.Errorf("SFTP private-key path must identify a regular file")
+			}
+		}
+		remotePath, err := normalizeSFTPRemoteDirectory(destination.SFTPRemotePath)
+		if err != nil {
+			return err
+		}
+		destination.SFTPRemotePath = remotePath
 	default:
 		return fmt.Errorf("destination type must be generic_webhook, slack_webhook, slack_api, teams_workflow, email, shared_folder, or sftp")
 	}
@@ -485,14 +504,14 @@ func artifactData(message deliveryMessage) ([]byte, string, error) {
 	if message.ArtifactPath == "" {
 		return nil, "", nil
 	}
-	info, err := os.Stat(message.ArtifactPath)
+	info, err := statRootedFile(message.ArtifactPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("read report artifact: %w", err)
 	}
 	if info.Size() > maxDeliveryArtifactSize {
 		return nil, "", fmt.Errorf("report artifact exceeds the %d MiB delivery limit", maxDeliveryArtifactSize>>20)
 	}
-	data, err := os.ReadFile(message.ArtifactPath)
+	data, err := readRootedFile(message.ArtifactPath)
 	if err != nil {
 		return nil, "", err
 	}
@@ -741,13 +760,37 @@ func deliverSlackFile(ctx context.Context, destination DeliveryDestination, mess
 }
 
 func buildEmailMessage(destination DeliveryDestination, message deliveryMessage) ([]byte, error) {
+	from, err := mail.ParseAddress(destination.SMTPFrom)
+	if err != nil {
+		return nil, fmt.Errorf("invalid SMTP from address: %w", err)
+	}
+	recipients := make([]string, 0, len(destination.SMTPTo))
+	for _, rawRecipient := range destination.SMTPTo {
+		recipient, err := mail.ParseAddress(rawRecipient)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SMTP recipient: %w", err)
+		}
+		recipients = append(recipients, recipient.String())
+	}
+	title, err := singleLineEmailHeader(message.Title)
+	if err != nil {
+		return nil, err
+	}
 	boundary := "itt-" + newAutomationID("mail")
 	buffer := &bytes.Buffer{}
-	fmt.Fprintf(buffer, "From: %s\r\n", destination.SMTPFrom)
-	fmt.Fprintf(buffer, "To: %s\r\n", strings.Join(destination.SMTPTo, ", "))
-	fmt.Fprintf(buffer, "Subject: %s\r\n", message.Title)
+	fmt.Fprintf(buffer, "From: %s\r\n", from.String())
+	fmt.Fprintf(buffer, "To: %s\r\n", strings.Join(recipients, ", "))
+	fmt.Fprintf(buffer, "Subject: %s\r\n", mime.QEncoding.Encode("utf-8", title))
 	fmt.Fprintf(buffer, "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=%q\r\n\r\n", boundary)
-	fmt.Fprintf(buffer, "--%s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s\r\n", boundary, message.Text)
+	fmt.Fprintf(buffer, "--%s\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n", boundary)
+	bodyWriter := quotedprintable.NewWriter(buffer)
+	if _, err := bodyWriter.Write([]byte(message.Text)); err != nil {
+		return nil, err
+	}
+	if err := bodyWriter.Close(); err != nil {
+		return nil, err
+	}
+	buffer.WriteString("\r\n")
 	if message.ArtifactPath != "" {
 		data, name, err := artifactData(message)
 		if err != nil {
@@ -763,6 +806,19 @@ func buildEmailMessage(destination DeliveryDestination, message deliveryMessage)
 	}
 	fmt.Fprintf(buffer, "--%s--\r\n", boundary)
 	return buffer.Bytes(), nil
+}
+
+func singleLineEmailHeader(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
+		return "", fmt.Errorf("email subject must be a non-empty single-line value")
+	}
+	for _, character := range value {
+		if character < 0x20 && character != '\t' {
+			return "", fmt.Errorf("email subject contains an unsupported control character")
+		}
+	}
+	return value, nil
 }
 
 func deliverEmail(ctx context.Context, destination DeliveryDestination, message deliveryMessage) error {
@@ -821,6 +877,10 @@ func deliverEmail(ctx context.Context, destination DeliveryDestination, message 
 	if err != nil {
 		return err
 	}
+	// buildEmailMessage parses every address, rejects control characters in
+	// headers, RFC 2047-encodes the subject, quoted-printable-encodes the body,
+	// and base64-encodes attachments before the SMTP DATA sink.
+	// lgtm[go/email-injection]
 	if _, err := writer.Write(payload); err != nil {
 		_ = writer.Close()
 		return err
@@ -838,13 +898,11 @@ func copyArtifactNoOverwrite(sourcePath, destinationFolder string) error {
 	if !filepath.IsAbs(destinationFolder) {
 		return fmt.Errorf("destination folder must be absolute")
 	}
-	if err := os.MkdirAll(destinationFolder, 0700); err != nil {
-		return err
-	}
-	source, err := os.Open(sourcePath)
+	source, closeSourceRoot, err := openRootedFile(sourcePath)
 	if err != nil {
 		return err
 	}
+	defer closeSourceRoot()
 	defer source.Close()
 	info, err := source.Stat()
 	if err != nil {
@@ -856,8 +914,13 @@ func copyArtifactNoOverwrite(sourcePath, destinationFolder string) error {
 	if info.Size() > maxDeliveryArtifactSize {
 		return fmt.Errorf("report artifact exceeds the %d MiB delivery limit", maxDeliveryArtifactSize>>20)
 	}
-	destinationPath := filepath.Join(destinationFolder, filepath.Base(sourcePath))
-	destination, err := os.OpenFile(destinationPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	destinationRoot, err := openExistingRoot(destinationFolder)
+	if err != nil {
+		return err
+	}
+	defer destinationRoot.Close()
+	destinationName := filepath.Base(sourcePath)
+	destination, err := destinationRoot.OpenFile(destinationName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
@@ -865,7 +928,7 @@ func copyArtifactNoOverwrite(sourcePath, destinationFolder string) error {
 	defer func() {
 		_ = destination.Close()
 		if !complete {
-			_ = os.Remove(destinationPath)
+			_ = destinationRoot.Remove(destinationName)
 		}
 	}()
 	if _, err := io.Copy(destination, source); err != nil {
@@ -908,7 +971,7 @@ func sftpSSHConfig(destination DeliveryDestination) (*ssh.ClientConfig, error) {
 		auth = append(auth, ssh.Password(destination.SFTPPassword))
 	}
 	if destination.SFTPPrivateKeyPath != "" {
-		keyData, err := os.ReadFile(destination.SFTPPrivateKeyPath)
+		keyData, err := readRootedFile(destination.SFTPPrivateKeyPath)
 		if err != nil {
 			return nil, fmt.Errorf("read SFTP private key: %w", err)
 		}
@@ -928,7 +991,7 @@ func deliverSFTP(ctx context.Context, destination DeliveryDestination, message d
 	if message.ArtifactPath == "" {
 		return fmt.Errorf("SFTP delivery requires a report artifact")
 	}
-	artifactInfo, err := os.Stat(message.ArtifactPath)
+	artifactInfo, err := statRootedFile(message.ArtifactPath)
 	if err != nil {
 		return err
 	}
@@ -944,16 +1007,25 @@ func deliverSFTP(ctx context.Context, destination DeliveryDestination, message d
 	}
 	defer cleanup()
 
-	remoteDirectory := destination.SFTPRemotePath
+	remoteDirectory, err := normalizeSFTPRemoteDirectory(destination.SFTPRemotePath)
+	if err != nil {
+		return err
+	}
+	// The remote directory is normalized and traversal-free before it reaches
+	// the SFTP server. lgtm[go/path-injection]
 	if err := client.MkdirAll(remoteDirectory); err != nil {
 		return err
 	}
-	remotePath := filepath.ToSlash(filepath.Join(remoteDirectory, filepath.Base(message.ArtifactPath)))
+	remotePath := pathpkg.Join(remoteDirectory, filepath.Base(message.ArtifactPath))
+	// remotePath is confined to the validated SFTP directory and a local base
+	// filename. lgtm[go/path-injection]
 	if _, err := client.Stat(remotePath); err == nil {
 		return fmt.Errorf("remote artifact already exists: %s", remotePath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		// Servers do not consistently wrap missing-path errors; creation with O_EXCL is authoritative below.
 	}
+	// The SFTP target cannot contain traversal after normalization.
+	// lgtm[go/path-injection]
 	remoteFile, err := client.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	if err != nil {
 		return err
@@ -962,13 +1034,16 @@ func deliverSFTP(ctx context.Context, destination DeliveryDestination, message d
 	defer func() {
 		_ = remoteFile.Close()
 		if !complete {
+			// remotePath passed the traversal-free SFTP normalization above.
+			// lgtm[go/path-injection]
 			_ = client.Remove(remotePath)
 		}
 	}()
-	localFile, err := os.Open(message.ArtifactPath)
+	localFile, closeLocalRoot, err := openRootedFile(message.ArtifactPath)
 	if err != nil {
 		return err
 	}
+	defer closeLocalRoot()
 	defer localFile.Close()
 	if _, err := io.Copy(remoteFile, localFile); err != nil {
 		return err
@@ -978,6 +1053,18 @@ func deliverSFTP(ctx context.Context, destination DeliveryDestination, message d
 	}
 	complete = true
 	return nil
+}
+
+func normalizeSFTPRemoteDirectory(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, "\\\x00\r\n") {
+		return "", fmt.Errorf("SFTP remote path must be a non-empty POSIX path")
+	}
+	cleaned := pathpkg.Clean(value)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") {
+		return "", fmt.Errorf("SFTP remote path must not contain traversal")
+	}
+	return cleaned, nil
 }
 
 func openSFTPClient(ctx context.Context, destination DeliveryDestination) (*sftp.Client, func(), error) {
@@ -1038,7 +1125,12 @@ func (manager *AutomationManager) testDestination(ctx context.Context, id string
 		_ = testFile.Close()
 		defer os.Remove(testPath)
 		message.ArtifactPath = testPath
-		defer os.Remove(filepath.Join(destination.FolderPath, filepath.Base(testPath)))
+		destinationRoot, rootErr := openExistingRoot(destination.FolderPath)
+		if rootErr != nil {
+			return destinationError(rootErr, destination)
+		}
+		defer destinationRoot.Close()
+		defer destinationRoot.Remove(filepath.Base(testPath))
 	}
 	if destination.Type == "sftp" {
 		client, cleanup, err := openSFTPClient(ctx, destination)
@@ -1046,7 +1138,13 @@ func (manager *AutomationManager) testDestination(ctx context.Context, id string
 			return destinationError(err, destination)
 		}
 		defer cleanup()
-		_, err = client.Stat(destination.SFTPRemotePath)
+		remotePath, pathErr := normalizeSFTPRemoteDirectory(destination.SFTPRemotePath)
+		if pathErr != nil {
+			return destinationError(pathErr, destination)
+		}
+		// remotePath is a normalized, traversal-free POSIX directory.
+		// lgtm[go/path-injection]
+		_, err = client.Stat(remotePath)
 		return destinationError(err, destination)
 	}
 	if destination.Type == "slack_api" {

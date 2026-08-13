@@ -28,6 +28,8 @@ The two functions intentionally keep independent Illumio credentials.
 
 The embedded extractor does not read, copy, or fall back to dashboard credentials. A user must explicitly create or select an extractor PCE profile even when both functions connect to the same PCE.
 
+Interactive PCE operations accept only a saved profile name. PCE URLs and credentials submitted with an extraction request are ignored, preventing request-time network destination substitution. Saved non-loopback PCE origins must use HTTPS; HTTP remains available only for loopback development endpoints.
+
 On Linux, integrated extractor state is normally stored below `$XDG_CONFIG_HOME/illumio-monitoring-dashboard-extractor` or `~/.config/illumio-monitoring-dashboard-extractor`. Equivalent platform user-configuration locations are used on Windows and macOS. Profile and automation files are created with private permissions where the platform supports them.
 
 The integrated module intentionally does not reuse the standalone Blocked Traffic Extractor's configuration directory. This prevents an independently running extractor and the dashboard development build from executing the same scheduled templates or writing the same state files concurrently.
@@ -42,8 +44,12 @@ All extractor browser and API routes are namespaced:
 
 The module uses same-origin checks for state-changing calls and additionally requires a localhost host name or loopback address. If the dashboard listener is exposed on a network interface, remote users can use dashboard functions but receive `403 Forbidden` for `/blocked-traffic/...`. This intentionally preserves the extractor's localhost-only security boundary for the development preview.
 
+Extractor artifact operations use Go's root-confined filesystem API. Output filenames cannot traverse outside their selected absolute directory, symlink escapes are rejected, existing artifacts are never overwritten, shared-folder destinations must already exist, SFTP remote paths are normalized and traversal-free, and email delivery uses parsed addresses plus encoded headers and body content.
+
 ## Source and maintenance
 
 The initial integration is based on `ModularDevLabs/Illumio-Blocked-Traffic-Extractor` tag `v1.5.0`, commit `60ca5b4c5bfbd910ae47d9c9884811d868f070f1`. Its Go code and embedded frontend live under `internal/extractor` so its state and route behavior remain encapsulated.
 
 Future extractor updates should be ported into that package, then have absolute browser routes rebased to `/blocked-traffic` and the integration test suite run before publishing another dashboard development build.
+
+Building this branch from source requires Go 1.25 or newer for root-confined filesystem access. Published binaries remain self-contained.
