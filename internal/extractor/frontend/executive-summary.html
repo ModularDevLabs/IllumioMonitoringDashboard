@@ -1,0 +1,1706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Illumio Executive Summary</title>
+    <link rel="stylesheet" href="/blocked-traffic/assets/tailwind.css">
+    <style>
+
+        :root {
+            --bg: #0c0a09;
+            --panel: #1c1917;
+            --panel-strong: #111827;
+            --panel-soft: rgba(255, 255, 255, 0.04);
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #f5f5f4;
+            --muted: #a8a29e;
+            --headline: #ffffff;
+            --accent: #34d399;
+            --accent-strong: #059669;
+            --accent-soft: rgba(52, 211, 153, 0.16);
+            --secondary: #22d3ee;
+            --tertiary: #d946ef;
+            --warning: #fbbf24;
+            --danger: #fb7185;
+            --hero-a: #052e2b;
+            --hero-b: #111827;
+            --hero-c: #0c0a09;
+            --bar-start: #fb7185;
+            --bar-mid: #fbbf24;
+            --bar-end: #34d399;
+            --chip-bg: rgba(5, 150, 105, 0.18);
+            --chip-text: #86efac;
+        }
+
+        body[data-theme="illumio"] {
+            --bg: #1a2c32;
+            --panel: #24393f;
+            --panel-strong: #313638;
+            --panel-soft: rgba(36, 57, 63, 0.82);
+            --border: #356069;
+            --text: #ffffff;
+            --muted: #d6d7d7;
+            --headline: #ffffff;
+            --accent: #ff5500;
+            --accent-strong: #ff5500;
+            --accent-soft: rgba(255, 85, 0, 0.15);
+            --secondary: #94cee5;
+            --tertiary: #c2e2f0;
+            --warning: #ffa22f;
+            --danger: #88132e;
+            --hero-a: #1a2c32;
+            --hero-b: #24393f;
+            --hero-c: #313638;
+            --bar-start: #88132e;
+            --bar-mid: #ff5500;
+            --bar-end: #ffa22f;
+            --chip-bg: rgba(255, 85, 0, 0.14);
+            --chip-text: #ffa22f;
+        }
+
+        body[data-theme="illumio-light"] {
+            --bg: #f7f4ee;
+            --panel: rgba(255, 255, 255, 0.98);
+            --panel-strong: #ffffff;
+            --panel-soft: rgba(242, 237, 226, 0.92);
+            --border: #d1bea0;
+            --text: #313638;
+            --muted: #6f7274;
+            --headline: #313638;
+            --accent: #ff5500;
+            --accent-strong: #ff5500;
+            --accent-soft: rgba(255, 85, 0, 0.12);
+            --secondary: #2d454c;
+            --tertiary: #94cee5;
+            --warning: #f97607;
+            --danger: #88132e;
+            --hero-a: #ffffff;
+            --hero-b: #f2ede2;
+            --hero-c: #e3d8c5;
+            --bar-start: #88132e;
+            --bar-mid: #ff5500;
+            --bar-end: #ffa22f;
+            --chip-bg: rgba(255, 85, 0, 0.10);
+            --chip-text: #c2410c;
+        }
+
+        body {
+            font-family: Manrope, ui-sans-serif, system-ui, sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(255,255,255,0.05), transparent 30%),
+                linear-gradient(180deg, var(--bg), #020617);
+            color: var(--text);
+            transition: background 200ms ease, color 200ms ease;
+        }
+
+        body[data-theme="illumio-light"] {
+            background:
+                radial-gradient(circle at top left, rgba(255, 85, 0, 0.08), transparent 26%),
+                linear-gradient(180deg, #fffdf9, var(--bg));
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
+        }
+
+        .panel-soft {
+            background: var(--panel-soft);
+            border: 1px solid var(--border);
+        }
+
+        .hero {
+            background: linear-gradient(135deg, var(--hero-a), var(--hero-b) 55%, var(--hero-c));
+            border: 1px solid var(--border);
+            box-shadow: 0 30px 70px rgba(0, 0, 0, 0.32);
+        }
+
+        .label {
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.28em;
+            font-size: 0.72rem;
+        }
+
+        .headline {
+            color: var(--headline);
+        }
+
+        .muted {
+            color: var(--muted);
+        }
+
+        .theme-button {
+            border: 1px solid var(--border);
+            background: var(--panel-soft);
+            color: var(--muted);
+        }
+
+        .theme-button.active {
+            background: var(--accent-soft);
+            color: var(--headline);
+            border-color: var(--accent);
+        }
+
+        .metric-accent { color: var(--accent); }
+        .metric-secondary { color: var(--secondary); }
+        .metric-tertiary { color: var(--tertiary); }
+        .metric-warning { color: var(--warning); }
+        .metric-danger { color: var(--danger); }
+
+        .chip {
+            background: var(--chip-bg);
+            color: var(--chip-text);
+        }
+
+        .bar-track {
+            height: 0.75rem;
+            border-radius: 9999px;
+            background: rgba(255, 255, 255, 0.07);
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 9999px;
+            background: linear-gradient(90deg, var(--bar-start), var(--bar-mid), var(--bar-end));
+        }
+
+        .finding-index {
+            background: var(--accent-soft);
+            color: var(--accent);
+        }
+
+        .metric-value {
+            font-size: clamp(1.85rem, 2.2vw, 2.75rem);
+            line-height: 1.05;
+            letter-spacing: -0.04em;
+            font-variant-numeric: tabular-nums;
+            overflow-wrap: anywhere;
+        }
+
+        .metric-value-sm {
+            font-size: clamp(1.6rem, 1.8vw, 2.1rem);
+            line-height: 1.08;
+            letter-spacing: -0.03em;
+            font-variant-numeric: tabular-nums;
+            overflow-wrap: anywhere;
+        }
+
+        a.panel-soft, button.panel-soft {
+            color: var(--text) !important;
+        }
+		body[data-theme="default"],
+		body[data-theme="illumio"] {
+			color-scheme: dark;
+		}
+		body[data-theme="illumio-light"] {
+			color-scheme: light;
+		}
+		input:not([type="checkbox"]):not([type="file"]),
+		select,
+		textarea {
+			background-color: var(--panel-strong);
+			border-color: var(--border);
+			color: var(--text);
+		}
+		select option {
+			background-color: var(--panel-strong);
+			color: var(--text);
+		}
+		input:not([type="checkbox"]):not([type="file"]):focus-visible,
+		select:focus-visible,
+		textarea:focus-visible {
+			border-color: var(--accent);
+			outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+			outline-offset: 1px;
+		}
+        body[data-theme="illumio-light"] .label {
+            color: #64686a;
+        }
+        body[data-theme="illumio-light"] .chip {
+            color: #8b407a;
+        }
+        body[data-theme="illumio-light"] .theme-button {
+            color: #464a4c;
+        }
+        body[data-theme="illumio-light"] .theme-button.active {
+            color: #313638;
+        }
+        body[data-theme="illumio-light"] .bar-track {
+            background: #e3d8c5;
+        }
+
+		.trend-chart {
+			min-height: 22rem;
+			width: 100%;
+		}
+		.trend-chart svg { width: 100%; height: auto; overflow: visible; }
+		.trend-grid { stroke: var(--border); stroke-width: 1; }
+		.trend-axis, .trend-label { fill: var(--muted); font-size: 12px; }
+		.trend-line { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+		.trend-point { stroke: var(--panel); stroke-width: 2; cursor: help; }
+		.report-logo { max-height: 4.5rem; max-width: 15rem; object-fit: contain; }
+		.report-notes { white-space: pre-wrap; }
+		.export-button { border: 1px solid var(--border); background: var(--panel-soft); color: var(--text); }
+		body[data-export-filtered="true"] [data-export-section].is-export-excluded { display: none !important; }
+		.report-section-choice { border: 1px solid var(--border); background: var(--panel-soft); }
+		.report-section-choice:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+
+		@media print {
+			@page { size: A4 landscape; margin: 10mm; }
+			.no-export, .app-header-actions { display: none !important; }
+			body { background: #fff !important; color: #313638 !important; padding: 0 !important; }
+			body, body * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+			.app-header { margin-bottom: 0.75rem !important; }
+			.panel, .hero { box-shadow: none !important; break-inside: avoid; }
+			section { break-inside: avoid; }
+			#content { display: block !important; }
+			.trend-chart { min-height: auto; }
+			a { text-decoration: none !important; }
+		}
+    </style>
+    <link rel="stylesheet" href="/blocked-traffic/assets/app-shell.css">
+</head>
+<body data-theme="default" class="min-h-screen px-4 py-5 md:px-6 md:py-8 xl:px-8">
+    <script src="/blocked-traffic/assets/theme-init.js"></script>
+    <div class="mx-auto w-full max-w-[118rem]">
+        <header class="app-header mb-8 flex flex-col gap-4 2xl:flex-row 2xl:justify-between">
+            <div>
+                <p class="label mb-2">Executive View</p>
+                <h1 class="headline text-4xl font-extrabold tracking-tight md:text-5xl">Blocked Traffic Executive Summary</h1>
+                <p id="fileLabel" class="muted mt-3 text-sm">Loading latest analytics...</p>
+            </div>
+            <div class="app-header-actions">
+                <nav class="app-nav" aria-label="Primary navigation">
+                    <a href="/" class="app-nav-link">Monitoring Dashboard</a>
+                    <a href="/blocked-traffic/" class="app-nav-link">Extractor</a>
+                    <a href="/blocked-traffic/summary" class="app-nav-link">Analytics</a>
+                    <a href="/blocked-traffic/heatmaps" class="app-nav-link">Heatmaps</a>
+                    <a href="/blocked-traffic/executive-summary" class="app-nav-link" aria-current="page">Executive</a>
+                    <a href="/blocked-traffic/automation" class="app-nav-link">Automation</a>
+                </nav>
+                <div class="theme-switcher" role="group" aria-label="Color theme">
+                    <button id="defaultThemeBtn" data-theme-option="default" aria-pressed="false" type="button" class="theme-button">Dark</button>
+                    <button id="illumioThemeBtn" data-theme-option="illumio" aria-pressed="false" type="button" class="theme-button">Illumio Dark</button>
+                    <button id="illumioLightThemeBtn" data-theme-option="illumio-light" aria-pressed="false" type="button" class="theme-button">Illumio Light</button>
+                </div>
+                <button id="printExecutiveBtn" class="app-header-action export-button rounded-lg px-4 py-2 text-sm font-semibold">Export PDF / Print</button>
+                <button id="downloadExecutiveHTMLBtn" class="app-header-action export-button rounded-lg px-4 py-2 text-sm font-semibold">Download HTML</button>
+                <button id="refreshExecutiveBtn" class="app-header-action rounded-lg px-4 py-2 text-sm font-semibold text-white" style="background: var(--accent-strong);">Refresh</button>
+            </div>
+        </header>
+
+		<section id="reportIdentity" class="panel mb-8 rounded-3xl p-6" data-auto-collapsible="report-identity" data-collapse-title="Report Identity" data-image-section="report-identity">
+			<div class="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+				<div class="flex min-w-0 items-center gap-5">
+					<img id="reportLogo" class="report-logo hidden" alt="Report logo">
+					<div class="min-w-0">
+						<p id="reportCustomer" class="label">Blocked Traffic Analysis</p>
+						<h2 id="reportTitle" class="headline mt-2 text-3xl font-extrabold">Blocked Traffic Executive Summary</h2>
+						<p id="reportPrepared" class="muted mt-2 text-sm"></p>
+					</div>
+				</div>
+				<div class="text-left md:text-right">
+					<p id="reportCoverageDates" class="headline text-sm font-semibold">Coverage unavailable</p>
+					<p id="reportGeneratedAt" class="muted mt-1 text-xs"></p>
+				</div>
+			</div>
+			<p id="reportNotes" class="report-notes muted mt-4 hidden text-sm leading-6"></p>
+		</section>
+
+		<section class="no-export panel mb-8 rounded-3xl p-6" data-auto-collapsible="report-configuration" data-collapse-title="Report Configuration" data-offline-remove>
+			<div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+				<div><p class="label">Report Configuration</p><h2 class="headline mt-2 text-xl font-bold">Branding, coverage, and exports</h2></div>
+				<p id="reportConfigMessage" class="muted text-sm">Settings are retained with a saved dataset.</p>
+			</div>
+			<div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4" data-offline-remove>
+				<label class="text-sm">Report Title<input id="reportTitleInput" maxlength="160" class="mt-1 w-full rounded-lg border px-3 py-2" value="Blocked Traffic Executive Summary"></label>
+				<label class="text-sm">Customer Name<input id="reportCustomerInput" maxlength="160" class="mt-1 w-full rounded-lg border px-3 py-2"></label>
+				<label class="text-sm">Prepared By<input id="reportPreparedInput" maxlength="160" class="mt-1 w-full rounded-lg border px-3 py-2"></label>
+				<label class="text-sm">Optional Logo<input id="reportLogoInput" type="file" accept="image/png,image/jpeg,image/svg+xml" class="mt-1 w-full text-sm"></label>
+				<label class="text-sm md:col-span-2 xl:col-span-4">Report Notes<textarea id="reportNotesInput" maxlength="4000" rows="3" class="mt-1 w-full rounded-lg border px-3 py-2"></textarea></label>
+			</div>
+			<div class="mt-4 flex flex-wrap gap-3" data-offline-remove>
+				<button id="saveReportMetadataBtn" type="button" class="rounded-lg px-4 py-2 text-sm font-semibold text-white" style="background: var(--accent-strong);">Save Report Settings</button>
+				<button id="clearReportLogoBtn" type="button" class="export-button rounded-lg px-4 py-2 text-sm font-semibold">Clear Logo</button>
+				<button id="downloadMonthlyCSVBtn" type="button" class="export-button rounded-lg px-4 py-2 text-sm font-semibold">Download Monthly Data CSV</button>
+			</div>
+			<div class="mt-6 border-t pt-5" data-offline-remove>
+				<div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+					<div><p class="label">Export Composer</p><p class="muted mt-1 text-sm">Choose which sections appear in downloaded HTML and print/PDF exports. The live dashboard is unchanged.</p></div>
+					<div class="flex gap-2"><button id="selectAllReportSectionsBtn" type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold">Select All</button><button id="clearReportSectionsBtn" type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold">Clear</button></div>
+				</div>
+				<div id="reportSectionChoices" class="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3"></div>
+			</div>
+		</section>
+
+		<section class="panel mb-8 rounded-3xl p-6" data-auto-collapsible="coverage" data-collapse-title="Data Coverage" data-image-section="coverage" data-export-section="coverage">
+			<div><p class="label">Data Coverage</p><h2 class="headline mt-2 text-xl font-bold">Source windows and import integrity</h2></div>
+			<div id="executiveCoverage" class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4"></div>
+			<div id="executiveCoverageWarnings" class="mt-3 space-y-2"></div>
+		</section>
+
+		<div class="hero mb-8 rounded-3xl p-6" data-auto-collapsible="executive-overview" data-collapse-title="Executive Overview" data-image-section="executive-overview" data-export-section="executive-overview">
+            <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                <div class="panel-soft rounded-2xl p-5">
+                    <p class="label">Total Blocked Flows</p>
+                    <p id="totalFlows" class="metric-accent metric-value mt-3 font-extrabold">0</p>
+                </div>
+                <div class="panel-soft rounded-2xl p-5">
+                    <p class="label">Unique Connections</p>
+                    <p id="totalConnections" class="metric-secondary metric-value mt-3 font-extrabold">0</p>
+                </div>
+                <div class="panel-soft rounded-2xl p-5">
+					<p id="primaryDimensionCountLabel" class="label">Environments Involved</p>
+                    <p id="environmentCount" class="metric-tertiary metric-value mt-3 font-extrabold">0</p>
+                </div>
+                <div class="panel-soft rounded-2xl p-5">
+                    <p class="label">External / Unmanaged Flows</p>
+                    <p id="externalFlowCount" class="metric-warning metric-value mt-3 font-extrabold">0</p>
+                </div>
+                <div class="panel-soft rounded-2xl p-5">
+                    <p class="label">Top Risky Service</p>
+                    <p id="topRiskyService" class="metric-danger metric-value-sm mt-3 font-extrabold">N/A</p>
+                    <p id="topRiskyServiceFlows" class="muted mt-2 text-sm">0 flows</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="emptyState" class="panel hidden rounded-3xl p-10 text-center">
+            <p class="text-lg font-semibold">No executive analytics are available yet.</p>
+            <p class="muted mt-2 text-sm">Run a fetch or import a CSV first. This page reuses the same analytics dataset as the detailed dashboard.</p>
+        </div>
+
+        <div id="content" class="hidden space-y-8">
+            <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div class="panel rounded-3xl p-5" data-image-section="latest-observed-flows">
+                    <p class="label">Latest Month</p>
+                    <h2 class="headline mt-2 text-lg font-bold">Observed Flows</h2>
+                    <p id="latestMonthFlows" class="metric-accent metric-value-sm mt-4 font-extrabold">0</p>
+                    <p id="latestMonthLabel" class="muted mt-2 text-sm">No monthly data</p>
+                </div>
+                <div class="panel rounded-3xl p-5" data-image-section="latest-active-connections">
+                    <p class="label">Latest Month</p>
+                    <h2 class="headline mt-2 text-lg font-bold">Active Connections</h2>
+                    <p id="latestMonthActive" class="metric-secondary metric-value-sm mt-4 font-extrabold">0</p>
+                    <p id="latestMonthActiveLabel" class="muted mt-2 text-sm">Persistence across month spans</p>
+                </div>
+                <div class="panel rounded-3xl p-5" data-image-section="month-over-month-flow-change">
+                    <p class="label">Month over Month</p>
+                    <h2 class="headline mt-2 text-lg font-bold">Flow Change</h2>
+                    <p id="monthOverMonthFlows" class="metric-tertiary metric-value-sm mt-4 font-extrabold">0%</p>
+                    <p id="monthOverMonthFlowsLabel" class="muted mt-2 text-sm">Compared with previous month</p>
+                </div>
+                <div class="panel rounded-3xl p-5" data-image-section="latest-new-service-pairs">
+                    <p class="label">What Changed</p>
+                    <h2 class="headline mt-2 text-lg font-bold">New Service Pairs</h2>
+                    <p id="newServicePairs" class="metric-warning metric-value-sm mt-4 font-extrabold">0</p>
+                    <p id="newServicePairsLabel" class="muted mt-2 text-sm">Port/protocol pairs first seen in the latest month</p>
+                </div>
+            </section>
+
+			<section class="panel rounded-3xl p-6" data-auto-collapsible="monthly-trends" data-collapse-title="Month-over-Month Trends" data-image-section="monthly-trends" data-export-section="monthly-trends">
+				<div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+					<div><p class="label">Month-over-Month Trends</p><h2 class="headline mt-2 text-2xl font-bold">Blocked traffic movement over time</h2></div>
+					<div class="no-export flex flex-wrap items-end gap-3">
+						<label class="text-xs">Range<select id="trendRangeSelect" class="mt-1 rounded-lg border px-3 py-2 text-sm"><option value="6">Last 6 months</option><option value="12">Last 12 months</option><option value="all">All months</option></select></label>
+						<button type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold" data-chart-download="monthlyFlowChart" data-format="svg">Flow SVG</button>
+						<button type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold" data-chart-download="monthlyFlowChart" data-format="png">Flow PNG</button>
+						<button type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold" data-chart-download="monthlyConnectionChart" data-format="svg">Connections SVG</button>
+						<button type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold" data-chart-download="monthlyConnectionChart" data-format="png">Connections PNG</button>
+					</div>
+				</div>
+				<div class="mt-6 grid gap-8 xl:grid-cols-2">
+					<div><h3 class="headline text-lg font-bold">Total blocked flows</h3><p class="muted mt-1 text-sm">Missing coverage is displayed as a gap, not zero activity.</p><div id="monthlyFlowChart" class="trend-chart mt-4"></div></div>
+					<div><h3 class="headline text-lg font-bold">Observed and active connections</h3><p class="muted mt-1 text-sm">Observed connections are compared with month-spanning active connections.</p><div id="monthlyConnectionChart" class="trend-chart mt-4"></div></div>
+				</div>
+			</section>
+
+			<section class="panel rounded-3xl p-6" data-auto-collapsible="service-trends" data-collapse-title="Service Trends" data-image-section="service-trends" data-export-section="service-trends">
+				<div class="grid gap-6 xl:grid-cols-[22rem_minmax(0,1fr)]">
+					<div class="no-export">
+						<p class="label">Service Trends</p>
+						<h2 class="headline mt-2 text-2xl font-bold">Compare one or more services</h2>
+						<p class="muted mt-2 text-sm">Select individual port/protocol pairs or hold Ctrl/Cmd to compare several.</p>
+						<select id="serviceTrendSelect" multiple size="10" class="mt-4 w-full rounded-xl border p-2 text-sm"></select>
+						<div class="mt-3 flex flex-wrap gap-2"><button id="selectTopServicesBtn" type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold">Select Top 5</button><button id="clearServicesBtn" type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold">Clear</button><button type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold" data-chart-download="serviceTrendChart" data-format="svg">SVG</button><button type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold" data-chart-download="serviceTrendChart" data-format="png">PNG</button></div>
+					</div>
+					<div><div id="serviceTrendChart" class="trend-chart"></div><div id="serviceTrendLegend" class="mt-3 flex flex-wrap gap-3 text-xs"></div></div>
+				</div>
+			</section>
+
+			<section class="panel rounded-3xl p-6" data-auto-collapsible="relationship-trends" data-collapse-title="Relationship Trends" data-image-section="relationship-trends" data-export-section="relationship-trends">
+				<div class="grid gap-6 xl:grid-cols-[22rem_minmax(0,1fr)]">
+					<div class="no-export">
+						<p class="label">Relationship Trends</p><h2 class="headline mt-2 text-2xl font-bold">Primary-label paths over time</h2>
+						<select id="relationshipTrendSelect" multiple size="10" class="mt-4 w-full rounded-xl border p-2 text-sm"></select>
+						<div class="mt-3 flex flex-wrap gap-2"><button id="selectTopRelationshipsBtn" type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold">Select Top 5</button><button id="clearRelationshipsBtn" type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold">Clear</button><button type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold" data-chart-download="relationshipTrendChart" data-format="svg">SVG</button><button type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold" data-chart-download="relationshipTrendChart" data-format="png">PNG</button></div>
+					</div>
+					<div><div id="relationshipTrendChart" class="trend-chart"></div><div id="relationshipTrendLegend" class="mt-3 flex flex-wrap gap-3 text-xs"></div></div>
+				</div>
+			</section>
+
+			<section class="panel rounded-3xl p-6" data-auto-collapsible="period-comparison" data-collapse-title="Period Comparison" data-image-section="period-comparison" data-export-section="period-comparison">
+				<div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+					<div><p class="label">Period Comparison</p><h2 class="headline mt-2 text-2xl font-bold">What changed between two months</h2></div>
+					<div class="no-export flex flex-wrap gap-3"><label class="text-xs">Earlier Month<select id="comparisonStartMonth" class="mt-1 rounded-lg border px-3 py-2 text-sm"></select></label><label class="text-xs">Later Month<select id="comparisonEndMonth" class="mt-1 rounded-lg border px-3 py-2 text-sm"></select></label></div>
+				</div>
+				<div id="periodComparisonCards" class="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4"></div>
+				<div class="mt-6 grid gap-6 xl:grid-cols-2"><div><h3 class="headline text-lg font-bold">Largest Service Changes</h3><div id="serviceChanges" class="mt-3 space-y-2"></div></div><div><h3 class="headline text-lg font-bold">New External Destinations and Relationships</h3><div id="newEntities" class="mt-3 space-y-2"></div></div></div>
+			</section>
+
+            <section class="grid gap-8 xl:grid-cols-[1.2fr_0.8fr]">
+				<div class="panel rounded-3xl p-6" data-auto-collapsible="headline-findings" data-collapse-title="Headline Findings" data-image-section="headline-findings" data-export-section="headline-findings">
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <p class="label">Headline Findings</p>
+                            <h2 class="headline mt-2 text-2xl font-bold">What stands out in this dataset</h2>
+                        </div>
+                        <div class="chip rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em]">Presentation Ready</div>
+                    </div>
+                    <div id="headlineFindings" class="mt-6 grid gap-4"></div>
+                </div>
+
+				<div class="panel rounded-3xl p-6" data-auto-collapsible="risky-services" data-collapse-title="Risky Services" data-image-section="risky-services" data-export-section="risky-services">
+                    <p class="label">Risky Services</p>
+                    <h2 class="headline mt-2 text-2xl font-bold">Blocked traffic by high-risk service</h2>
+                    <div id="riskyServiceChart" class="mt-6 space-y-3"></div>
+                </div>
+            </section>
+
+            <section class="grid gap-8 xl:grid-cols-2">
+				<div class="panel rounded-3xl p-6" data-auto-collapsible="persistent-relationships" data-collapse-title="Persistent Relationships" data-image-section="persistent-relationships" data-export-section="persistent-relationships">
+                    <p class="label">Persistent Relationships</p>
+                    <h2 class="headline mt-2 text-2xl font-bold">Blocked services that persist across months</h2>
+                    <div id="persistentServices" class="mt-6 space-y-3"></div>
+                </div>
+
+				<div class="panel rounded-3xl p-6" data-auto-collapsible="latest-changes" data-collapse-title="Latest-Month Changes" data-image-section="latest-changes" data-export-section="latest-changes">
+                    <p class="label">What Changed This Month</p>
+                    <h2 class="headline mt-2 text-2xl font-bold">New port / protocol pairs in the latest month</h2>
+                    <div id="latestMonthChanges" class="mt-6 space-y-3"></div>
+                </div>
+            </section>
+
+            <section class="grid gap-8 xl:grid-cols-2">
+				<div class="panel rounded-3xl p-6" data-auto-collapsible="cross-talk" data-collapse-title="Cross-Talk" data-image-section="cross-talk" data-export-section="cross-talk">
+                    <p class="label">Cross-Talk</p>
+					<h2 id="primaryRelationshipsTitle" class="headline mt-2 text-2xl font-bold">Top environment-to-environment relationships</h2>
+                    <div id="crossTalkList" class="mt-6 space-y-3"></div>
+                </div>
+
+				<div class="panel rounded-3xl p-6" data-auto-collapsible="external-spotlight" data-collapse-title="External Spotlight" data-image-section="external-spotlight" data-export-section="external-spotlight">
+                    <p class="label">External Spotlight</p>
+                    <h2 class="headline mt-2 text-2xl font-bold">Most significant external / unmanaged destinations</h2>
+                    <div id="externalSpotlight" class="mt-6 space-y-3"></div>
+                </div>
+            </section>
+
+			<section class="panel rounded-3xl p-6" data-auto-collapsible="dimension-scorecard" data-collapse-title="Dimension Scorecard" data-image-section="dimension-scorecard" data-export-section="dimension-scorecard">
+				<p id="primaryScorecardLabel" class="label">Environment Scorecard</p>
+                <h2 class="headline mt-2 text-2xl font-bold">Where blocked traffic is concentrated</h2>
+                <div id="environmentScorecards" class="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3"></div>
+            </section>
+        </div>
+    </div>
+
+    <script src="/blocked-traffic/assets/app-version.js"></script>
+    <script src="/blocked-traffic/assets/collapsible.js"></script>
+    <script>
+		let primaryDimensionName = 'Environment';
+		let latestExecutivePayload = null;
+		let reportLogoDataURL = '';
+		let includedReportSections = null;
+		const trendColors = ['#ff5500', '#22c55e', '#38bdf8', '#a855f7', '#f59e0b', '#e11d48', '#14b8a6', '#6366f1'];
+
+		function dimensionName(key) {
+			const value = String(key || '').trim();
+			if (!value || value.toLowerCase() === 'env') return 'Environment';
+			if (value.toLowerCase() === 'app') return 'Application';
+			return value;
+		}
+
+		function applyDimensionLabels(insights) {
+			primaryDimensionName = dimensionName(insights.primary_label_key);
+			document.getElementById('primaryDimensionCountLabel').innerText = `${primaryDimensionName} Values Involved`;
+			document.getElementById('primaryRelationshipsTitle').innerText = `Top ${primaryDimensionName}-to-${primaryDimensionName} relationships`;
+			document.getElementById('primaryScorecardLabel').innerText = `${primaryDimensionName} Scorecard`;
+		}
+
+        const riskyServiceCatalog = new Map([
+            ['tcp:80', 'HTTP'],
+            ['udp:5355', 'LLMNR'],
+            ['tcp:2049', 'NFS'],
+            ['udp:2049', 'NFS'],
+            ['tcp:3389', 'RDP'],
+            ['udp:3389', 'RDP'],
+            ['tcp:135', 'MSFT RPC'],
+            ['tcp:445', 'SMB'],
+            ['udp:445', 'SMB'],
+            ['tcp:22', 'SSH'],
+            ['udp:22', 'SSH'],
+            ['tcp:5985', 'WinRM'],
+            ['tcp:5986', 'WinRM Secure'],
+            ['tcp:20', 'FTP Data'],
+            ['tcp:21', 'FTP Control'],
+            ['tcp:4444', 'Metasploit'],
+            ['udp:4444', 'Metasploit'],
+            ['udp:5353', 'Multicast DNS'],
+            ['udp:137', 'NetBIOS'],
+            ['udp:138', 'NetBIOS'],
+            ['tcp:137', 'NetBIOS'],
+            ['tcp:139', 'NetBIOS'],
+            ['tcp:110', 'POP3'],
+            ['tcp:1723', 'PPTP'],
+            ['udp:1723', 'PPTP'],
+            ['udp:1900', 'SSDP'],
+            ['tcp:111', 'SunRPC'],
+            ['udp:111', 'SunRPC'],
+            ['tcp:5938', 'TeamViewer'],
+            ['udp:5938', 'TeamViewer'],
+            ['tcp:23', 'Telnet'],
+            ['udp:23', 'Telnet'],
+            ['tcp:5900', 'VNC'],
+            ['udp:5900', 'VNC'],
+            ['tcp:3702', 'WSD'],
+            ['udp:3702', 'WSD']
+        ]);
+
+		function themeStorageKey() {
+			if (typeof window.__ITT_EXECUTIVE_THEME__ !== 'string') return 'ittTheme';
+			const source = String(window.__ITT_EXECUTIVE_PAYLOAD__?.fileName || 'offline-report').slice(0, 160);
+			return `ittExecutiveTheme:${source}:${document.title}`;
+		}
+
+        function applyTheme(theme) {
+            document.body.dataset.theme = theme;
+			try { localStorage.setItem(themeStorageKey(), theme); } catch (_) {}
+			const defaultButton = document.getElementById('defaultThemeBtn');
+			const illumioButton = document.getElementById('illumioThemeBtn');
+			const lightButton = document.getElementById('illumioLightThemeBtn');
+			if (defaultButton) defaultButton.classList.toggle('active', theme === 'default');
+			if (illumioButton) illumioButton.classList.toggle('active', theme === 'illumio');
+			if (lightButton) lightButton.classList.toggle('active', theme === 'illumio-light');
+            document.querySelectorAll('[data-theme-option]').forEach((button) => {
+                button.setAttribute('aria-pressed', String(button.dataset.themeOption === theme));
+            });
+			if (latestExecutivePayload) renderTrendCharts();
+        }
+
+        function loadSavedTheme() {
+			const embeddedTheme = typeof window.__ITT_EXECUTIVE_THEME__ === 'string' ? window.__ITT_EXECUTIVE_THEME__ : '';
+            let savedTheme = embeddedTheme || 'default';
+			try { savedTheme = localStorage.getItem(themeStorageKey()) || savedTheme; } catch (_) {}
+			applyTheme(savedTheme);
+        }
+
+        function formatNumber(value) {
+            return new Intl.NumberFormat().format(value || 0);
+        }
+
+        function escapeHtml(value) {
+            return String(value)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        function percentage(value, total) {
+            if (!total) return '0.0%';
+            return `${((value / total) * 100).toFixed(1)}%`;
+        }
+
+        function signedPercentageChange(current, previous) {
+            if (!previous && !current) return '0.0%';
+            if (!previous) return '+100.0%';
+            const change = ((current - previous) / previous) * 100;
+            const sign = change > 0 ? '+' : '';
+            return `${sign}${change.toFixed(1)}%`;
+        }
+
+        function riskyServiceRows(summary) {
+            const serviceMap = new Map();
+            (summary || []).forEach(row => {
+                const key = `${String(row.protocol || '').toLowerCase()}:${row.port}`;
+                const serviceName = riskyServiceCatalog.get(key);
+                if (!serviceName) return;
+                const entry = serviceMap.get(serviceName) || {
+                    name: serviceName,
+                    flow_count: 0,
+                    unique_connections: 0
+                };
+                entry.flow_count += row.flow_count || 0;
+                entry.unique_connections += row.unique_connections || 0;
+                serviceMap.set(serviceName, entry);
+            });
+
+            return Array.from(serviceMap.values()).sort((a, b) => b.flow_count - a.flow_count || a.name.localeCompare(b.name));
+        }
+
+        function environmentNames(insights) {
+            const set = new Set();
+            (insights.env_matrix || []).forEach(row => {
+                if (row.source && row.source !== 'External/Unmanaged') set.add(row.source);
+                if (row.destination && row.destination !== 'External/Unmanaged') set.add(row.destination);
+            });
+            return Array.from(set);
+        }
+
+        function externalFlowTotal(insights) {
+            return (insights.traffic_categories || [])
+                .filter(row => String(row.name || '').includes('External/Unmanaged'))
+                .reduce((sum, row) => sum + (row.flow_count || 0), 0);
+        }
+
+        function topCrossTalk(insights) {
+            return (insights.env_matrix || [])
+                .filter(row => row.source !== 'External/Unmanaged' && row.destination !== 'External/Unmanaged')
+                .slice(0, 6);
+        }
+
+        function environmentScorecards(insights) {
+            const scoreMap = new Map();
+            const riskyEnvMap = new Map();
+
+            (insights.env_matrix || []).forEach(row => {
+                if (!row.source) return;
+
+                const source = scoreMap.get(row.source) || { name: row.source, outbound: 0, inbound: 0, external: 0 };
+                source.outbound += row.flow_count || 0;
+                if (row.destination === 'External/Unmanaged') source.external += row.flow_count || 0;
+                scoreMap.set(row.source, source);
+
+                if (!row.destination) return;
+                const destination = scoreMap.get(row.destination) || { name: row.destination, outbound: 0, inbound: 0, external: 0 };
+                destination.inbound += row.flow_count || 0;
+                if (row.source === 'External/Unmanaged') destination.external += row.flow_count || 0;
+                scoreMap.set(row.destination, destination);
+            });
+
+            (insights.env_service_pivot || []).forEach(row => {
+                const key = `${String(row.protocol || '').toLowerCase()}:${row.port}`;
+                const serviceName = riskyServiceCatalog.get(key);
+                if (!serviceName) return;
+                const source = riskyEnvMap.get(row.source_env) || new Set();
+                source.add(serviceName);
+                riskyEnvMap.set(row.source_env, source);
+                const dest = riskyEnvMap.get(row.destination_env) || new Set();
+                dest.add(serviceName);
+                riskyEnvMap.set(row.destination_env, dest);
+            });
+
+            return Array.from(scoreMap.values())
+                .filter(row => row.name && row.name !== 'External/Unmanaged')
+                .map(row => {
+                    const riskyServiceCount = (riskyEnvMap.get(row.name) || new Set()).size;
+                    const total = row.inbound + row.outbound;
+                    const score = total + row.external + (riskyServiceCount * 500);
+                    return { ...row, total, riskyServiceCount, score };
+                })
+                .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+                .slice(0, 6);
+        }
+
+        function monthlyRollup(monthlyRows) {
+            const map = new Map();
+            (monthlyRows || []).forEach(row => {
+                const month = row.month;
+                if (!month) return;
+                const entry = map.get(month) || { month, flows: 0, unique_connections: 0, active_connections: 0, rows: [] };
+                entry.flows += row.flow_count || 0;
+                entry.unique_connections += row.unique_connections || 0;
+                entry.active_connections += row.active_connections || 0;
+                entry.rows.push(row);
+                map.set(month, entry);
+            });
+            return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
+        }
+
+		function monthSequence(startMonth, endMonth) {
+			if (!startMonth || !endMonth) return [];
+			const [startYear, startValue] = startMonth.split('-').map(Number);
+			const [endYear, endValue] = endMonth.split('-').map(Number);
+			const rows = [];
+			for (let date = new Date(Date.UTC(startYear, startValue - 1, 1)); date <= new Date(Date.UTC(endYear, endValue - 1, 1)); date.setUTCMonth(date.getUTCMonth() + 1)) {
+				rows.push(`${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`);
+			}
+			return rows;
+		}
+
+		function trendMonthInfo(payload, applyRange = true) {
+			const monthlyRows = payload?.insights?.monthly_port_protocol || [];
+			const observedMonths = [...new Set(monthlyRows.map(row => row.month).filter(Boolean))].sort();
+			const coverage = payload?.coverage || {};
+			const coveredMonths = new Set((coverage.months || []).length ? coverage.months : observedMonths);
+			const start = coverage.first_detected ? String(coverage.first_detected).slice(0, 7) : observedMonths[0];
+			const end = coverage.last_detected ? String(coverage.last_detected).slice(0, 7) : observedMonths[observedMonths.length - 1];
+			let months = monthSequence(start, end);
+			if (!months.length) months = observedMonths;
+			const range = document.getElementById('trendRangeSelect')?.value || '6';
+			if (applyRange && range !== 'all') months = months.slice(-Number(range));
+			return months.map(month => ({month, covered: coveredMonths.has(month)}));
+		}
+
+		function svgElement(name, attributes = {}, text = '') {
+			const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+			Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
+			if (text !== '') element.textContent = text;
+			return element;
+		}
+
+		function renderLineChart(containerID, monthInfo, series, emptyMessage = 'No monthly trend data is available.') {
+			const container = document.getElementById(containerID);
+			container.replaceChildren();
+			if (!monthInfo.length || !series.some(item => item.values.some(value => value !== null && value !== undefined))) {
+				const empty = document.createElement('div');
+				empty.className = 'panel-soft rounded-2xl p-5 text-sm muted';
+				empty.textContent = emptyMessage;
+				container.appendChild(empty);
+				return;
+			}
+			const width = 1000, height = 340, left = 72, right = 24, top = 30, bottom = 58;
+			const plotWidth = width - left - right, plotHeight = height - top - bottom;
+			const values = series.flatMap(item => item.values).filter(value => value !== null && value !== undefined && Number.isFinite(value));
+			const maxValue = Math.max(1, ...values);
+			const svg = svgElement('svg', {viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': series.map(item => item.name).join(', ') + ' monthly trend'});
+			const panelColor = getComputedStyle(document.body).getPropertyValue('--panel').trim() || '#ffffff';
+			const mutedColor = getComputedStyle(document.body).getPropertyValue('--muted').trim() || '#6f7274';
+			const borderColor = getComputedStyle(document.body).getPropertyValue('--border').trim() || '#d1bea0';
+			svg.appendChild(svgElement('rect', {x: 0, y: 0, width, height, rx: 18, fill: panelColor}));
+			for (let step = 0; step <= 4; step++) {
+				const y = top + (plotHeight * step / 4);
+				const value = maxValue * (1 - step / 4);
+				svg.appendChild(svgElement('line', {x1: left, x2: width - right, y1: y, y2: y, stroke: borderColor, 'stroke-width': 1}));
+				svg.appendChild(svgElement('text', {x: left - 10, y: y + 4, 'text-anchor': 'end', fill: mutedColor, 'font-size': 12}, formatNumber(Math.round(value))));
+			}
+			const xAt = index => monthInfo.length === 1 ? left + plotWidth / 2 : left + (plotWidth * index / (monthInfo.length - 1));
+			const labelEvery = Math.max(1, Math.ceil(monthInfo.length / 8));
+			monthInfo.forEach((item, index) => {
+				if (index % labelEvery !== 0 && index !== monthInfo.length - 1) return;
+				const label = svgElement('text', {x: xAt(index), y: height - 22, 'text-anchor': 'middle', fill: mutedColor, 'font-size': 12}, item.month);
+				svg.appendChild(label);
+			});
+			series.forEach((item, seriesIndex) => {
+				const color = item.color || trendColors[seriesIndex % trendColors.length];
+				let path = '';
+				let drawing = false;
+				item.values.forEach((value, index) => {
+					if (value === null || value === undefined || !monthInfo[index]?.covered) {
+						drawing = false;
+						return;
+					}
+					const x = xAt(index);
+					const y = top + plotHeight - (Number(value) / maxValue * plotHeight);
+					path += `${drawing ? ' L' : ' M'} ${x.toFixed(2)} ${y.toFixed(2)}`;
+					drawing = true;
+					const point = svgElement('circle', {cx: x, cy: y, r: 5, fill: color, stroke: panelColor, 'stroke-width': 2});
+					point.appendChild(svgElement('title', {}, `${item.name} · ${monthInfo[index].month}: ${formatNumber(value)}`));
+					svg.appendChild(point);
+				});
+				if (path) svg.insertBefore(svgElement('path', {d: path, fill: 'none', stroke: color, 'stroke-width': 3, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}), svg.querySelector('circle'));
+			});
+			container.appendChild(svg);
+		}
+
+		function serviceKey(row) { return `${row.protocol}:${row.port}`; }
+
+		function populateMultiSelect(selectID, entries, defaultCount = 5) {
+			const select = document.getElementById(selectID);
+			const previous = new Set([...select.selectedOptions].map(option => option.value));
+			select.replaceChildren();
+			entries.forEach((entry, index) => {
+				const option = new Option(entry.label, entry.value);
+				option.selected = previous.size ? previous.has(entry.value) : index < defaultCount;
+				select.appendChild(option);
+			});
+		}
+
+		function trendOptionData(payload) {
+			const serviceTotals = new Map();
+			(payload.insights?.monthly_port_protocol || []).forEach(row => serviceTotals.set(serviceKey(row), (serviceTotals.get(serviceKey(row)) || 0) + (row.flow_count || 0)));
+			const services = [...serviceTotals.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([value, total]) => ({value, label: `${value} · ${formatNumber(total)} flows`}));
+			const relationshipTotals = new Map();
+			(payload.insights?.monthly_relationships || []).forEach(row => {
+				const key = `${row.source} → ${row.destination}`;
+				relationshipTotals.set(key, (relationshipTotals.get(key) || 0) + (row.flow_count || 0));
+			});
+			const relationships = [...relationshipTotals.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([value, total]) => ({value, label: `${value} · ${formatNumber(total)} flows`}));
+			return {services, relationships};
+		}
+
+		function renderLegend(containerID, series) {
+			const container = document.getElementById(containerID);
+			container.replaceChildren();
+			series.forEach(item => {
+				const row = document.createElement('span');
+				row.className = 'inline-flex items-center gap-2';
+				const swatch = document.createElement('span'); swatch.className = 'h-3 w-3 rounded-full'; swatch.style.background = item.color;
+				row.append(swatch, document.createTextNode(item.name)); container.appendChild(row);
+			});
+		}
+
+		function renderTrendCharts() {
+			if (!latestExecutivePayload) return;
+			const monthInfo = trendMonthInfo(latestExecutivePayload);
+			const months = monthInfo.map(item => item.month);
+			const rollups = new Map(monthlyRollup(latestExecutivePayload.insights?.monthly_port_protocol || []).map(row => [row.month, row]));
+			renderLineChart('monthlyFlowChart', monthInfo, [{name: 'Blocked flows', color: trendColors[0], values: months.map(month => rollups.get(month)?.flows ?? 0)}]);
+			renderLineChart('monthlyConnectionChart', monthInfo, [
+				{name: 'Observed connections', color: trendColors[2], values: months.map(month => rollups.get(month)?.unique_connections ?? 0)},
+				{name: 'Active connections', color: trendColors[1], values: months.map(month => rollups.get(month)?.active_connections ?? 0)}
+			]);
+
+			const selectedServices = new Set([...document.getElementById('serviceTrendSelect').selectedOptions].map(option => option.value));
+			const serviceRows = latestExecutivePayload.insights?.monthly_port_protocol || [];
+			const serviceSeries = [...selectedServices].map((key, index) => ({
+				name: key, color: trendColors[index % trendColors.length],
+				values: months.map(month => serviceRows.filter(row => row.month === month && serviceKey(row) === key).reduce((sum, row) => sum + (row.flow_count || 0), 0))
+			}));
+			renderLineChart('serviceTrendChart', monthInfo, serviceSeries, 'Select one or more services to chart.');
+			renderLegend('serviceTrendLegend', serviceSeries);
+
+			const selectedRelationships = new Set([...document.getElementById('relationshipTrendSelect').selectedOptions].map(option => option.value));
+			const relationshipRows = latestExecutivePayload.insights?.monthly_relationships || [];
+			const relationshipSeries = [...selectedRelationships].map((key, index) => ({
+				name: key, color: trendColors[index % trendColors.length],
+				values: months.map(month => relationshipRows.filter(row => row.month === month && `${row.source} → ${row.destination}` === key).reduce((sum, row) => sum + (row.flow_count || 0), 0))
+			}));
+			renderLineChart('relationshipTrendChart', monthInfo, relationshipSeries, 'Select one or more primary-label relationships to chart.');
+			renderLegend('relationshipTrendLegend', relationshipSeries);
+		}
+
+		function setComparisonMonths(payload) {
+			const months = trendMonthInfo(payload, false).map(item => item.month);
+			const startSelect = document.getElementById('comparisonStartMonth');
+			const endSelect = document.getElementById('comparisonEndMonth');
+			const previousStart = startSelect.value;
+			const previousEnd = endSelect.value;
+			for (const select of [startSelect, endSelect]) {
+				select.replaceChildren();
+				months.forEach(month => select.appendChild(new Option(month, month)));
+			}
+			if (months.length) {
+				startSelect.value = months.includes(previousStart) ? previousStart : months[Math.max(0, months.length - 2)];
+				endSelect.value = months.includes(previousEnd) ? previousEnd : months[months.length - 1];
+			}
+		}
+
+		function monthServiceMap(rows, month) {
+			const map = new Map();
+			(rows || []).filter(row => row.month === month).forEach(row => map.set(serviceKey(row), (map.get(serviceKey(row)) || 0) + (row.flow_count || 0)));
+			return map;
+		}
+
+		function comparisonCard(label, value, detail, className = 'metric-accent') {
+			return `<div class="panel-soft rounded-2xl p-5"><p class="label">${escapeHtml(label)}</p><p class="${className} metric-value-sm mt-3 font-extrabold">${escapeHtml(value)}</p><p class="muted mt-2 text-sm">${escapeHtml(detail)}</p></div>`;
+		}
+
+		function renderPeriodComparison() {
+			if (!latestExecutivePayload) return;
+			const startMonth = document.getElementById('comparisonStartMonth').value;
+			const endMonth = document.getElementById('comparisonEndMonth').value;
+			const rollups = new Map(monthlyRollup(latestExecutivePayload.insights?.monthly_port_protocol || []).map(row => [row.month, row]));
+			const start = rollups.get(startMonth) || {flows: 0, unique_connections: 0, active_connections: 0};
+			const end = rollups.get(endMonth) || {flows: 0, unique_connections: 0, active_connections: 0};
+			const startServices = monthServiceMap(latestExecutivePayload.insights?.monthly_port_protocol || [], startMonth);
+			const endServices = monthServiceMap(latestExecutivePayload.insights?.monthly_port_protocol || [], endMonth);
+			const newServices = [...endServices.keys()].filter(key => !startServices.has(key));
+			document.getElementById('periodComparisonCards').innerHTML = [
+				comparisonCard('Flow Change', signedPercentageChange(end.flows, start.flows), `${formatNumber(start.flows)} to ${formatNumber(end.flows)} flows`, 'metric-accent'),
+				comparisonCard('Observed Connections', signedPercentageChange(end.unique_connections, start.unique_connections), `${formatNumber(start.unique_connections)} to ${formatNumber(end.unique_connections)}`, 'metric-secondary'),
+				comparisonCard('Active Connections', signedPercentageChange(end.active_connections, start.active_connections), `${formatNumber(start.active_connections)} to ${formatNumber(end.active_connections)}`, 'metric-tertiary'),
+				comparisonCard('New Services', formatNumber(newServices.length), `${startMonth} compared with ${endMonth}`, 'metric-warning')
+			].join('');
+
+			const allServices = new Set([...startServices.keys(), ...endServices.keys()]);
+			const changes = [...allServices].map(key => ({key, before: startServices.get(key) || 0, after: endServices.get(key) || 0, delta: (endServices.get(key) || 0) - (startServices.get(key) || 0)})).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.key.localeCompare(b.key)).slice(0, 10);
+			const serviceContainer = document.getElementById('serviceChanges'); serviceContainer.replaceChildren();
+			changes.forEach(change => {
+				const row = document.createElement('div'); row.className = 'panel-soft flex items-center justify-between rounded-xl px-4 py-3 text-sm';
+				const direction = change.delta > 0 ? '+' : '';
+				row.innerHTML = `<span class="headline font-semibold">${escapeHtml(change.key)}</span><span class="${change.delta > 0 ? 'metric-warning' : 'metric-accent'} font-bold">${escapeHtml(direction + formatNumber(change.delta))}</span>`;
+				serviceContainer.appendChild(row);
+			});
+			if (!changes.length) serviceContainer.innerHTML = '<div class="panel-soft rounded-xl px-4 py-3 text-sm muted">No service changes are available.</div>';
+
+			const externalRows = latestExecutivePayload.insights?.monthly_external_destinations || [];
+			const startExternal = new Set(externalRows.filter(row => row.month === startMonth).map(row => row.destination));
+			const newExternal = externalRows.filter(row => row.month === endMonth && !startExternal.has(row.destination)).sort((a, b) => (b.flow_count || 0) - (a.flow_count || 0));
+			const relationshipRows = latestExecutivePayload.insights?.monthly_relationships || [];
+			const startRelationships = new Set(relationshipRows.filter(row => row.month === startMonth).map(row => `${row.source} → ${row.destination}`));
+			const newRelationships = relationshipRows.filter(row => row.month === endMonth && !startRelationships.has(`${row.source} → ${row.destination}`)).sort((a, b) => (b.flow_count || 0) - (a.flow_count || 0));
+			const newRisky = newServices.filter(key => riskyServiceCatalog.has(key.toLowerCase()));
+			const entityContainer = document.getElementById('newEntities'); entityContainer.replaceChildren();
+			const entityRows = [
+				...newRisky.slice(0, 4).map(key => ({label: `New risky service: ${key}`, value: riskyServiceCatalog.get(key.toLowerCase()) || ''})),
+				...newExternal.slice(0, 4).map(row => ({label: `New external destination: ${row.destination}`, value: `${formatNumber(row.flow_count)} flows`})),
+				...newRelationships.slice(0, 4).map(row => ({label: `New relationship: ${row.source} → ${row.destination}`, value: `${formatNumber(row.flow_count)} flows`}))
+			];
+			entityRows.forEach(entity => {
+				const row = document.createElement('div'); row.className = 'panel-soft rounded-xl px-4 py-3 text-sm';
+				row.innerHTML = `<div class="headline font-semibold">${escapeHtml(entity.label)}</div><div class="muted mt-1 text-xs">${escapeHtml(entity.value)}</div>`;
+				entityContainer.appendChild(row);
+			});
+			if (!entityRows.length) entityContainer.innerHTML = '<div class="panel-soft rounded-xl px-4 py-3 text-sm muted">No newly observed risky services, external destinations, or relationships were found.</div>';
+		}
+
+		function readableDate(value) {
+			if (!value) return '';
+			const date = new Date(value);
+			return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
+		}
+
+		function renderExecutiveCoverage(coverage = {}) {
+			const files = coverage.files || [];
+			const months = coverage.months || [];
+			const missing = coverage.missing_months || [];
+			const start = readableDate(coverage.first_detected), end = readableDate(coverage.last_detected);
+			document.getElementById('reportCoverageDates').textContent = start && end ? `${start} through ${end}` : 'Coverage unavailable';
+			const cards = [
+				{label: 'Source Files', value: formatNumber(files.length || (coverage.source === 'live_extraction' ? 1 : 0))},
+				{label: 'Covered Months', value: formatNumber(months.length)},
+				{label: 'Missing / Overlapping', value: `${missing.length} / ${(coverage.overlaps || []).length}`},
+				{label: 'Exact Rows Deduplicated', value: formatNumber(coverage.deduplicated_records || 0)}
+			];
+			const container = document.getElementById('executiveCoverage'); container.replaceChildren();
+			cards.forEach(card => { const row = document.createElement('div'); row.className = 'panel-soft rounded-xl p-4'; row.innerHTML = `<p class="label">${escapeHtml(card.label)}</p><p class="headline mt-2 text-xl font-bold">${escapeHtml(card.value)}</p>`; container.appendChild(row); });
+			const warnings = document.getElementById('executiveCoverageWarnings'); warnings.replaceChildren();
+			(coverage.warnings || []).forEach(message => { const row = document.createElement('div'); row.className = 'rounded-xl border px-4 py-3 text-sm metric-warning'; row.textContent = message; warnings.appendChild(row); });
+		}
+
+		function reportSectionDefinitions() {
+			return [...document.querySelectorAll('[data-export-section]')].map(section => ({
+				id: section.dataset.exportSection,
+				label: section.dataset.collapseTitle || section.dataset.exportSection
+			}));
+		}
+
+		function selectedReportSectionIDs() {
+			const choices = [...document.querySelectorAll('#reportSectionChoices input[data-report-section]')];
+			if (choices.length) return choices.filter(choice => choice.checked).map(choice => choice.dataset.reportSection);
+			if (Array.isArray(includedReportSections)) return [...includedReportSections];
+			return reportSectionDefinitions().map(section => section.id);
+		}
+
+		function setReportSectionSelection(sectionIDs) {
+			const definitions = reportSectionDefinitions();
+			const selected = new Set(Array.isArray(sectionIDs) ? sectionIDs : definitions.map(section => section.id));
+			includedReportSections = definitions.map(section => section.id).filter(id => selected.has(id));
+			document.querySelectorAll('#reportSectionChoices input[data-report-section]').forEach(choice => {
+				choice.checked = selected.has(choice.dataset.reportSection);
+			});
+		}
+
+		function initializeReportSectionChoices() {
+			const container = document.getElementById('reportSectionChoices');
+			if (!container) return;
+			container.replaceChildren();
+			reportSectionDefinitions().forEach(section => {
+				const label = document.createElement('label');
+				label.className = 'report-section-choice flex cursor-pointer items-center gap-3 rounded-xl px-3 py-3 text-sm';
+				const input = document.createElement('input');
+				input.type = 'checkbox'; input.checked = true; input.dataset.reportSection = section.id;
+				const text = document.createElement('span'); text.textContent = section.label;
+				label.append(input, text); container.appendChild(label);
+			});
+			setReportSectionSelection(includedReportSections);
+		}
+
+		function setExportFilter(root, includedSections) {
+			const scope = root.body || root;
+			const included = new Set(includedSections);
+			scope.dataset.exportFiltered = 'true';
+			scope.querySelectorAll('[data-export-section]').forEach(section => {
+				section.classList.toggle('is-export-excluded', !included.has(section.dataset.exportSection));
+			});
+		}
+
+		function clearExportFilter(root) {
+			const scope = root.body || root;
+			delete scope.dataset.exportFiltered;
+			scope.querySelectorAll('[data-export-section].is-export-excluded').forEach(section => section.classList.remove('is-export-excluded'));
+		}
+
+		function applyReportMetadata(metadata = {}) {
+			const title = metadata.title || 'Blocked Traffic Executive Summary';
+			document.getElementById('reportTitle').textContent = title;
+			document.getElementById('reportCustomer').textContent = metadata.customer_name || 'Blocked Traffic Analysis';
+			document.getElementById('reportPrepared').textContent = metadata.prepared_by ? `Prepared by ${metadata.prepared_by}` : '';
+			document.getElementById('reportNotes').textContent = metadata.notes || '';
+			document.getElementById('reportNotes').classList.toggle('hidden', !metadata.notes);
+			reportLogoDataURL = metadata.logo_data_url || '';
+			const logo = document.getElementById('reportLogo'); logo.src = reportLogoDataURL; logo.classList.toggle('hidden', !reportLogoDataURL);
+			const titleInput = document.getElementById('reportTitleInput'); if (titleInput) titleInput.value = title;
+			const customerInput = document.getElementById('reportCustomerInput'); if (customerInput) customerInput.value = metadata.customer_name || '';
+			const preparedInput = document.getElementById('reportPreparedInput'); if (preparedInput) preparedInput.value = metadata.prepared_by || '';
+			const notesInput = document.getElementById('reportNotesInput'); if (notesInput) notesInput.value = metadata.notes || '';
+			setReportSectionSelection(Array.isArray(metadata.included_sections) ? metadata.included_sections : null);
+			document.getElementById('reportGeneratedAt').textContent = `Generated ${new Date().toLocaleString()}`;
+		}
+
+		function reportMetadataFromInputs() {
+			return {
+				title: document.getElementById('reportTitleInput').value.trim(),
+				customer_name: document.getElementById('reportCustomerInput').value.trim(),
+				prepared_by: document.getElementById('reportPreparedInput').value.trim(),
+				notes: document.getElementById('reportNotesInput').value.trim(),
+				logo_data_url: reportLogoDataURL,
+				included_sections: selectedReportSectionIDs()
+			};
+		}
+
+		function previewReportMetadata() {
+			const metadata = reportMetadataFromInputs();
+			document.getElementById('reportTitle').textContent = metadata.title || 'Blocked Traffic Executive Summary';
+			document.getElementById('reportCustomer').textContent = metadata.customer_name || 'Blocked Traffic Analysis';
+			document.getElementById('reportPrepared').textContent = metadata.prepared_by ? `Prepared by ${metadata.prepared_by}` : '';
+			document.getElementById('reportNotes').textContent = metadata.notes;
+			document.getElementById('reportNotes').classList.toggle('hidden', !metadata.notes);
+			const logo = document.getElementById('reportLogo'); logo.src = metadata.logo_data_url; logo.classList.toggle('hidden', !metadata.logo_data_url);
+		}
+
+		async function saveReportMetadata() {
+			const metadata = reportMetadataFromInputs();
+			try {
+				const response = await fetch('/blocked-traffic/api/results/report-metadata', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(metadata)});
+				const data = await response.json();
+				if (!response.ok || !data.success) throw new Error(data.error || 'Unable to save report settings');
+				applyReportMetadata(data.report_metadata);
+				document.getElementById('reportConfigMessage').textContent = 'Report settings saved.';
+			} catch (error) { document.getElementById('reportConfigMessage').textContent = error.message; }
+		}
+
+		function downloadBlob(blob, name) {
+			const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = name; link.click(); window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+		}
+
+		function reportBaseName() {
+			return (document.getElementById('reportTitle').textContent || 'executive-report').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'executive-report';
+		}
+
+		function downloadChart(containerID, format) {
+			const svg = document.querySelector(`#${containerID} svg`); if (!svg) return;
+			const clone = svg.cloneNode(true); clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+			const source = new XMLSerializer().serializeToString(clone);
+			if (format === 'svg') { downloadBlob(new Blob([source], {type: 'image/svg+xml;charset=utf-8'}), `${containerID}.svg`); return; }
+			const image = new Image();
+			image.onload = () => { const canvas = document.createElement('canvas'); canvas.width = 1600; canvas.height = 544; const context = canvas.getContext('2d'); context.drawImage(image, 0, 0, canvas.width, canvas.height); canvas.toBlob(blob => blob && downloadBlob(blob, `${containerID}.png`), 'image/png'); };
+			image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`;
+		}
+
+		function synchronizeRenderedValues(sourceNodes, cloneNodes) {
+			sourceNodes.forEach((source, index) => {
+				const clone = cloneNodes[index];
+				if (!clone) return;
+				if (source instanceof HTMLInputElement) {
+					clone.setAttribute('value', source.value);
+					if (source.checked) clone.setAttribute('checked', ''); else clone.removeAttribute('checked');
+				} else if (source instanceof HTMLTextAreaElement) {
+					clone.textContent = source.value;
+				} else if (source instanceof HTMLSelectElement) {
+					[...clone.options].forEach((option, optionIndex) => {
+						if (source.options[optionIndex]?.selected) option.setAttribute('selected', ''); else option.removeAttribute('selected');
+					});
+				}
+			});
+		}
+
+		function inlineRenderedStyles(sourceNodes, cloneNodes) {
+			sourceNodes.forEach((source, index) => {
+				const clone = cloneNodes[index];
+				if (!clone || !(source instanceof Element)) return;
+				const computed = window.getComputedStyle(source);
+				for (const property of computed) clone.style.setProperty(property, computed.getPropertyValue(property), computed.getPropertyPriority(property));
+			});
+		}
+
+		function replaceImageControlsWithContext(source, clone) {
+			const sourceSelects = [...source.querySelectorAll('select')];
+			clone.querySelectorAll('select').forEach((select, index) => {
+				const sourceSelect = sourceSelects[index];
+				const values = [...(sourceSelect?.selectedOptions || [])].map(option => option.textContent.trim()).filter(Boolean);
+				const value = document.createElement('span');
+				value.textContent = values.length ? values.join(', ') : 'All';
+				value.style.display = 'block'; value.style.fontWeight = '700'; value.style.marginTop = '0.35rem';
+				select.replaceWith(value);
+			});
+			clone.querySelectorAll('.no-export button').forEach(button => button.remove());
+			clone.querySelectorAll('.no-export').forEach(group => {
+				if (!group.textContent.trim() && !group.querySelector('img, svg')) group.remove();
+			});
+		}
+
+		async function sectionImageSVG(section) {
+			const wasCollapsed = section.classList.contains('is-auto-collapsed');
+			if (wasCollapsed && window.ITTSections) window.ITTSections.apply(section, false, false);
+			try {
+				if (document.fonts?.ready) await document.fonts.ready;
+				await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+				const bounds = section.getBoundingClientRect();
+				const width = Math.max(1, Math.ceil(bounds.width));
+				const exportActions = section.querySelector(':scope > .auto-collapse-toolbar, :scope > .standalone-image-actions');
+				const actionStyle = exportActions ? getComputedStyle(exportActions) : null;
+				const actionHeight = exportActions ? exportActions.getBoundingClientRect().height + parseFloat(actionStyle.marginTop || 0) + parseFloat(actionStyle.marginBottom || 0) : 0;
+				const height = Math.max(1, Math.ceil(section.scrollHeight - actionHeight));
+				const clone = section.cloneNode(true);
+				const sourceNodes = [section, ...section.querySelectorAll('*')];
+				const cloneNodes = [clone, ...clone.querySelectorAll('*')];
+				synchronizeRenderedValues(sourceNodes, cloneNodes);
+				inlineRenderedStyles(sourceNodes, cloneNodes);
+				replaceImageControlsWithContext(section, clone);
+				clone.querySelectorAll('.auto-collapse-toolbar').forEach(toolbar => toolbar.remove());
+				clone.classList.remove('is-auto-collapsed', 'is-export-excluded');
+				clone.removeAttribute('hidden');
+				clone.style.setProperty('box-sizing', 'border-box');
+				clone.style.setProperty('height', `${height}px`);
+				clone.style.setProperty('margin', '0');
+				clone.style.setProperty('width', `${width}px`);
+				clone.querySelectorAll('[hidden]').forEach(element => {
+					if (element.classList.contains('auto-collapse-content')) element.removeAttribute('hidden');
+				});
+				const wrapper = document.createElement('div');
+				wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+				wrapper.style.background = getComputedStyle(document.body).backgroundColor || '#ffffff';
+				wrapper.style.height = `${height}px`; wrapper.style.width = `${width}px`;
+				wrapper.appendChild(clone);
+				const serialized = new XMLSerializer().serializeToString(wrapper);
+				return {width, height, source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`};
+			} finally {
+				if (wasCollapsed && window.ITTSections) window.ITTSections.apply(section, true, false);
+			}
+		}
+
+		async function downloadSectionImage(sectionID, button) {
+			const section = [...document.querySelectorAll('[data-image-section]')].find(item => item.dataset.imageSection === sectionID);
+			if (!section || button?.disabled) return;
+			const previousLabel = button?.textContent || 'PNG';
+			if (button) { button.disabled = true; button.textContent = 'Rendering…'; }
+			try {
+				const rendered = await sectionImageSVG(section);
+				const image = new Image();
+				await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error('Browser could not render this section')); image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(rendered.source)}`; });
+				const maxDimension = 8192;
+				const scale = Math.max(1, Math.min(2, maxDimension / rendered.width, maxDimension / rendered.height));
+				const canvas = document.createElement('canvas');
+				canvas.width = Math.round(rendered.width * scale); canvas.height = Math.round(rendered.height * scale);
+				const context = canvas.getContext('2d');
+				context.drawImage(image, 0, 0, canvas.width, canvas.height);
+				const png = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+				if (!png) throw new Error('Browser could not encode the section image');
+				downloadBlob(png, `${reportBaseName()}-${sectionID}.png`);
+			} catch (error) {
+				const message = document.getElementById('reportConfigMessage');
+				if (message) message.textContent = `Section image failed: ${error.message}`;
+			} finally {
+				if (button) { button.disabled = false; button.textContent = previousLabel; }
+			}
+		}
+
+		function initializeSectionImageActions() {
+			document.querySelectorAll('[data-image-section]').forEach(section => {
+				const toolbar = section.querySelector(':scope > .auto-collapse-toolbar');
+				const collapseButton = toolbar?.querySelector('.auto-collapse-toggle');
+				let actions;
+				if (toolbar && collapseButton) {
+					actions = toolbar.querySelector('.auto-collapse-actions');
+					if (!actions) {
+						actions = document.createElement('span'); actions.className = 'auto-collapse-actions';
+						toolbar.appendChild(actions); actions.appendChild(collapseButton);
+					}
+				} else {
+					actions = section.querySelector(':scope > .standalone-image-actions');
+					if (!actions) {
+						actions = document.createElement('div'); actions.className = 'standalone-image-actions no-export';
+						section.insertBefore(actions, section.firstChild);
+					}
+				}
+				let button = actions.querySelector('.section-image-button');
+				if (!button) {
+					button = document.createElement('button'); button.type = 'button'; button.className = 'section-image-button'; button.textContent = 'Export PNG';
+					if (collapseButton) actions.insertBefore(button, collapseButton); else actions.appendChild(button);
+				}
+				if (!button.__ittImageBound) {
+					button.__ittImageBound = true;
+					button.addEventListener('click', () => downloadSectionImage(section.dataset.imageSection, button));
+				}
+			});
+		}
+
+		function downloadMonthlyCSV() {
+			const rows = latestExecutivePayload?.insights?.monthly_port_protocol || [];
+			const cells = [['Month','Protocol','Port','Flows','Unique Connections','Active Connections'], ...rows.map(row => [row.month,row.protocol,row.port,row.flow_count,row.unique_connections,row.active_connections])];
+			const csv = cells.map(row => row.map(value => `"${String(value ?? '').replaceAll('"','""')}"`).join(',')).join('\r\n');
+			downloadBlob(new Blob([csv], {type: 'text/csv;charset=utf-8'}), `${reportBaseName()}-monthly.csv`);
+		}
+
+		function printExecutiveReport() {
+			const previousTheme = document.body.dataset.theme;
+			setExportFilter(document, selectedReportSectionIDs());
+			applyTheme('illumio-light');
+			const restore = () => { clearExportFilter(document); applyTheme(previousTheme); window.removeEventListener('afterprint', restore); };
+			window.addEventListener('afterprint', restore);
+			window.print();
+			window.setTimeout(restore, 1500);
+		}
+
+		async function downloadExecutiveHTML() {
+			const selectedSections = selectedReportSectionIDs();
+			const exportTheme = document.body.dataset.theme || 'default';
+			renderTrendCharts();
+				const cssParts = [...document.querySelectorAll('style')].map(style => style.textContent);
+				for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
+					try { cssParts.push(await (await fetch(link.href)).text()); } catch (_) {}
+				}
+				let collapsibleSource = '';
+				try { collapsibleSource = await (await fetch('/blocked-traffic/assets/collapsible.js')).text(); } catch (_) {}
+				const reportSource = [...document.scripts].find(script => !script.src && script.textContent.includes('function renderExecutiveSummary'))?.textContent || '';
+				const exportPayload = structuredClone(latestExecutivePayload || {});
+				exportPayload.report_metadata = {...(exportPayload.report_metadata || {}), included_sections: selectedSections};
+				const embeddedPayload = JSON.stringify(exportPayload).replaceAll('<', '\\u003c');
+				const embeddedTheme = JSON.stringify(exportTheme).replaceAll('<', '\\u003c');
+				const body = document.body.cloneNode(true);
+				body.dataset.theme = exportTheme;
+				body.dataset.collapseScope = 'exported-executive-report';
+				setExportFilter(body, selectedSections);
+				body.querySelectorAll('.app-nav, .app-header-action, [data-offline-remove], script').forEach(node => node.remove());
+				const closingScriptPrefix = '<' + '/script';
+				const scripts = `<script>window.__ITT_EXECUTIVE_PAYLOAD__=${embeddedPayload};window.__ITT_EXECUTIVE_THEME__=${embeddedTheme};<\/script><script>${collapsibleSource.replaceAll(closingScriptPrefix, '<\\/script')}<\/script><script>${reportSource.replaceAll(closingScriptPrefix, '<\\/script')}<\/script>`;
+				const bodyHTML = body.outerHTML.replace('</body>', `${scripts}</body>`);
+				const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(document.getElementById('reportTitle').textContent)}</title><style>${cssParts.join('\n')}</style></head>${bodyHTML}</html>`;
+				downloadBlob(new Blob([html], {type: 'text/html;charset=utf-8'}), `${reportBaseName()}.html`);
+		}
+
+        function latestMonthSummary(monthlyRows) {
+            const months = monthlyRollup(monthlyRows);
+            const latest = months.length ? months[months.length - 1] : null;
+            const previous = months.length > 1 ? months[months.length - 2] : null;
+            return { latest, previous };
+        }
+
+        function latestMonthNewServicePairs(monthlyRows) {
+            const months = monthlyRollup(monthlyRows);
+            if (!months.length) return { latest: null, previousSet: new Set(), newRows: [] };
+            const latest = months[months.length - 1];
+            const previousSet = new Set();
+            months.slice(0, -1).forEach(month => {
+                month.rows.forEach(row => previousSet.add(`${row.protocol}:${row.port}`));
+            });
+            const newRows = latest.rows
+                .filter(row => !previousSet.has(`${row.protocol}:${row.port}`))
+                .sort((a, b) => (b.flow_count || 0) - (a.flow_count || 0) || String(a.protocol).localeCompare(String(b.protocol)) || (a.port || 0) - (b.port || 0));
+            return { latest, previousSet, newRows };
+        }
+
+        function persistentServiceRows(monthlyRows) {
+            const byService = new Map();
+            (monthlyRows || []).forEach(row => {
+                const key = `${row.protocol}:${row.port}`;
+                const entry = byService.get(key) || {
+                    protocol: row.protocol,
+                    port: row.port,
+                    months: new Set(),
+                    active_connections: 0,
+                    flow_count: 0
+                };
+                entry.months.add(row.month);
+                entry.active_connections += row.active_connections || 0;
+                entry.flow_count += row.flow_count || 0;
+                byService.set(key, entry);
+            });
+            return Array.from(byService.values())
+                .map(row => ({ ...row, month_count: row.months.size }))
+                .filter(row => row.month_count > 1 || row.active_connections > 0)
+                .sort((a, b) => b.month_count - a.month_count || b.active_connections - a.active_connections || b.flow_count - a.flow_count)
+                .slice(0, 8);
+        }
+
+        function riskyServicesByMonth(monthlyRows) {
+            const map = new Map();
+            (monthlyRows || []).forEach(row => {
+                const key = `${String(row.protocol || '').toLowerCase()}:${row.port}`;
+                const serviceName = riskyServiceCatalog.get(key);
+                if (!serviceName) return;
+                const entry = map.get(serviceName) || { name: serviceName, month_count: new Set(), flow_count: 0, active_connections: 0 };
+                entry.month_count.add(row.month);
+                entry.flow_count += row.flow_count || 0;
+                entry.active_connections += row.active_connections || 0;
+                map.set(serviceName, entry);
+            });
+            return Array.from(map.values())
+                .map(row => ({ ...row, recurring_months: row.month_count.size }))
+                .sort((a, b) => b.recurring_months - a.recurring_months || b.flow_count - a.flow_count || a.name.localeCompare(b.name));
+        }
+
+        function buildFindings(summary, insights) {
+            const totalFlows = summary.reduce((sum, row) => sum + (row.flow_count || 0), 0);
+            const risky = riskyServiceRows(summary);
+            const crossTalk = topCrossTalk(insights);
+			const topExternal = (insights.top_external_destination_ips || [])[0];
+            const categories = insights.traffic_categories || [];
+            const topCategory = categories.length > 0 ? categories[0] : null;
+            const { latest, previous } = latestMonthSummary(insights.monthly_port_protocol || []);
+            const recurringRisky = riskyServicesByMonth(insights.monthly_port_protocol || [])[0];
+            const changeSet = latestMonthNewServicePairs(insights.monthly_port_protocol || []);
+            const findings = [];
+
+            if (crossTalk[0]) {
+                findings.push({
+					title: `${crossTalk[0].source} to ${crossTalk[0].destination} is the busiest blocked ${primaryDimensionName} path`,
+                    body: `${formatNumber(crossTalk[0].flow_count)} flows, representing ${percentage(crossTalk[0].flow_count, totalFlows)} of all blocked traffic in the current dataset.`
+                });
+            }
+            if (risky[0]) {
+                findings.push({
+                    title: `${risky[0].name} is the top risky blocked service`,
+                    body: `${formatNumber(risky[0].flow_count)} flows across ${formatNumber(risky[0].unique_connections)} unique connections.`
+                });
+            }
+            if (topCategory) {
+                findings.push({
+                    title: `${topCategory.name} is the dominant traffic boundary pattern`,
+                    body: `${formatNumber(topCategory.flow_count)} flows across ${formatNumber(topCategory.unique_connections)} unique connections.`
+                });
+            }
+            if (topExternal) {
+                findings.push({
+                    title: `${topExternal.name} is the leading external or unmanaged destination`,
+                    body: `${formatNumber(topExternal.flow_count)} blocked flows were directed to this endpoint.`
+                });
+            }
+            if (latest) {
+                findings.push({
+                    title: `${latest.month} recorded ${formatNumber(latest.flows)} observed blocked flows`,
+                    body: `${formatNumber(latest.active_connections)} active month-spanning connections were present, ${previous ? `${signedPercentageChange(latest.flows, previous.flows)} versus ${previous.month}.` : 'with no prior month available for comparison.'}`
+                });
+            }
+            if (recurringRisky) {
+                findings.push({
+                    title: `${recurringRisky.name} is the most persistent risky service pattern`,
+                    body: `Observed across ${formatNumber(recurringRisky.recurring_months)} months with ${formatNumber(recurringRisky.active_connections)} active month-level connections.`
+                });
+            }
+            if (changeSet.latest && changeSet.newRows.length) {
+                const row = changeSet.newRows[0];
+                findings.push({
+                    title: `${row.protocol} ${row.port} emerged as a new blocked service pair in ${changeSet.latest.month}`,
+                    body: `${formatNumber(row.flow_count)} observed flows in the latest month with no presence in earlier months of the loaded dataset.`
+                });
+            }
+
+            return findings.slice(0, 6);
+        }
+
+        function renderFindings(findings) {
+            const container = document.getElementById('headlineFindings');
+            container.innerHTML = '';
+            findings.forEach((finding, index) => {
+                const card = document.createElement('div');
+                card.className = 'panel-soft rounded-2xl p-5';
+                card.innerHTML = `
+                    <div class="mb-3 flex items-center gap-3">
+                        <div class="finding-index flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold">0${index + 1}</div>
+                        <div class="headline text-lg font-semibold">${escapeHtml(finding.title)}</div>
+                    </div>
+                    <p class="muted text-sm leading-6">${escapeHtml(finding.body)}</p>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function renderRiskyServices(rows, totalFlows) {
+            const container = document.getElementById('riskyServiceChart');
+            if (!rows.length) {
+                container.innerHTML = '<div class="panel-soft rounded-2xl px-4 py-4 text-sm muted">No risky service filters are represented in the loaded dataset.</div>';
+                return;
+            }
+
+            container.innerHTML = '';
+            rows.slice(0, 8).forEach(row => {
+                const width = totalFlows ? Math.max(8, (row.flow_count / totalFlows) * 100) : 8;
+                const item = document.createElement('div');
+                item.className = 'space-y-2';
+                item.innerHTML = `
+                    <div class="flex items-center justify-between text-sm">
+                        <div class="font-semibold headline">${escapeHtml(row.name)}</div>
+                        <div class="muted">${formatNumber(row.flow_count)} flows</div>
+                    </div>
+                    <div class="bar-track">
+                        <div class="bar-fill" style="width:${Math.min(width, 100).toFixed(1)}%"></div>
+                    </div>
+                    <div class="muted text-xs">${formatNumber(row.unique_connections)} unique connections</div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function renderMonthlyTrendCards(monthlyRows) {
+            const { latest, previous } = latestMonthSummary(monthlyRows || []);
+            const latestChange = latestMonthNewServicePairs(monthlyRows || []);
+
+            document.getElementById('latestMonthFlows').innerText = latest ? formatNumber(latest.flows) : '0';
+            document.getElementById('latestMonthLabel').innerText = latest ? latest.month : 'No monthly data';
+            document.getElementById('latestMonthActive').innerText = latest ? formatNumber(latest.active_connections) : '0';
+            document.getElementById('latestMonthActiveLabel').innerText = latest ? `${latest.month} month-spanning activity` : 'Persistence across month spans';
+            document.getElementById('monthOverMonthFlows').innerText = latest && previous ? signedPercentageChange(latest.flows, previous.flows) : 'N/A';
+            document.getElementById('monthOverMonthFlowsLabel').innerText = latest && previous ? `${previous.month} to ${latest.month}` : 'Only one month loaded';
+            document.getElementById('newServicePairs').innerText = latestChange.latest ? formatNumber(latestChange.newRows.length) : '0';
+            document.getElementById('newServicePairsLabel').innerText = latestChange.latest ? `First seen in ${latestChange.latest.month}` : 'Port/protocol pairs first seen in the latest month';
+        }
+
+        function renderPersistentServices(rows) {
+            const container = document.getElementById('persistentServices');
+            if (!rows.length) {
+                container.innerHTML = '<div class="panel-soft rounded-2xl px-4 py-4 text-sm muted">No month-spanning blocked service patterns were identified in the loaded dataset.</div>';
+                return;
+            }
+            container.innerHTML = '';
+            rows.forEach(row => {
+                const item = document.createElement('div');
+                item.className = 'panel-soft rounded-2xl p-4';
+                item.innerHTML = `
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <div class="headline text-base font-semibold">${escapeHtml(row.protocol)} ${formatNumber(row.port)}</div>
+                            <div class="muted mt-1 text-sm">Observed across ${formatNumber(row.month_count)} months</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="metric-secondary text-xl font-extrabold">${formatNumber(row.active_connections)}</div>
+                            <div class="muted text-xs uppercase tracking-[0.25em]">active connections</div>
+                        </div>
+                    </div>
+                    <div class="muted mt-3 text-xs">${formatNumber(row.flow_count)} observed flows across the loaded time window</div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function renderLatestMonthChanges(monthlyRows) {
+            const container = document.getElementById('latestMonthChanges');
+            const { latest, newRows } = latestMonthNewServicePairs(monthlyRows || []);
+            if (!latest) {
+                container.innerHTML = '<div class="panel-soft rounded-2xl px-4 py-4 text-sm muted">No monthly data is available for change detection.</div>';
+                return;
+            }
+            if (!newRows.length) {
+                container.innerHTML = `<div class="panel-soft rounded-2xl px-4 py-4 text-sm muted">No new port / protocol pairs appeared in ${escapeHtml(latest.month)} compared with earlier months in the loaded dataset.</div>`;
+                return;
+            }
+            container.innerHTML = '';
+            newRows.slice(0, 8).forEach(row => {
+                const item = document.createElement('div');
+                item.className = 'panel-soft rounded-2xl p-4';
+                item.innerHTML = `
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <div class="headline text-base font-semibold">${escapeHtml(row.protocol)} ${formatNumber(row.port)}</div>
+                            <div class="muted mt-1 text-sm">New in ${escapeHtml(latest.month)}</div>
+                        </div>
+                        <div class="metric-warning text-right text-xl font-extrabold">${formatNumber(row.flow_count)}</div>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function renderCrossTalk(rows, totalFlows) {
+            const container = document.getElementById('crossTalkList');
+            container.innerHTML = '';
+            rows.forEach(row => {
+                const item = document.createElement('div');
+                item.className = 'panel-soft rounded-2xl p-4';
+                item.innerHTML = `
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <div class="headline text-base font-semibold">${escapeHtml(row.source)} -&gt; ${escapeHtml(row.destination)}</div>
+                            <div class="muted mt-1 text-sm">${formatNumber(row.unique_connections)} unique connections</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="metric-tertiary text-xl font-extrabold">${formatNumber(row.flow_count)}</div>
+                            <div class="muted text-xs uppercase tracking-[0.25em]">${percentage(row.flow_count, totalFlows)}</div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function renderExternalSpotlight(rows) {
+            const container = document.getElementById('externalSpotlight');
+            const filtered = (rows || []).filter(row => row.name !== 'External/Unmanaged').slice(0, 6);
+            const total = filtered.reduce((sum, row) => sum + (row.flow_count || 0), 0);
+            if (!filtered.length) {
+                container.innerHTML = '<div class="panel-soft rounded-2xl px-4 py-4 text-sm muted">No external or unmanaged destination concentration is present in the loaded dataset.</div>';
+                return;
+            }
+
+            container.innerHTML = '';
+            filtered.forEach(row => {
+                const item = document.createElement('div');
+                item.className = 'panel-soft rounded-2xl p-4';
+                item.innerHTML = `
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <div class="headline text-base font-semibold">${escapeHtml(row.name)}</div>
+                            <div class="muted mt-1 text-sm">${formatNumber(row.unique_connections)} unique connections</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="metric-warning text-xl font-extrabold">${formatNumber(row.flow_count)}</div>
+                            <div class="muted text-xs uppercase tracking-[0.25em]">${percentage(row.flow_count, total)}</div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function renderEnvironmentScorecards(rows, totalFlows) {
+            const container = document.getElementById('environmentScorecards');
+            container.innerHTML = '';
+            rows.forEach(row => {
+                const card = document.createElement('div');
+                card.className = 'panel-soft rounded-2xl p-5';
+                card.innerHTML = `
+                    <div class="flex items-center justify-between gap-4">
+                        <div class="headline text-lg font-semibold">${escapeHtml(row.name)}</div>
+                        <div class="metric-accent text-sm font-bold">${percentage(row.total, totalFlows)}</div>
+                    </div>
+                    <div class="mt-4 grid gap-3 text-sm">
+                        <div class="rounded-xl px-3 py-2 panel">
+                            <div class="flex items-center justify-between">
+                                <span class="muted">Outbound blocked flows</span>
+                                <span class="headline font-semibold">${formatNumber(row.outbound)}</span>
+                            </div>
+                        </div>
+                        <div class="rounded-xl px-3 py-2 panel">
+                            <div class="flex items-center justify-between">
+                                <span class="muted">Inbound blocked flows</span>
+                                <span class="headline font-semibold">${formatNumber(row.inbound)}</span>
+                            </div>
+                        </div>
+                        <div class="rounded-xl px-3 py-2 panel">
+                            <div class="flex items-center justify-between">
+                                <span class="muted">External / unmanaged touchpoints</span>
+                                <span class="metric-warning font-semibold">${formatNumber(row.external)}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function renderExecutiveSummary(payload) {
+			latestExecutivePayload = payload;
+            const summary = payload.summary || [];
+            const insights = payload.insights || {};
+			applyDimensionLabels(insights);
+			applyReportMetadata(payload.report_metadata || {});
+			renderExecutiveCoverage(payload.coverage || {});
+            const totalFlows = summary.reduce((sum, row) => sum + (row.flow_count || 0), 0);
+            const totalConnections = summary.reduce((sum, row) => sum + (row.unique_connections || 0), 0);
+            const envCount = environmentNames(insights).length;
+            const risky = riskyServiceRows(summary);
+            const externalFlows = externalFlowTotal(insights);
+            const topRisky = risky[0];
+            const monthlyRows = insights.monthly_port_protocol || [];
+
+            document.getElementById('fileLabel').innerText = `Current dataset: ${payload.fileName}`;
+            document.getElementById('totalFlows').innerText = formatNumber(totalFlows);
+            document.getElementById('totalConnections').innerText = formatNumber(totalConnections);
+            document.getElementById('environmentCount').innerText = formatNumber(envCount);
+            document.getElementById('externalFlowCount').innerText = formatNumber(externalFlows);
+            document.getElementById('topRiskyService').innerText = topRisky ? topRisky.name : 'N/A';
+            document.getElementById('topRiskyServiceFlows').innerText = topRisky ? `${formatNumber(topRisky.flow_count)} flows` : '0 flows';
+
+            renderFindings(buildFindings(summary, insights));
+            renderMonthlyTrendCards(monthlyRows);
+            renderRiskyServices(risky, totalFlows);
+            renderPersistentServices(persistentServiceRows(monthlyRows));
+            renderLatestMonthChanges(monthlyRows);
+            renderCrossTalk(topCrossTalk(insights), totalFlows);
+			renderExternalSpotlight(insights.top_external_destination_ips || []);
+            renderEnvironmentScorecards(environmentScorecards(insights), totalFlows);
+			const options = trendOptionData(payload);
+			populateMultiSelect('serviceTrendSelect', options.services);
+			populateMultiSelect('relationshipTrendSelect', options.relationships);
+			setComparisonMonths(payload);
+			renderTrendCharts();
+			renderPeriodComparison();
+        }
+
+        async function loadExecutiveSummary() {
+            const fileLabel = document.getElementById('fileLabel');
+            fileLabel.innerText = 'Loading latest analytics...';
+            try {
+				if (window.__ITT_EXECUTIVE_PAYLOAD__) {
+					document.getElementById('emptyState').classList.add('hidden');
+					document.getElementById('content').classList.remove('hidden');
+					renderExecutiveSummary(window.__ITT_EXECUTIVE_PAYLOAD__);
+					return;
+				}
+				const res = await fetch(`/blocked-traffic/api/results/summary?t=${Date.now()}`, {cache: 'no-store'});
+                const data = await res.json();
+                if (!data.summary || data.summary.length === 0) {
+                    document.getElementById('emptyState').classList.remove('hidden');
+                    document.getElementById('content').classList.add('hidden');
+                    fileLabel.innerText = data.fileName ? `Latest run: ${data.fileName}` : 'No successful fetch is currently loaded.';
+                    return;
+                }
+
+                document.getElementById('emptyState').classList.add('hidden');
+                document.getElementById('content').classList.remove('hidden');
+                renderExecutiveSummary(data);
+            } catch (error) {
+                document.getElementById('emptyState').classList.remove('hidden');
+                document.getElementById('content').classList.add('hidden');
+                fileLabel.innerText = `Failed to load executive analytics: ${error.message}`;
+            }
+        }
+
+        window.onload = () => {
+            loadSavedTheme();
+			initializeReportSectionChoices();
+			initializeSectionImageActions();
+			const bind = (id, event, handler) => { const element = document.getElementById(id); if (element) element.addEventListener(event, handler); };
+			bind('defaultThemeBtn', 'click', () => applyTheme('default'));
+			bind('illumioThemeBtn', 'click', () => applyTheme('illumio'));
+			bind('illumioLightThemeBtn', 'click', () => applyTheme('illumio-light'));
+			bind('refreshExecutiveBtn', 'click', loadExecutiveSummary);
+			bind('printExecutiveBtn', 'click', printExecutiveReport);
+			bind('downloadExecutiveHTMLBtn', 'click', downloadExecutiveHTML);
+			bind('saveReportMetadataBtn', 'click', saveReportMetadata);
+			bind('downloadMonthlyCSVBtn', 'click', downloadMonthlyCSV);
+			bind('selectAllReportSectionsBtn', 'click', () => setReportSectionSelection(null));
+			bind('clearReportSectionsBtn', 'click', () => setReportSectionSelection([]));
+			bind('clearReportLogoBtn', 'click', () => { reportLogoDataURL = ''; const input = document.getElementById('reportLogoInput'); if (input) input.value = ''; previewReportMetadata(); });
+			['reportTitleInput', 'reportCustomerInput', 'reportPreparedInput', 'reportNotesInput'].forEach(id => bind(id, 'input', previewReportMetadata));
+			bind('reportLogoInput', 'change', event => {
+				const file = event.target.files?.[0];
+				if (!file) return;
+				if (file.size > 600 * 1024) { document.getElementById('reportConfigMessage').textContent = 'Logo must be 600 KB or smaller.'; event.target.value = ''; return; }
+				if (!['image/png', 'image/jpeg', 'image/svg+xml'].includes(file.type)) { document.getElementById('reportConfigMessage').textContent = 'Logo must be PNG, JPEG, or SVG.'; event.target.value = ''; return; }
+				const reader = new FileReader();
+				reader.onload = () => { reportLogoDataURL = String(reader.result || ''); previewReportMetadata(); document.getElementById('reportConfigMessage').textContent = 'Logo loaded. Save report settings to retain it.'; };
+				reader.readAsDataURL(file);
+			});
+			bind('trendRangeSelect', 'change', renderTrendCharts);
+			bind('serviceTrendSelect', 'change', renderTrendCharts);
+			bind('relationshipTrendSelect', 'change', renderTrendCharts);
+			const selectTop = (id, count) => { [...document.getElementById(id).options].forEach((option, index) => { option.selected = index < count; }); renderTrendCharts(); };
+			bind('selectTopServicesBtn', 'click', () => selectTop('serviceTrendSelect', 5));
+			bind('clearServicesBtn', 'click', () => selectTop('serviceTrendSelect', 0));
+			bind('selectTopRelationshipsBtn', 'click', () => selectTop('relationshipTrendSelect', 5));
+			bind('clearRelationshipsBtn', 'click', () => selectTop('relationshipTrendSelect', 0));
+			bind('comparisonStartMonth', 'change', renderPeriodComparison);
+			bind('comparisonEndMonth', 'change', renderPeriodComparison);
+			document.querySelectorAll('[data-chart-download]').forEach(button => button.addEventListener('click', () => downloadChart(button.dataset.chartDownload, button.dataset.format)));
+            loadExecutiveSummary();
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Illumio Traffic Analytics</title>
+    <link rel="stylesheet" href="/blocked-traffic/assets/tailwind.css">
+    <style>
+        :root {
+            --bg: #030712;
+            --panel: #111827;
+            --panel-soft: rgba(17, 24, 39, 0.82);
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #f3f4f6;
+            --muted: #9ca3af;
+            --title: #22d3ee;
+            --accent: #10b981;
+            --accent-strong: #059669;
+            --secondary: #d946ef;
+            --warning: #fbbf24;
+        }
+        body[data-theme="illumio"] {
+            --bg: #1a2c32;
+            --panel: #24393f;
+            --panel-soft: rgba(49, 54, 56, 0.9);
+            --border: #356069;
+            --text: #ffffff;
+            --muted: #d6d7d7;
+            --title: #ff5500;
+            --accent: #ff5500;
+            --accent-strong: #ff5500;
+            --secondary: #94cee5;
+            --warning: #ffa22f;
+        }
+        body[data-theme="illumio-light"] {
+            --bg: #f7f4ee;
+            --panel: rgba(255,255,255,0.98);
+            --panel-soft: rgba(242, 237, 226, 0.96);
+            --border: #d1bea0;
+            --text: #313638;
+            --muted: #6f7274;
+            --title: #ff5500;
+            --accent: #ff5500;
+            --accent-strong: #ff5500;
+            --secondary: #2d454c;
+            --warning: #f97607;
+        }
+        body {
+            font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+            background: linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg) 84%, black));
+            color: var(--text);
+        }
+        .panel { background: var(--panel) !important; border-color: var(--border) !important; color: var(--text); }
+        .panel-soft { background: var(--panel-soft) !important; border-color: var(--border) !important; color: var(--text); }
+        .theme-button { border: 1px solid var(--border); background: var(--panel-soft); color: var(--muted); }
+        .theme-button.active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); border-color: var(--accent); }
+        .muted { color: var(--muted) !important; }
+        .title { color: var(--title) !important; }
+        .accent { color: var(--accent) !important; }
+        .secondary { color: var(--secondary) !important; }
+        .warning { color: var(--warning) !important; }
+        [class*="bg-gray-900"], [class*="bg-gray-800"] { background: var(--panel) !important; }
+        [class*="border-gray-800"] { border-color: var(--border) !important; }
+        [class*="text-gray-500"], [class*="text-gray-400"], [class*="text-gray-300"], [class*="text-gray-200"] { color: var(--muted) !important; }
+        [class*="text-cyan-400"], [class*="text-cyan-300"], [class*="text-sky-300"] { color: var(--title) !important; }
+        [class*="text-emerald-400"], [class*="text-emerald-300"] { color: var(--accent) !important; }
+        [class*="text-fuchsia-300"], [class*="text-violet-300"], [class*="text-violet-200"], [class*="text-fuchsia-200"] { color: var(--secondary) !important; }
+        [class*="text-amber-300"], [class*="text-amber-200"] { color: var(--warning) !important; }
+        a.panel-soft, button.panel-soft { color: var(--text) !important; }
+        input[type="file"] { color: var(--muted) !important; }
+        input[type="file"]::file-selector-button {
+            background: var(--panel) !important;
+            color: var(--text) !important;
+        }
+        select[multiple] {
+            background: var(--panel);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        body[data-theme="illumio-light"] th,
+        body[data-theme="illumio-light"] td,
+        body[data-theme="illumio-light"] .text-sm,
+        body[data-theme="illumio-light"] .text-xs {
+            color: inherit;
+        }
+        body[data-theme="illumio-light"] [class*="text-gray-500"],
+        body[data-theme="illumio-light"] [class*="text-gray-400"],
+        body[data-theme="illumio-light"] [class*="text-gray-300"],
+        body[data-theme="illumio-light"] [class*="text-gray-200"] {
+            color: var(--muted) !important;
+        }
+        .collapse-toggle {
+            border: 1px solid var(--border);
+            background: color-mix(in srgb, var(--panel-soft) 88%, transparent);
+            color: var(--text);
+        }
+        .collapse-toggle:hover {
+            border-color: var(--accent);
+        }
+        .collapse-icon {
+            transition: transform 0.2s ease;
+        }
+        .is-collapsed .collapse-icon {
+            transform: rotate(-90deg);
+        }
+    </style>
+    <link rel="stylesheet" href="/blocked-traffic/assets/app-shell.css">
+</head>
+<body data-theme="default" class="min-h-screen px-4 py-5 md:px-6 md:py-8 xl:px-8">
+    <script src="/blocked-traffic/assets/theme-init.js"></script>
+    <div class="mx-auto w-full max-w-[118rem]">
+        <header class="app-header mb-8 flex flex-col gap-4 2xl:flex-row 2xl:justify-between">
+            <div>
+                <p class="title mb-2 text-xs uppercase tracking-[0.35em]">Post-Fetch Analytics</p>
+                <h1 class="text-3xl font-bold md:text-4xl">Traffic Dashboard</h1>
+                <p id="fileLabel" class="muted mt-2 text-sm">Loading latest results...</p>
+            </div>
+            <div class="app-header-actions">
+                <nav class="app-nav" aria-label="Primary navigation">
+                    <a href="/" class="app-nav-link">Monitoring Dashboard</a>
+                    <a href="/blocked-traffic/" class="app-nav-link">Extractor</a>
+                    <a href="/blocked-traffic/summary" class="app-nav-link" aria-current="page">Analytics</a>
+                    <a href="/blocked-traffic/heatmaps" class="app-nav-link">Heatmaps</a>
+                    <a href="/blocked-traffic/executive-summary" class="app-nav-link">Executive</a>
+                    <a href="/blocked-traffic/automation" class="app-nav-link">Automation</a>
+                </nav>
+                <div class="theme-switcher" role="group" aria-label="Color theme">
+                    <button id="defaultThemeBtn" data-theme-option="default" aria-pressed="false" type="button" class="theme-button">Dark</button>
+                    <button id="illumioThemeBtn" data-theme-option="illumio" aria-pressed="false" type="button" class="theme-button">Illumio Dark</button>
+                    <button id="illumioLightThemeBtn" data-theme-option="illumio-light" aria-pressed="false" type="button" class="theme-button">Illumio Light</button>
+                </div>
+                <button id="refreshSummaryBtn" class="app-header-action inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold text-white" style="background: var(--accent-strong);">Refresh</button>
+            </div>
+        </header>
+
+        <div class="mb-8 rounded-2xl border panel p-4" data-auto-collapsible="csv-import" data-collapse-title="Import Existing CSVs">
+            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h2 class="text-sm font-semibold">Import Existing CSVs</h2>
+                    <p class="muted mt-1 text-xs">Exact duplicate rows and unique connections are deduplicated. Partially overlapping aggregate flow totals cannot be safely deduplicated without per-flow event IDs.</p>
+                </div>
+				<div class="grid gap-3 sm:grid-cols-2 md:flex md:items-center">
+					<input id="csvPrimaryLabel" type="text" value="env" aria-label="Primary CSV label type" placeholder="Primary label (for example BU)" class="rounded-lg px-3 py-2 text-sm">
+					<input id="csvSecondaryLabel" type="text" value="app" aria-label="Secondary CSV label type" placeholder="Secondary label (for example app)" class="rounded-lg px-3 py-2 text-sm">
+					<input id="csvDatasetName" type="text" maxlength="120" aria-label="Optional saved dataset name" placeholder="Save as named dataset (optional)" class="rounded-lg px-3 py-2 text-sm">
+                    <input id="csvFile" type="file" accept=".csv,text/csv" multiple class="muted text-sm file:mr-4 file:rounded-lg file:border-0 file:px-4 file:py-2 file:text-sm file:font-semibold">
+                    <button id="importCSVBtn" class="rounded-lg px-4 py-2 text-sm font-semibold text-white" style="background: var(--accent-strong);">Import CSVs</button>
+                </div>
+            </div>
+        </div>
+
+		<div class="mb-8 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+			<section class="rounded-2xl border panel p-4" data-auto-collapsible="saved-datasets" data-collapse-title="Saved Dataset Collections">
+				<div class="flex flex-col gap-3 md:flex-row md:items-end">
+					<label class="flex-1 text-sm"><span class="muted mb-1 block text-xs uppercase tracking-wide">Saved Dataset Collections</span><select id="savedDatasetSelect" class="w-full rounded-lg border px-3 py-2"><option value="">Choose a saved dataset</option></select></label>
+					<button id="loadDatasetBtn" type="button" class="panel-soft rounded-lg px-4 py-2 text-sm font-semibold">Load</button>
+					<button id="deleteDatasetBtn" type="button" class="rounded-lg px-4 py-2 text-sm font-semibold text-white" style="background: #88132e;">Delete</button>
+				</div>
+				<div class="mt-3 flex flex-col gap-3 md:flex-row md:items-center">
+					<input id="saveDatasetName" maxlength="120" class="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm" placeholder="Name the currently loaded dataset">
+					<button id="saveDatasetBtn" type="button" class="rounded-lg px-4 py-2 text-sm font-semibold text-white" style="background: var(--accent-strong);">Save Current Dataset</button>
+				</div>
+				<p id="datasetMessage" class="muted mt-2 text-xs">Saved datasets can be reopened after restarting the application.</p>
+			</section>
+			<section id="coveragePanel" class="rounded-2xl border panel p-4" data-auto-collapsible="data-coverage" data-collapse-title="Data Coverage">
+				<p class="muted text-xs uppercase tracking-wide">Data Coverage</p>
+				<p id="coverageSummary" class="mt-2 text-sm">No coverage metadata is available.</p>
+				<div id="coverageWarnings" class="mt-3 space-y-2"></div>
+			</section>
+		</div>
+
+        <div id="emptyState" class="hidden rounded-2xl border panel-soft p-8 text-center">
+            <p class="text-lg font-semibold">No analytics are available yet.</p>
+            <p class="muted mt-2 text-sm">Run a fetch from the main page or import a CSV above. The latest successful fetch or import will appear here.</p>
+        </div>
+
+        <div id="dashboard" class="hidden space-y-8">
+            <section class="space-y-4 rounded-2xl border panel p-5" data-collapsible="overview">
+                <div class="flex items-center justify-between gap-4">
+                    <div>
+                        <h2 class="text-xl font-bold text-cyan-300">Overview</h2>
+                        <p class="text-xs uppercase tracking-widest text-gray-500">Current analytics snapshot</p>
+                    </div>
+                    <button type="button" class="collapse-toggle inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em]" data-collapse-toggle>
+                        <span data-collapse-label>Collapse</span>
+                        <span class="collapse-icon text-sm">▾</span>
+                    </button>
+                </div>
+                <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4" data-collapsible-content>
+                    <div class="rounded-2xl border border-gray-800 bg-gray-900 p-5">
+                        <p class="text-xs uppercase tracking-widest text-gray-500">Port / Protocol Rows</p>
+                        <p id="rowCount" class="mt-2 text-3xl font-bold text-cyan-400">0</p>
+                    </div>
+                    <div class="rounded-2xl border border-gray-800 bg-gray-900 p-5">
+                        <p class="text-xs uppercase tracking-widest text-gray-500">Total Flows</p>
+                        <p id="totalFlows" class="mt-2 text-3xl font-bold text-emerald-400">0</p>
+                    </div>
+                    <div class="rounded-2xl border border-gray-800 bg-gray-900 p-5">
+                        <p class="text-xs uppercase tracking-widest text-gray-500">Unique Connections</p>
+                        <p id="totalConnections" class="mt-2 text-3xl font-bold text-amber-300">0</p>
+                    </div>
+                    <div class="rounded-2xl border border-gray-800 bg-gray-900 p-5">
+						<p id="matrixPairLabel" class="text-xs uppercase tracking-widest text-gray-500">Environment Matrix Pairs</p>
+                        <p id="envPairCount" class="mt-2 text-3xl font-bold text-fuchsia-300">0</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="space-y-4 rounded-2xl border panel p-5" data-collapsible="port-summary">
+                <div class="flex items-center justify-between gap-4">
+                    <div>
+                        <h2 class="text-xl font-bold text-cyan-300">Port / Protocol Summary</h2>
+                        <p class="text-xs uppercase tracking-widest text-gray-500">Latest run aggregate</p>
+                    </div>
+                    <button type="button" class="collapse-toggle inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em]" data-collapse-toggle>
+                        <span data-collapse-label>Collapse</span>
+                        <span class="collapse-icon text-sm">▾</span>
+                    </button>
+                </div>
+                <div data-collapsible-content>
+                    <div class="overflow-hidden rounded-2xl border border-gray-800 bg-gray-900">
+                        <table class="min-w-full divide-y divide-gray-800">
+                            <thead class="bg-gray-900/80">
+                                <tr class="text-left text-xs uppercase tracking-widest text-gray-500">
+                                    <th class="px-5 py-4">Port</th>
+                                    <th class="px-5 py-4">Protocol</th>
+                                    <th class="px-5 py-4">Flows</th>
+                                    <th class="px-5 py-4">Unique Connections</th>
+                                </tr>
+                            </thead>
+                            <tbody id="portSummaryBody" class="divide-y divide-gray-800 text-sm"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <section class="space-y-4 rounded-2xl border panel p-5" data-collapsible="monthly-breakdown">
+                <div class="flex items-center justify-between gap-4">
+                    <div>
+                        <h2 class="text-xl font-bold text-amber-300">Monthly Port / Protocol Breakdown</h2>
+                        <p class="text-xs uppercase tracking-widest text-gray-500">Observed monthly flows plus connection persistence across month spans</p>
+                    </div>
+                    <button type="button" class="collapse-toggle inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em]" data-collapse-toggle>
+                        <span data-collapse-label>Collapse</span>
+                        <span class="collapse-icon text-sm">▾</span>
+                    </button>
+                </div>
+                <div id="monthlyBreakdownWrap" class="space-y-4" data-collapsible-content></div>
+            </section>
+
+            <section class="space-y-4 rounded-2xl border panel p-5" data-collapsible="env-service-pivot">
+                <div class="flex items-center justify-between gap-4">
+                    <div>
+						<h2 id="primaryPivotTitle" class="text-xl font-bold text-cyan-300">Environment Service Pivot</h2>
+						<p id="primaryPivotSubtitle" class="text-xs uppercase tracking-widest text-gray-500">Selected source environments to destination environments by protocol and port</p>
+                    </div>
+                    <button type="button" class="collapse-toggle inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em]" data-collapse-toggle>
+                        <span data-collapse-label>Collapse</span>
+                        <span class="collapse-icon text-sm">▾</span>
+                    </button>
+                </div>
+                <div class="space-y-4" data-collapsible-content>
+                    <div class="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+							<label id="primaryPivotSourceLabel" for="pivotSourceEnvSelect" class="mb-3 block text-sm font-semibold text-gray-300">Source Environments</label>
+                            <select id="pivotSourceEnvSelect" multiple size="8" class="w-full rounded-xl px-3 py-3 text-sm"></select>
+							<p id="primaryPivotHelp" class="mt-3 text-xs text-gray-500">Use Ctrl/Cmd-click for multiple selections. With nothing selected, all source environments are shown.</p>
+                        </div>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                            <div id="pivotTableWrap" class="overflow-auto"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="grid gap-8 2xl:grid-cols-2">
+                <section class="space-y-4 rounded-2xl border panel p-5" data-collapsible="top-talkers">
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <h2 class="text-xl font-bold text-emerald-300">Top Talkers</h2>
+                            <p class="text-xs uppercase tracking-widest text-gray-500">Highest flow concentrations</p>
+                        </div>
+                        <button type="button" class="collapse-toggle inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em]" data-collapse-toggle>
+                            <span data-collapse-label>Collapse</span>
+                            <span class="collapse-icon text-sm">▾</span>
+                        </button>
+                    </div>
+                    <div class="grid gap-4 md:grid-cols-2" data-collapsible-content>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+							<h3 id="topPrimarySourcesTitle" class="mb-3 text-sm font-semibold text-gray-300">Top Source Environments</h3>
+                            <div id="topSourceEnvs" class="space-y-2"></div>
+                        </div>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+							<h3 id="topPrimaryDestinationsTitle" class="mb-3 text-sm font-semibold text-gray-300">Top Destination Environments</h3>
+                            <div id="topDestinationEnvs" class="space-y-2"></div>
+                        </div>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                            <h3 class="mb-3 text-sm font-semibold text-gray-300">Top Source IPs</h3>
+                            <div id="topSourceIPs" class="space-y-2"></div>
+                        </div>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                            <h3 class="mb-3 text-sm font-semibold text-gray-300">Top Destination IPs / FQDNs</h3>
+                            <div id="topDestinationIPs" class="space-y-2"></div>
+                        </div>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4 md:col-span-2">
+							<h3 id="topSecondaryPairsTitle" class="mb-3 text-sm font-semibold text-gray-300">Top Application Pairs</h3>
+                            <div id="topAppPairs" class="space-y-2"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="space-y-4 rounded-2xl border panel p-5" data-collapsible="external-summary">
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <h2 class="text-xl font-bold text-amber-300">Unmanaged / External Summary</h2>
+                            <p class="text-xs uppercase tracking-widest text-gray-500">Traffic boundary view</p>
+                        </div>
+                        <button type="button" class="collapse-toggle inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em]" data-collapse-toggle>
+                            <span data-collapse-label>Collapse</span>
+                            <span class="collapse-icon text-sm">▾</span>
+                        </button>
+                    </div>
+                    <div class="space-y-4" data-collapsible-content>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                            <div id="trafficCategories" class="space-y-3"></div>
+                        </div>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                            <h3 class="mb-3 text-sm font-semibold text-gray-300">Top External / Unmanaged Destinations</h3>
+                            <div id="externalDestinations" class="space-y-2"></div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <div class="grid gap-8 2xl:grid-cols-2">
+                <section class="space-y-4 rounded-2xl border panel p-5" data-collapsible="env-matrix">
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+							<h2 id="primaryMatrixTitle" class="text-xl font-bold text-fuchsia-300">Environment Cross-Talk</h2>
+							<p id="primaryMatrixSubtitle" class="text-xs uppercase tracking-widest text-gray-500">Src Environment -> Dst Environment</p>
+                        </div>
+                        <button type="button" class="collapse-toggle inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em]" data-collapse-toggle>
+                            <span data-collapse-label>Collapse</span>
+                            <span class="collapse-icon text-sm">▾</span>
+                        </button>
+                    </div>
+                    <div data-collapsible-content>
+                        <div class="overflow-hidden rounded-2xl border border-gray-800 bg-gray-900">
+                            <table class="min-w-full divide-y divide-gray-800">
+                                <thead class="bg-gray-900/80">
+                                    <tr class="text-left text-xs uppercase tracking-widest text-gray-500">
+                                        <th class="px-5 py-4">Source</th>
+                                        <th class="px-5 py-4">Destination</th>
+                                        <th class="px-5 py-4">Flows</th>
+                                        <th class="px-5 py-4">Unique Connections</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="envMatrixBody" class="divide-y divide-gray-800 text-sm"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="space-y-4 rounded-2xl border panel p-5" data-collapsible="app-matrix">
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+							<h2 id="secondaryMatrixTitle" class="text-xl font-bold text-violet-300">Application-to-Application Matrix</h2>
+							<p id="secondaryMatrixSubtitle" class="text-xs uppercase tracking-widest text-gray-500">Src Application -> Dst Application</p>
+                        </div>
+                        <button type="button" class="collapse-toggle inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em]" data-collapse-toggle>
+                            <span data-collapse-label>Collapse</span>
+                            <span class="collapse-icon text-sm">▾</span>
+                        </button>
+                    </div>
+                    <div data-collapsible-content>
+                        <div class="overflow-hidden rounded-2xl border border-gray-800 bg-gray-900">
+                            <table class="min-w-full divide-y divide-gray-800">
+                                <thead class="bg-gray-900/80">
+                                    <tr class="text-left text-xs uppercase tracking-widest text-gray-500">
+                                        <th class="px-5 py-4">Source</th>
+                                        <th class="px-5 py-4">Destination</th>
+                                        <th class="px-5 py-4">Flows</th>
+                                        <th class="px-5 py-4">Unique Connections</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="appMatrixBody" class="divide-y divide-gray-800 text-sm"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <script src="/blocked-traffic/assets/app-version.js"></script>
+    <script src="/blocked-traffic/assets/collapsible.js"></script>
+    <script>
+        let latestInsights = {};
+		let primaryDimensionName = 'Environment';
+		let secondaryDimensionName = 'Application';
+
+		function dimensionName(key, fallback) {
+			const value = String(key || '').trim();
+			if (!value) return fallback;
+			if (value.toLowerCase() === 'env') return 'Environment';
+			if (value.toLowerCase() === 'app') return 'Application';
+			return value;
+		}
+
+		function applyDimensionLabels(insights) {
+			const primaryKey = insights.primary_label_key || 'env';
+			const secondaryKey = insights.secondary_label_key || 'app';
+			primaryDimensionName = dimensionName(primaryKey, 'Environment');
+			secondaryDimensionName = dimensionName(secondaryKey, 'Application');
+
+			document.getElementById('matrixPairLabel').innerText = `${primaryDimensionName} Matrix Pairs`;
+			document.getElementById('primaryPivotTitle').innerText = `${primaryDimensionName} Service Pivot`;
+			document.getElementById('primaryPivotSubtitle').innerText = `Selected source ${primaryDimensionName} values to destination ${primaryDimensionName} values by protocol and port`;
+			document.getElementById('primaryPivotSourceLabel').innerText = `Source ${primaryDimensionName} Values`;
+			document.getElementById('primaryPivotHelp').innerText = `Use Ctrl/Cmd-click for multiple selections. With nothing selected, all source ${primaryDimensionName} values are shown.`;
+			document.getElementById('topPrimarySourcesTitle').innerText = `Top Source ${primaryDimensionName} Values`;
+			document.getElementById('topPrimaryDestinationsTitle').innerText = `Top Destination ${primaryDimensionName} Values`;
+			document.getElementById('topSecondaryPairsTitle').innerText = `Top ${secondaryDimensionName} Pairs`;
+			document.getElementById('primaryMatrixTitle').innerText = `${primaryDimensionName} Cross-Talk`;
+			document.getElementById('primaryMatrixSubtitle').innerText = `Src ${primaryDimensionName} -> Dst ${primaryDimensionName}`;
+			document.getElementById('secondaryMatrixTitle').innerText = `${secondaryDimensionName}-to-${secondaryDimensionName} Matrix`;
+			document.getElementById('secondaryMatrixSubtitle').innerText = `Src ${secondaryDimensionName} -> Dst ${secondaryDimensionName}`;
+			document.getElementById('csvPrimaryLabel').value = primaryKey;
+			document.getElementById('csvSecondaryLabel').value = secondaryKey;
+		}
+
+        function applyTheme(theme) {
+            document.body.dataset.theme = theme;
+            localStorage.setItem('ittTheme', theme);
+            document.getElementById('defaultThemeBtn').classList.toggle('active', theme === 'default');
+            document.getElementById('illumioThemeBtn').classList.toggle('active', theme === 'illumio');
+            document.getElementById('illumioLightThemeBtn').classList.toggle('active', theme === 'illumio-light');
+            document.querySelectorAll('[data-theme-option]').forEach((button) => {
+                button.setAttribute('aria-pressed', String(button.dataset.themeOption === theme));
+            });
+        }
+
+        function loadSavedTheme() {
+            applyTheme(localStorage.getItem('ittTheme') || 'default');
+        }
+
+        function applyCollapsedState(section, collapsed) {
+            const content = section.querySelector('[data-collapsible-content]');
+            const label = section.querySelector('[data-collapse-label]');
+            if (!content || !label) return;
+            section.classList.toggle('is-collapsed', collapsed);
+            content.classList.toggle('hidden', collapsed);
+            label.innerText = collapsed ? 'Expand' : 'Collapse';
+        }
+
+        function initializeCollapsibles() {
+            document.querySelectorAll('[data-collapsible]').forEach((section) => {
+                const key = section.dataset.collapsible;
+                const toggle = section.querySelector('[data-collapse-toggle]');
+                const saved = localStorage.getItem(`ittCollapse:${key}`);
+                applyCollapsedState(section, saved === 'true');
+                if (!toggle || toggle.dataset.bound === 'true') return;
+                toggle.dataset.bound = 'true';
+                toggle.addEventListener('click', () => {
+                    const collapsed = !section.classList.contains('is-collapsed');
+                    applyCollapsedState(section, collapsed);
+                    localStorage.setItem(`ittCollapse:${key}`, collapsed ? 'true' : 'false');
+                });
+            });
+        }
+
+        function formatNumber(value) {
+            return new Intl.NumberFormat().format(value || 0);
+        }
+
+        function formatPort(value) {
+            if (value === null || value === undefined || value === '') {
+                return '0';
+            }
+            return String(value);
+        }
+
+        function renderRows(targetId, rows, columns) {
+            const body = document.getElementById(targetId);
+            body.innerHTML = '';
+            rows.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-800/60';
+                tr.innerHTML = columns.map(column => `<td class="px-5 py-4 ${column.className || ''}">${escapeHtml(column.render(row))}</td>`).join('');
+                body.appendChild(tr);
+            });
+        }
+
+        function renderTalkerList(targetId, rows) {
+            const container = document.getElementById(targetId);
+            container.innerHTML = '';
+            rows.forEach(row => {
+                const item = document.createElement('div');
+                item.className = 'flex items-center justify-between rounded-lg bg-gray-800/70 px-3 py-2';
+                item.innerHTML = `
+                    <div class="pr-4">
+                        <div class="text-sm font-medium text-gray-100">${escapeHtml(row.name)}</div>
+                        <div class="text-xs text-gray-500">${formatNumber(row.unique_connections)} unique connections</div>
+                    </div>
+                    <div class="text-sm font-semibold text-emerald-300">${formatNumber(row.flow_count)} flows</div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function escapeHtml(value) {
+            return String(value)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        function getSelectedPivotSourceEnvs() {
+            const select = document.getElementById('pivotSourceEnvSelect');
+            return Array.from(select?.selectedOptions || []).map((option) => option.value);
+        }
+
+        function renderPivotSourceEnvOptions(options = []) {
+            const select = document.getElementById('pivotSourceEnvSelect');
+            const previousSelection = new Set(getSelectedPivotSourceEnvs());
+            select.innerHTML = '';
+
+            options.forEach((name) => {
+                const option = document.createElement('option');
+                option.value = name;
+                option.innerText = name;
+                option.selected = previousSelection.has(name);
+                select.appendChild(option);
+            });
+        }
+
+        function renderEnvServicePivot(insights) {
+            const container = document.getElementById('pivotTableWrap');
+            const rows = insights.env_service_pivot || [];
+            const selectedSources = getSelectedPivotSourceEnvs();
+            const selectedSet = new Set(selectedSources);
+            const filteredRows = rows.filter((row) => selectedSet.size === 0 || selectedSet.has(row.source_env));
+
+            if (filteredRows.length === 0) {
+				container.innerHTML = `<p class="text-sm text-gray-500">No pivot data available for the current source ${escapeHtml(primaryDimensionName)} selection.</p>`;
+                return;
+            }
+
+            const destinationOrder = Array.from(new Set(filteredRows.map((row) => row.destination_env))).sort((a, b) => a.localeCompare(b));
+            const protocolGroups = new Map();
+
+            filteredRows.forEach((row) => {
+                const protocol = row.protocol || 'Unknown';
+                if (!protocolGroups.has(protocol)) {
+                    protocolGroups.set(protocol, new Map());
+                }
+                const portMap = protocolGroups.get(protocol);
+                if (!portMap.has(row.port)) {
+                    portMap.set(row.port, { port: row.port, flowsByDestination: {}, totalFlows: 0 });
+                }
+                const portEntry = portMap.get(row.port);
+                portEntry.flowsByDestination[row.destination_env] = (portEntry.flowsByDestination[row.destination_env] || 0) + (row.flow_count || 0);
+                portEntry.totalFlows += row.flow_count || 0;
+            });
+
+            const protocolOrder = Array.from(protocolGroups.keys()).sort((a, b) => a.localeCompare(b));
+            let grandTotal = 0;
+            destinationOrder.forEach((destination) => {
+                grandTotal += filteredRows.filter((row) => row.destination_env === destination).reduce((sum, row) => sum + (row.flow_count || 0), 0);
+            });
+
+            let html = '<table class="min-w-full divide-y divide-gray-800 text-sm">';
+            html += '<thead class="bg-gray-900/80"><tr class="text-left text-xs uppercase tracking-widest text-gray-500">';
+            html += '<th class="px-4 py-3">Protocol</th>';
+            html += '<th class="px-4 py-3">Port</th>';
+            destinationOrder.forEach((destination) => {
+                html += `<th class="px-4 py-3">${escapeHtml(destination)}</th>`;
+            });
+            html += '<th class="px-4 py-3">Grand Total</th></tr></thead><tbody class="divide-y divide-gray-800">';
+
+            protocolOrder.forEach((protocol) => {
+                const portMap = protocolGroups.get(protocol);
+                const portEntries = Array.from(portMap.values()).sort((a, b) => a.port - b.port);
+                const protocolTotals = {};
+                let protocolGrandTotal = 0;
+                portEntries.forEach((entry) => {
+                    destinationOrder.forEach((destination) => {
+                        protocolTotals[destination] = (protocolTotals[destination] || 0) + (entry.flowsByDestination[destination] || 0);
+                    });
+                    protocolGrandTotal += entry.totalFlows;
+                });
+
+                html += `<tr class="bg-gray-900/70 font-semibold" style="color: var(--text);"><td class="px-4 py-3">${escapeHtml(protocol)}</td><td class="px-4 py-3"></td>`;
+                destinationOrder.forEach((destination) => {
+                    html += `<td class="px-4 py-3">${formatNumber(protocolTotals[destination] || 0)}</td>`;
+                });
+                html += `<td class="px-4 py-3">${formatNumber(protocolGrandTotal)}</td></tr>`;
+
+                portEntries.forEach((entry) => {
+                    html += `<tr class="hover:bg-gray-800/60"><td class="px-4 py-3"></td><td class="px-4 py-3 font-medium" style="color: var(--text);">${formatNumber(entry.port)}</td>`;
+                    destinationOrder.forEach((destination) => {
+                        html += `<td class="px-4 py-3">${formatNumber(entry.flowsByDestination[destination] || 0)}</td>`;
+                    });
+                    html += `<td class="px-4 py-3 font-semibold text-emerald-300">${formatNumber(entry.totalFlows)}</td></tr>`;
+                });
+            });
+
+            const destinationTotals = {};
+            filteredRows.forEach((row) => {
+                destinationTotals[row.destination_env] = (destinationTotals[row.destination_env] || 0) + (row.flow_count || 0);
+            });
+            html += '<tr class="bg-gray-900/90 font-bold" style="color: var(--text);"><td class="px-4 py-3" colspan="2">Grand Total</td>';
+            destinationOrder.forEach((destination) => {
+                html += `<td class="px-4 py-3">${formatNumber(destinationTotals[destination] || 0)}</td>`;
+            });
+            html += `<td class="px-4 py-3">${formatNumber(grandTotal)}</td></tr>`;
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        function renderMonthlyBreakdown(rows) {
+            const container = document.getElementById('monthlyBreakdownWrap');
+            container.innerHTML = '';
+
+            if (!rows || rows.length === 0) {
+                container.innerHTML = '<div class="rounded-2xl border border-dashed border-gray-800 bg-gray-900 p-6 text-sm text-gray-500">No monthly breakdown is available for the current dataset.</div>';
+                return;
+            }
+
+            const grouped = new Map();
+            rows.forEach((row) => {
+                if (!grouped.has(row.month)) {
+                    grouped.set(row.month, []);
+                }
+                grouped.get(row.month).push(row);
+            });
+
+            Array.from(grouped.keys()).sort((a, b) => b.localeCompare(a)).forEach((month) => {
+                const monthRows = grouped.get(month);
+                const totalFlows = monthRows.reduce((sum, row) => sum + (row.flow_count || 0), 0);
+                const totalConnections = monthRows.reduce((sum, row) => sum + (row.unique_connections || 0), 0);
+                const section = document.createElement('div');
+                section.className = 'overflow-hidden rounded-2xl border border-gray-800 bg-gray-900';
+                section.innerHTML = `
+                    <div class="flex items-center justify-between border-b border-gray-800 px-5 py-4">
+                        <div>
+                            <h3 class="text-sm font-semibold" style="color: var(--text);">${escapeHtml(month)}</h3>
+                            <p class="mt-1 text-xs text-gray-500">${formatNumber(totalFlows)} flows across ${formatNumber(monthRows.length)} protocol/port rows</p>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-sm font-semibold text-emerald-300">${formatNumber(totalFlows)} flows</div>
+                            <div class="text-xs text-amber-200">${formatNumber(totalConnections)} unique connections with observed traffic</div>
+                        </div>
+                    </div>
+                    <table class="min-w-full divide-y divide-gray-800">
+                        <thead class="bg-gray-900/80">
+                            <tr class="text-left text-xs uppercase tracking-widest text-gray-500">
+                                <th class="px-5 py-4">Protocol</th>
+                                <th class="px-5 py-4">Port</th>
+                                <th class="px-5 py-4">Flows</th>
+                                <th class="px-5 py-4">Unique Connections</th>
+                                <th class="px-5 py-4">Active Connections</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-800 text-sm">
+                            ${monthRows.map((row) => `
+                                <tr class="hover:bg-gray-800/60">
+                                    <td class="px-5 py-4 font-medium" style="color: var(--text);">${escapeHtml(row.protocol)}</td>
+                                    <td class="px-5 py-4" style="color: var(--text);">${formatPort(row.port)}</td>
+                                    <td class="px-5 py-4 text-emerald-300">${formatNumber(row.flow_count)}</td>
+                                    <td class="px-5 py-4 text-amber-200">${formatNumber(row.unique_connections)}</td>
+                                    <td class="px-5 py-4 text-sky-300">${formatNumber(row.active_connections)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+                container.appendChild(section);
+            });
+        }
+
+		function buildExternalDestinationList(insights) {
+			const envRows = insights.env_matrix || [];
+			const externalDestinations = insights.top_external_destination_ips || [];
+			const container = document.getElementById('externalDestinations');
+
+			const boundaryFlows = envRows
+				.filter(row => row.source === 'External/Unmanaged' || row.destination === 'External/Unmanaged')
+				.reduce((sum, row) => sum + (row.flow_count || 0), 0);
+
+			container.innerHTML = `
+				<div class="mb-3 rounded-lg border border-gray-800 bg-gray-800/70 px-3 py-3">
+					<div class="text-xs uppercase tracking-widest text-gray-500">Boundary Traffic Total</div>
+					<div class="mt-1 text-lg font-bold text-amber-200">${formatNumber(boundaryFlows)} flows touching External/Unmanaged</div>
+				</div>
+			`;
+
+			if (externalDestinations.length === 0) {
+				container.insertAdjacentHTML('beforeend', `
+					<div class="rounded-lg bg-gray-800/70 px-3 py-3 text-sm text-gray-500">
+						No external or unmanaged destination endpoints are present. Boundary traffic, if shown above, originates from unmanaged sources.
+					</div>
+				`);
+				return;
+			}
+
+			externalDestinations.slice(0, 12).forEach(row => {
+                const item = document.createElement('div');
+                item.className = 'flex items-center justify-between rounded-lg bg-gray-800/70 px-3 py-2';
+                item.innerHTML = `
+                    <div class="pr-4">
+                        <div class="text-sm font-medium text-gray-100">${escapeHtml(row.name)}</div>
+                        <div class="text-xs text-gray-500">${formatNumber(row.unique_connections)} unique connections</div>
+                    </div>
+                    <div class="text-sm font-semibold text-amber-200">${formatNumber(row.flow_count)} flows</div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function renderCategories(rows) {
+            const container = document.getElementById('trafficCategories');
+            container.innerHTML = '';
+            rows.forEach(row => {
+                const item = document.createElement('div');
+                item.className = 'rounded-xl border border-gray-800 bg-gray-800/70 px-4 py-4';
+                item.innerHTML = `
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <div class="text-sm font-semibold text-gray-100">${escapeHtml(row.name)}</div>
+                            <div class="text-xs text-gray-500">${formatNumber(row.unique_connections)} unique connections</div>
+                        </div>
+                        <div class="text-right text-lg font-bold text-amber-200">${formatNumber(row.flow_count)}</div>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function renderDashboard(payload) {
+            const summary = payload.summary || [];
+            const insights = payload.insights || {};
+            latestInsights = insights;
+			applyDimensionLabels(insights);
+            const totalFlows = summary.reduce((sum, row) => sum + (row.flow_count || 0), 0);
+            const totalConnections = summary.reduce((sum, row) => sum + (row.unique_connections || 0), 0);
+
+            document.getElementById('fileLabel').innerText = `Latest CSV: ${payload.fileName}`;
+            document.getElementById('rowCount').innerText = formatNumber(summary.length);
+            document.getElementById('totalFlows').innerText = formatNumber(totalFlows);
+            document.getElementById('totalConnections').innerText = formatNumber(totalConnections);
+            document.getElementById('envPairCount').innerText = formatNumber((insights.env_matrix || []).length);
+
+            renderRows('portSummaryBody', summary, [
+                { render: row => row.port, className: 'font-semibold text-white' },
+                { render: row => row.protocol, className: 'text-cyan-300' },
+                { render: row => formatNumber(row.flow_count), className: 'text-emerald-300' },
+                { render: row => formatNumber(row.unique_connections), className: 'text-amber-200' }
+            ]);
+
+            renderRows('envMatrixBody', insights.env_matrix || [], [
+                { render: row => row.source, className: 'font-medium text-white' },
+                { render: row => row.destination, className: 'text-fuchsia-200' },
+                { render: row => formatNumber(row.flow_count), className: 'text-emerald-300' },
+                { render: row => formatNumber(row.unique_connections), className: 'text-amber-200' }
+            ]);
+
+            renderRows('appMatrixBody', insights.app_matrix || [], [
+                { render: row => row.source, className: 'font-medium text-white' },
+                { render: row => row.destination, className: 'text-violet-200' },
+                { render: row => formatNumber(row.flow_count), className: 'text-emerald-300' },
+                { render: row => formatNumber(row.unique_connections), className: 'text-amber-200' }
+            ]);
+
+            renderTalkerList('topSourceEnvs', insights.top_source_envs || []);
+            renderTalkerList('topDestinationEnvs', insights.top_destination_envs || []);
+            renderTalkerList('topSourceIPs', insights.top_source_ips || []);
+            renderTalkerList('topDestinationIPs', insights.top_destination_ips || []);
+            renderTalkerList('topAppPairs', insights.top_app_pairs || []);
+            renderCategories(insights.traffic_categories || []);
+            renderMonthlyBreakdown(insights.monthly_port_protocol || []);
+            renderPivotSourceEnvOptions(insights.source_env_options || []);
+            renderEnvServicePivot(insights);
+            buildExternalDestinationList(insights);
+        }
+
+        async function loadSummary() {
+            const fileLabel = document.getElementById('fileLabel');
+            fileLabel.innerText = 'Loading latest results...';
+            try {
+                const res = await fetch(`/blocked-traffic/api/results/summary?ts=${Date.now()}`, { cache: 'no-store' });
+                const data = await res.json();
+				renderCoverage(data.coverage || {});
+                if (!data.summary || data.summary.length === 0) {
+                    document.getElementById('emptyState').classList.remove('hidden');
+                    document.getElementById('dashboard').classList.add('hidden');
+                    fileLabel.innerText = data.fileName ? `Latest run: ${data.fileName}` : 'No successful fetch is currently loaded.';
+                    return;
+                }
+
+                document.getElementById('emptyState').classList.add('hidden');
+                document.getElementById('dashboard').classList.remove('hidden');
+				renderDashboard(data);
+            } catch (error) {
+                document.getElementById('emptyState').classList.remove('hidden');
+                document.getElementById('dashboard').classList.add('hidden');
+                fileLabel.innerText = `Failed to load analytics: ${error.message}`;
+            }
+        }
+
+        async function importCSV() {
+            const input = document.getElementById('csvFile');
+            if (!input.files || input.files.length === 0) {
+                document.getElementById('fileLabel').innerText = 'Choose one or more CSV files first.';
+                return;
+            }
+
+			const files = Array.from(input.files);
+            const formData = new FormData();
+			files.forEach(file => formData.append('files', file));
+			formData.append('primary_label_key', document.getElementById('csvPrimaryLabel').value || 'env');
+			formData.append('secondary_label_key', document.getElementById('csvSecondaryLabel').value || 'app');
+			formData.append('dataset_name', document.getElementById('csvDatasetName').value || '');
+			const selectionLabel = files.length === 1 ? files[0].name : `${files.length} CSV files`;
+            document.getElementById('fileLabel').innerText = `Importing ${selectionLabel}...`;
+
+            try {
+                const res = await fetch('/blocked-traffic/api/results/import-csv', {
+                    method: 'POST',
+                    cache: 'no-store',
+                    body: formData
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    document.getElementById('fileLabel').innerText = `Import failed: ${data.error || 'Unknown error'}`;
+                    return;
+                }
+                await loadSummary();
+				await loadDatasets();
+            } catch (error) {
+                document.getElementById('fileLabel').innerText = `Import failed: ${error.message}`;
+            }
+        }
+
+		function coverageDate(value) {
+			if (!value) return '';
+			const date = new Date(value);
+			return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
+		}
+
+		function renderCoverage(coverage = {}) {
+			const files = coverage.files || [];
+			const months = coverage.months || [];
+			const start = coverageDate(coverage.first_detected);
+			const end = coverageDate(coverage.last_detected);
+			const pieces = [];
+			if (files.length) pieces.push(`${formatNumber(files.length)} source file${files.length === 1 ? '' : 's'}`);
+			if (months.length) pieces.push(`${formatNumber(months.length)} covered month${months.length === 1 ? '' : 's'}`);
+			if (coverage.deduplicated_records) pieces.push(`${formatNumber(coverage.deduplicated_records)} exact duplicate row${coverage.deduplicated_records === 1 ? '' : 's'} removed`);
+			if (start && end) pieces.push(`${start} through ${end}`);
+			document.getElementById('coverageSummary').textContent = pieces.join(' · ') || 'No coverage metadata is available.';
+			const warnings = document.getElementById('coverageWarnings');
+			warnings.replaceChildren();
+			(coverage.warnings || []).forEach(message => {
+				const item = document.createElement('div');
+				item.className = 'rounded-lg border px-3 py-2 text-xs warning';
+				item.textContent = message;
+				warnings.appendChild(item);
+			});
+		}
+
+		async function datasetRequest(path, payload) {
+			const response = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+			const data = await response.json();
+			if (!response.ok || !data.success) throw new Error(data.error || `Request failed with HTTP ${response.status}`);
+			return data;
+		}
+
+		async function loadDatasets() {
+			const response = await fetch('/blocked-traffic/api/datasets', {cache: 'no-store'});
+			const data = await response.json();
+			const select = document.getElementById('savedDatasetSelect');
+			const previous = data.current_id || select.value;
+			select.replaceChildren(new Option('Choose a saved dataset', ''));
+			(data.datasets || []).forEach(dataset => {
+				const detail = dataset.month_count ? ` (${dataset.month_count} months)` : '';
+				select.appendChild(new Option(`${dataset.name}${detail}`, dataset.id));
+			});
+			if ([...select.options].some(option => option.value === previous)) select.value = previous;
+		}
+
+		async function loadSelectedDataset() {
+			const id = document.getElementById('savedDatasetSelect').value;
+			if (!id) return;
+			try {
+				await datasetRequest('/blocked-traffic/api/datasets/load', {id});
+				document.getElementById('datasetMessage').textContent = 'Saved dataset loaded.';
+				await loadSummary();
+			} catch (error) {
+				document.getElementById('datasetMessage').textContent = error.message;
+			}
+		}
+
+		async function saveCurrentDataset() {
+			const name = document.getElementById('saveDatasetName').value.trim();
+			if (!name) {
+				document.getElementById('datasetMessage').textContent = 'Enter a dataset name first.';
+				return;
+			}
+			try {
+				const data = await datasetRequest('/blocked-traffic/api/datasets/save', {name});
+				document.getElementById('datasetMessage').textContent = `Saved '${data.dataset.name}'.`;
+				document.getElementById('saveDatasetName').value = '';
+				await loadDatasets();
+			} catch (error) {
+				document.getElementById('datasetMessage').textContent = error.message;
+			}
+		}
+
+		async function deleteSelectedDataset() {
+			const select = document.getElementById('savedDatasetSelect');
+			const id = select.value;
+			if (!id || !confirm(`Delete saved dataset '${select.selectedOptions[0].textContent}'?`)) return;
+			try {
+				await datasetRequest('/blocked-traffic/api/datasets/delete', {id});
+				document.getElementById('datasetMessage').textContent = 'Saved dataset deleted. The currently loaded analytics remain available.';
+				await loadDatasets();
+			} catch (error) {
+				document.getElementById('datasetMessage').textContent = error.message;
+			}
+		}
+
+        window.onload = () => {
+            loadSavedTheme();
+            document.getElementById('defaultThemeBtn').addEventListener('click', () => applyTheme('default'));
+            document.getElementById('illumioThemeBtn').addEventListener('click', () => applyTheme('illumio'));
+            document.getElementById('illumioLightThemeBtn').addEventListener('click', () => applyTheme('illumio-light'));
+            document.getElementById('refreshSummaryBtn').addEventListener('click', loadSummary);
+            document.getElementById('importCSVBtn').addEventListener('click', importCSV);
+			document.getElementById('loadDatasetBtn').addEventListener('click', loadSelectedDataset);
+			document.getElementById('saveDatasetBtn').addEventListener('click', saveCurrentDataset);
+			document.getElementById('deleteDatasetBtn').addEventListener('click', deleteSelectedDataset);
+            initializeCollapsibles();
+            document.getElementById('pivotSourceEnvSelect').addEventListener('change', () => renderEnvServicePivot(latestInsights));
+            loadSummary();
+			loadDatasets();
+        };
+    </script>
+</body>
+</html>

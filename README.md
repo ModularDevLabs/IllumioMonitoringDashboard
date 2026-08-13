@@ -11,6 +11,13 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 ## Features
 
+- Integrated Blocked Traffic Extractor development preview:
+  - Available within the dashboard at `/blocked-traffic/`
+  - Includes extraction, multi-CSV analytics, configurable label dimensions, heatmaps, executive summaries, datasets, templates, scheduling, and artifact delivery
+  - Uses independent PCE profiles and API credentials; dashboard collector credentials are never reused by the extractor
+  - Remains localhost-only even when the Monitoring Dashboard is configured for network hosting
+  - Namespaces extractor pages and APIs so existing dashboard routes remain unchanged
+
 - VEN health visibility:
   - Warning-state workloads
   - Error-state workloads
@@ -102,6 +109,18 @@ Cross-platform binaries are produced in the project root:
 3. Save config when prompted.
 4. Open `http://localhost:18443`.
 5. Go to `/settings` to configure traffic targets, retention, and optional alerting.
+6. Open `/blocked-traffic/` to use the integrated Blocked Traffic Extractor with its own PCE profile and API credentials.
+
+## Blocked Traffic Extractor Integration
+
+This development build embeds the Blocked Traffic Extractor as an isolated module in the dashboard executable. The dashboard and extractor share the HTTP listener and navigation only; they do not share API credentials, profiles, request state, or saved analysis data. Extractor routes continue to require a localhost host name or loopback address.
+
+- Dashboard credentials remain in `config.json` and drive continuous monitoring collection.
+- Extractor credentials remain in the platform user configuration directory under `illumio-monitoring-dashboard-extractor/pce_profiles.json` and drive only extractor requests.
+- Extractor templates, delivery destinations, run history, and saved datasets remain in that same dedicated extractor directory.
+- The integration is based on Blocked Traffic Extractor `v1.5.0`.
+
+See [BLOCKED_TRAFFIC_INTEGRATION.md](BLOCKED_TRAFFIC_INTEGRATION.md) for route, storage, security, and maintenance details.
 
 ## Network Hosting Walkthrough
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"embed"
@@ -28,6 +29,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"illumio-dash/internal/extractor"
 
 	_ "modernc.org/sqlite"
 )
@@ -856,8 +859,16 @@ func main() {
 	maybeStartStartupBlockedHistoryReconcile()
 	maybeStartStartupTamperingHistoryReconcile()
 	go backgroundCollector()
+	extractorHandler, err := extractor.NewHandler(context.Background(), "dashboard-dev-"+dashboardVersionLabel())
+	if err != nil {
+		log.Fatalf("initialize blocked traffic extractor: %v", err)
+	}
 
 	http.HandleFunc("/", withRequestTiming("dashboard", serveDashboard))
+	http.HandleFunc("/blocked-traffic", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/blocked-traffic/", http.StatusTemporaryRedirect)
+	})
+	http.Handle("/blocked-traffic/", http.StripPrefix("/blocked-traffic", extractorHandler))
 	http.HandleFunc("/settings", withRequestTiming("settings", serveSettings))
 	http.HandleFunc("/details", withRequestTiming("details", serveDetails))
 	http.HandleFunc("/report", withRequestTiming("report", serveReport))

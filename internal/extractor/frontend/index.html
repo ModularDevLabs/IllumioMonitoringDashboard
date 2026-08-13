@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Illumio Blocked Traffic Extractor</title>
+    <link rel="stylesheet" href="/blocked-traffic/assets/tailwind.css">
+    <style>
+        :root {
+            --bg: #111827;
+            --shell: #1f2937;
+            --panel: #374151;
+            --panel-soft: rgba(17, 24, 39, 0.55);
+            --field: #374151;
+            --field-border: #4b5563;
+            --border: #4b5563;
+            --text: #f3f4f6;
+            --muted: #9ca3af;
+            --title: #60a5fa;
+            --accent: #10b981;
+            --accent-strong: #059669;
+            --secondary: #4f46e5;
+            --warn: #f59e0b;
+            --danger: #ef4444;
+            --link-bg: rgba(8, 47, 73, 0.45);
+            --link-border: rgba(14, 116, 144, 0.75);
+        }
+        body[data-theme="illumio"] {
+            --bg: #1a2c32;
+            --shell: #24393f;
+            --panel: #313638;
+            --panel-soft: rgba(36, 57, 63, 0.78);
+            --field: #313638;
+            --field-border: #f97607;
+            --border: #356069;
+            --text: #ffffff;
+            --muted: #d6d7d7;
+            --title: #ff5500;
+            --accent: #ff5500;
+            --accent-strong: #ff5500;
+            --secondary: #94cee5;
+            --warn: #ffa22f;
+            --danger: #88132e;
+            --link-bg: rgba(45, 69, 76, 0.82);
+            --link-border: #f97607;
+        }
+        body[data-theme="illumio-light"] {
+            --bg: #f7f4ee;
+            --shell: rgba(255, 255, 255, 0.98);
+            --panel: rgba(255, 255, 255, 0.98);
+            --panel-soft: rgba(242, 237, 226, 0.88);
+            --field: #ffffff;
+            --field-border: #f97607;
+            --border: #d1bea0;
+            --text: #313638;
+            --muted: #6f7274;
+            --title: #ff5500;
+            --accent: #ff5500;
+            --accent-strong: #ff5500;
+            --secondary: #2d454c;
+            --warn: #ffa22f;
+            --danger: #88132e;
+            --link-bg: rgba(242, 237, 226, 0.96);
+            --link-border: #f97607;
+        }
+        body {
+            font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+            background: linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg) 82%, black));
+            color: var(--text);
+            transition: background 200ms ease, color 200ms ease;
+        }
+        #appShell {
+            background: var(--shell);
+            border-color: var(--border) !important;
+            color: var(--text);
+        }
+        #appShell input, #appShell select {
+            background: var(--field) !important;
+            border-color: var(--field-border) !important;
+            color: var(--text) !important;
+        }
+        #appShell input::placeholder {
+            color: var(--muted);
+        }
+        #appShell hr {
+            border-color: var(--border) !important;
+        }
+        .theme-button {
+            border: 1px solid var(--border);
+            background: var(--panel-soft);
+            color: var(--muted);
+        }
+        .theme-button.active {
+            background: color-mix(in srgb, var(--accent) 14%, transparent);
+            color: var(--text);
+            border-color: var(--accent);
+        }
+        .themed-panel {
+            background: var(--panel);
+            border-color: var(--border) !important;
+        }
+        .themed-soft-panel {
+            background: var(--panel-soft);
+            border-color: var(--border) !important;
+        }
+        .themed-link {
+            background: var(--link-bg) !important;
+            border-color: var(--link-border) !important;
+        }
+        .themed-title {
+            color: var(--title) !important;
+        }
+        .themed-muted {
+            color: var(--muted) !important;
+        }
+        .risky-button {
+            border-color: var(--field-border) !important;
+            background: color-mix(in srgb, var(--accent) 16%, var(--panel)) !important;
+            color: #ffffff !important;
+        }
+        body[data-theme="illumio-light"] .risky-button {
+            background: #ff5500 !important;
+            color: #ffffff !important;
+            border-color: #f97607 !important;
+        }
+        #appShell button[class*="bg-blue-"],
+        #appShell button[class*="bg-red-"],
+        #appShell button[class*="bg-green-"],
+        #appShell button[class*="bg-indigo-"],
+        #appShell button[class*="bg-amber-950"],
+        #appShell button[class*="bg-emerald-600"],
+        #appShell button[class*="bg-emerald-500"] {
+            color: #ffffff !important;
+        }
+        #appShell [class*="bg-gray-700"], #appShell [class*="bg-gray-800"], #appShell [class*="bg-gray-900"], #appShell [class*="bg-black"] {
+            background: var(--panel) !important;
+        }
+        #appShell [class*="border-gray-600"], #appShell [class*="border-gray-700"] {
+            border-color: var(--border) !important;
+        }
+        #appShell [class*="text-gray-300"], #appShell [class*="text-gray-400"], #appShell [class*="text-gray-500"] {
+            color: var(--muted) !important;
+        }
+        #appShell #startBtn { background: var(--accent) !important; border-color: color-mix(in srgb, var(--accent-strong) 80%, black) !important; }
+        #appShell #discoverBtn { background: var(--accent) !important; border-color: color-mix(in srgb, var(--accent-strong) 80%, black) !important; }
+        #appShell #testBtn, #appShell button[class*="bg-gray-600"] { background: var(--panel) !important; color: var(--text) !important; border-color: var(--border) !important; }
+        #appShell #cancelBtn, #appShell button[class*="bg-red-600"] { background: var(--danger) !important; }
+        body[data-theme="illumio-light"] #appShell [class*="text-blue-300"],
+        body[data-theme="illumio-light"] #appShell [class*="text-green-300"],
+        body[data-theme="illumio-light"] #appShell [class*="text-red-400"],
+        body[data-theme="illumio-light"] #appShell [class*="text-amber-300"] {
+            color: var(--secondary) !important;
+        }
+        body[data-theme="illumio-light"] #appShell [class*="text-gray-300"],
+        body[data-theme="illumio-light"] #appShell [class*="text-gray-400"],
+        body[data-theme="illumio-light"] #appShell [class*="text-gray-500"] {
+            color: var(--muted) !important;
+        }
+        .autocomplete-items {
+            position: absolute;
+            border: 1px solid var(--field-border);
+            border-bottom: none;
+            border-top: none;
+            z-index: 99;
+            top: 100%;
+            left: 0;
+            right: 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .autocomplete-items div {
+            padding: 8px;
+            cursor: pointer;
+            background-color: var(--field);
+            border-bottom: 1px solid var(--field-border);
+            color: var(--text);
+        }
+        .autocomplete-items div:hover { background-color: color-mix(in srgb, var(--field) 78%, white); }
+        .autocomplete-active { background-color: color-mix(in srgb, var(--secondary) 72%, white) !important; }
+    </style>
+    <link rel="stylesheet" href="/blocked-traffic/assets/app-shell.css">
+</head>
+<body data-theme="default" class="min-h-screen px-4 py-5 md:px-6 md:py-8 xl:px-8">
+    <script src="/blocked-traffic/assets/theme-init.js"></script>
+    <div class="mx-auto w-full max-w-[118rem]">
+        <header class="app-header mb-8 flex flex-col gap-4 2xl:flex-row 2xl:justify-between">
+            <h1 class="themed-title text-3xl font-bold text-center uppercase tracking-widest">Illumio Blocked Traffic Extractor</h1>
+            <div class="app-header-actions">
+                <nav class="app-nav" aria-label="Primary navigation">
+                    <a href="/" class="app-nav-link">Monitoring Dashboard</a>
+                    <a href="/blocked-traffic/" class="app-nav-link" aria-current="page">Extractor</a>
+                    <a href="/blocked-traffic/summary" class="app-nav-link">Analytics</a>
+                    <a href="/blocked-traffic/heatmaps" class="app-nav-link">Heatmaps</a>
+                    <a href="/blocked-traffic/executive-summary" class="app-nav-link">Executive</a>
+                    <a href="/blocked-traffic/automation" class="app-nav-link">Automation</a>
+                </nav>
+                <div class="theme-switcher" role="group" aria-label="Color theme">
+                    <button id="defaultThemeBtn" data-theme-option="default" aria-pressed="false" type="button" class="theme-button">Dark</button>
+                    <button id="illumioThemeBtn" data-theme-option="illumio" aria-pressed="false" type="button" class="theme-button">Illumio Dark</button>
+                    <button id="illumioLightThemeBtn" data-theme-option="illumio-light" aria-pressed="false" type="button" class="theme-button">Illumio Light</button>
+                </div>
+            </div>
+        </header>
+
+        <div id="appShell" class="w-full p-6 md:p-8 rounded-xl shadow-2xl border">
+
+        <!-- PCE Profiles -->
+        <div class="mb-8 p-4 rounded-lg border themed-panel" data-auto-collapsible="pce-profiles" data-collapse-title="PCE Profiles">
+            <h2 class="text-sm font-bold themed-muted uppercase tracking-wider mb-4">PCE Profiles</h2>
+            <p class="themed-muted mb-4 text-sm">These profiles and API credentials are used only by the Blocked Traffic Extractor. They are stored separately from the Monitoring Dashboard credentials.</p>
+            <div class="flex space-x-4 mb-4">
+                <select id="profileSelect" class="flex-1 bg-gray-800 border border-gray-600 rounded p-2 outline-none">
+                    <option value="">-- Select a Saved PCE --</option>
+                </select>
+                <button id="deleteProfileBtn" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded font-bold text-xs uppercase transition">Delete</button>
+            </div>
+            <div class="flex space-x-4">
+                <input id="profile_name" type="text" placeholder="New Profile Name" class="flex-1 bg-gray-800 border border-gray-600 rounded p-2 outline-none text-sm">
+                <button id="saveProfileBtn" class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded font-bold text-xs uppercase transition">Save Current Config</button>
+            </div>
+        </div>
+
+        <!-- PCE Config -->
+        <div class="mb-6 rounded-lg border themed-soft-panel p-4" data-auto-collapsible="pce-connection" data-collapse-title="PCE Connection">
+        <div class="grid grid-cols-2 gap-6">
+            <div class="col-span-1">
+                <label class="block text-xs font-bold text-gray-400 mb-1 italic uppercase">PCE URL</label>
+                <input id="pce_url" type="text" placeholder="https://pce.example.com:8443" autocomplete="off" spellcheck="false" class="w-full bg-gray-700 border border-gray-600 rounded p-2 outline-none">
+            </div>
+            <div class="col-span-1">
+                <label class="block text-xs font-bold text-gray-400 mb-1 italic uppercase">Org ID</label>
+                <input id="org_id" type="text" placeholder="1" autocomplete="off" class="w-full bg-gray-700 border border-gray-600 rounded p-2 outline-none">
+            </div>
+            <div class="col-span-1">
+                <label class="block text-xs font-bold text-gray-400 mb-1 italic uppercase">API Key</label>
+                <div class="flex gap-2">
+                    <input id="api_key" type="password" placeholder="api_xxxxxxxx" autocomplete="new-password" autocapitalize="none" spellcheck="false" data-lpignore="true" class="flex-1 bg-gray-700 border border-gray-600 rounded p-2 outline-none">
+                    <button id="toggleApiKeyBtn" type="button" class="bg-gray-600 hover:bg-gray-500 border border-gray-500 rounded px-3 text-xs font-bold uppercase">Show</button>
+                </div>
+            </div>
+            <div class="col-span-1">
+                <label class="block text-xs font-bold text-gray-400 mb-1 italic uppercase">API Secret</label>
+                <div class="flex gap-2">
+                    <input id="api_secret" type="password" placeholder="xxxxxxxxxxxxxxxx" autocomplete="new-password" autocapitalize="none" spellcheck="false" data-lpignore="true" class="flex-1 bg-gray-700 border border-gray-600 rounded p-2 outline-none">
+                    <button id="toggleApiSecretBtn" type="button" class="bg-gray-600 hover:bg-gray-500 border border-gray-500 rounded px-3 text-xs font-bold uppercase">Show</button>
+                </div>
+            </div>
+        </div>
+        </div>
+
+        <div class="mb-6 rounded-lg border themed-soft-panel p-4" data-auto-collapsible="traffic-db" data-collapse-title="Traffic DB Availability">
+            <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div>
+                    <h2 class="text-sm font-bold themed-muted uppercase tracking-wider">Traffic DB Availability</h2>
+                    <p id="trafficDbStatus" class="mt-2 text-sm themed-muted">Use this panel to load the PCE traffic database retention metrics.</p>
+                    <button id="trafficDbMetricsBtn" type="button" class="mt-3 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold uppercase tracking-wide text-white transition hover:bg-indigo-500">
+                        Load Traffic DB Metrics
+                    </button>
+                </div>
+                <div class="grid gap-3 sm:grid-cols-2 xl:min-w-[32rem]">
+                    <div class="rounded-lg border themed-panel p-3">
+                        <div class="text-xs font-bold uppercase themed-muted">Server Days</div>
+                        <div id="trafficDbServerDays" class="mt-2 text-2xl font-bold themed-title">--</div>
+                    </div>
+                    <div class="rounded-lg border themed-panel p-3">
+                        <div class="text-xs font-bold uppercase themed-muted">Oldest Server Day</div>
+                        <div id="trafficDbOldestDay" class="mt-2 text-lg font-bold">--</div>
+                    </div>
+                    <div class="rounded-lg border themed-panel p-3">
+                        <div class="text-xs font-bold uppercase themed-muted">Updated</div>
+                        <div id="trafficDbUpdatedAt" class="mt-2 text-sm font-semibold">--</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- NEW LOCATION FOR DISCOVERY BUTTON -->
+        <div class="mb-8 flex flex-col gap-3 xl:flex-row xl:items-center">
+            <button id="discoverBtn" class="w-full xl:flex-[0_0_24rem] bg-indigo-600 hover:bg-indigo-700 py-3 rounded font-bold text-sm uppercase transition shadow-lg border-b-4 border-indigo-900 active:border-b-0">
+                1. Load Policy Objects from PCE
+            </button>
+            <div id="discoveryProgressWrap" class="hidden w-full rounded-lg border themed-soft-panel px-4 py-3 xl:flex-1">
+                <div class="flex items-center justify-between gap-4">
+                    <span id="discoveryStatusLabel" class="text-sm font-semibold text-indigo-300 italic">Loading policy objects...</span>
+                    <span id="discoveryPercentLabel" class="text-sm font-bold text-indigo-400">0%</span>
+                </div>
+                <div class="mt-3 w-full themed-panel rounded-full h-3 overflow-hidden">
+                    <div id="discoveryProgressBar" class="bg-indigo-500 h-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mb-8 rounded-lg border themed-soft-panel p-4" data-auto-collapsible="analysis-labels" data-collapse-title="Analysis Label Types">
+            <div class="mb-4">
+                <h2 class="text-sm font-bold uppercase tracking-wider">Analysis Label Types</h2>
+                <p class="mt-1 text-xs themed-muted">Choose the two label dimensions used by dashboards, heatmaps, and executive analysis. Load policy objects to populate custom types.</p>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+                <div>
+                    <label for="analysis_primary_label" class="mb-1 block text-xs font-bold uppercase themed-muted">Primary Dimension</label>
+                    <select id="analysis_primary_label" class="w-full rounded border border-gray-600 bg-gray-700 p-2 outline-none">
+                        <option value="env">env</option>
+                        <option value="app">app</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="analysis_secondary_label" class="mb-1 block text-xs font-bold uppercase themed-muted">Secondary Dimension</label>
+                    <select id="analysis_secondary_label" class="w-full rounded border border-gray-600 bg-gray-700 p-2 outline-none">
+                        <option value="app">app</option>
+                        <option value="env">env</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <hr class="border-gray-700 my-8">
+
+        <!-- Query Filters -->
+        <div class="mb-8 rounded-lg border themed-soft-panel p-4" data-auto-collapsible="query-filters" data-collapse-title="Query Filters and Date Range">
+        <div class="grid grid-cols-2 gap-6 mb-8">
+            <div class="col-span-2 relative">
+                <label class="block text-sm font-semibold mb-2 text-blue-300 uppercase tracking-tighter">Sources (Labels or IP)</label>
+                <input id="src_labels" type="text" placeholder="Role: DB, App: Core" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none autocomplete">
+            </div>
+            <div class="col-span-2 relative">
+                <label class="block text-sm font-semibold mb-2 text-blue-300 uppercase tracking-tighter">Destinations (Labels or IP)</label>
+                <input id="dst_labels" type="text" placeholder="Role: Web" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none autocomplete">
+            </div>
+            <div class="col-span-2 relative">
+                <div class="mb-2 flex items-center justify-between gap-3">
+                    <label class="block text-sm font-semibold text-green-300 uppercase tracking-tighter">Services (Names or Proto:Port - empty for all)</label>
+                    <button id="riskyServicesBtn" type="button" class="risky-button shrink-0 rounded border px-3 py-1 text-xs font-bold uppercase tracking-wide">
+                        Add Risky Services
+                    </button>
+                </div>
+                <input id="services" type="text" placeholder="MySQL, SSH, TCP:3389, UDP:5355" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-green-500 outline-none autocomplete-services">
+                <p class="mt-2 text-xs text-gray-400">Service names from the PCE and explicit filters like <span class="font-semibold text-gray-300">TCP:445</span> are both supported.</p>
+            </div>
+            <div class="col-span-1 relative">
+                <label class="block text-sm font-semibold mb-2 text-red-400 uppercase tracking-tighter">Exclusions (Sources)</label>
+                <input id="exclude_src" type="text" placeholder="192.168.1.1, Role: Backup" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-red-500 outline-none autocomplete">
+            </div>
+            <div class="col-span-1 relative">
+                <label class="block text-sm font-semibold mb-2 text-red-400 uppercase tracking-tighter">Exclusions (Destinations)</label>
+                <input id="exclude_dst" type="text" placeholder="10.0.0.1, App: Monitor" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-red-500 outline-none autocomplete">
+            </div>
+            <div class="col-span-1">
+                <label class="block text-sm font-semibold mb-2 text-amber-300 uppercase tracking-tighter">Days To Fetch</label>
+                <input id="days" type="number" min="1" max="365" value="90" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-amber-500 outline-none">
+            </div>
+            <div class="col-span-1">
+                <label class="block text-sm font-semibold mb-2 text-amber-300 uppercase tracking-tighter">Chunk Interval</label>
+                <select id="chunk_interval" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-amber-500 outline-none">
+                    <option value="24h" selected>1 day</option>
+                    <option value="12h">12 hours</option>
+                    <option value="6h">6 hours</option>
+                    <option value="3h">3 hours</option>
+                    <option value="1h">1 hour</option>
+                    <option value="30m">30 minutes</option>
+                    <option value="10m">10 minutes</option>
+                    <option value="5m">5 minutes</option>
+                </select>
+            </div>
+            <div class="col-span-1">
+                <label class="block text-sm font-semibold mb-2 text-amber-300 uppercase tracking-tighter">Start Date</label>
+                <input id="start_date" type="date" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-amber-500 outline-none">
+            </div>
+            <div class="col-span-1">
+                <label class="block text-sm font-semibold mb-2 text-amber-300 uppercase tracking-tighter">End Date</label>
+                <input id="end_date" type="date" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-amber-500 outline-none">
+                <p class="mt-2 text-xs text-gray-400">If both dates are set, the explicit date range overrides <span class="font-semibold text-gray-300">Days To Fetch</span>.</p>
+            </div>
+        </div>
+        </div>
+
+        <hr class="border-gray-700 my-8">
+
+        <!-- File Settings -->
+        <div class="themed-soft-panel p-4 rounded-lg mb-8 border" data-auto-collapsible="export-settings" data-collapse-title="Export Settings">
+            <h2 class="text-sm font-bold themed-muted uppercase tracking-wider mb-4 italic text-center">Export Settings</h2>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs themed-muted mb-1 italic">Target Filename</label>
+                    <input id="file_name" type="text" placeholder="blocked_traffic.csv" class="w-full bg-gray-800 border border-gray-700 rounded p-2 outline-none text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs themed-muted mb-1 italic">Target Folder (Absolute path)</label>
+                    <input id="save_path" type="text" placeholder="/home/user/Desktop" class="w-full bg-gray-800 border border-gray-700 rounded p-2 outline-none text-sm">
+                </div>
+            </div>
+        </div>
+
+        <div class="flex space-x-4 mb-8">
+            <button id="startBtn" class="flex-1 bg-green-600 hover:bg-green-700 font-bold py-3 px-6 rounded-lg transition duration-200 uppercase tracking-widest shadow-lg border-b-4 border-green-900 active:border-b-0">2. Start Fetch</button>
+            <button id="cancelBtn" class="hidden bg-red-600 hover:bg-red-700 font-bold py-3 px-6 rounded-lg transition duration-200 uppercase tracking-widest text-white shadow-xl">Cancel</button>
+            <button id="testBtn" class="bg-gray-600 hover:bg-gray-700 font-bold py-3 px-6 rounded-lg transition duration-200 uppercase tracking-widest px-8">Test</button>
+        </div>
+
+        <div class="mb-8 hidden grid gap-3 md:grid-cols-3" id="summaryLinkWrap">
+            <a href="/blocked-traffic/summary" id="summaryLink" class="themed-link block rounded-lg border px-5 py-4 text-sm font-semibold">
+                Open Analytics Dashboard for the latest successful fetch
+            </a>
+            <a href="/blocked-traffic/heatmaps" id="heatmapLink" class="themed-link block rounded-lg border px-5 py-4 text-sm font-semibold">
+                Open Full Heatmap Explorer with filters and drilldowns
+            </a>
+            <a href="/blocked-traffic/executive-summary" id="executiveSummaryLink" class="themed-link block rounded-lg border px-5 py-4 text-sm font-semibold">
+                Open Executive Summary for presentation-ready highlights
+            </a>
+        </div>
+
+        <div class="mb-8 rounded-lg border themed-soft-panel p-4" data-auto-collapsible="csv-import" data-collapse-title="Upload Existing CSVs">
+            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h2 class="text-sm font-bold uppercase tracking-wider">Upload Existing CSVs</h2>
+                    <p class="mt-1 text-xs themed-muted">Import one or more exports together. Exact duplicate rows and unique connections are deduplicated; partially overlapping aggregate flow totals cannot be safely separated without per-flow event IDs.</p>
+                </div>
+                <div class="flex flex-col gap-3 md:flex-row md:items-center">
+                    <input id="mainCsvDatasetName" type="text" maxlength="120" placeholder="Save as named dataset (optional)" class="rounded-lg border px-3 py-2 text-sm">
+                    <input id="mainCsvFile" type="file" accept=".csv,text/csv" multiple class="text-sm themed-muted file:mr-4 file:rounded-lg file:border-0 file:px-4 file:py-2 file:text-sm file:font-semibold">
+                    <button id="uploadCSVBtn" type="button" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold hover:bg-emerald-500">
+                        Upload CSVs
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress -->
+        <div id="progressArea" class="hidden">
+            <div class="flex justify-between items-center mb-2">
+                <span id="statusLabel" class="text-sm font-semibold text-blue-300 italic">Initializing...</span>
+                <span id="percentLabel" class="text-sm font-bold text-blue-400">0%</span>
+            </div>
+            <div class="w-full themed-panel rounded-full h-4 mb-8 overflow-hidden">
+                <div id="progressBar" class="bg-blue-500 h-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <div class="rounded-lg p-4 h-64 overflow-y-auto text-xs font-mono border themed-panel" id="logBox" data-auto-collapsible="activity-log" data-collapse-title="Extraction Activity Log">
+            <div class="themed-muted italic">Logs will appear here...</div>
+        </div>
+        </div>
+    </div>
+
+    <script src="/blocked-traffic/assets/app-version.js"></script>
+    <script src="/blocked-traffic/assets/collapsible.js"></script>
+    <script>
+        let profiles = {};
+        let pollingInterval = null;
+        let discoveryLogInterval = null;
+        const riskyServiceEntries = [
+            'TCP:80',
+            'UDP:5355',
+            'TCP:2049',
+            'UDP:2049',
+            'TCP:3389',
+            'UDP:3389',
+            'TCP:135',
+            'TCP:445',
+            'UDP:445',
+            'TCP:22',
+            'UDP:22',
+            'TCP:5985',
+            'TCP:5986',
+            'TCP:20',
+            'TCP:21',
+            'TCP:4444',
+            'UDP:4444',
+            'UDP:5353',
+            'UDP:137',
+            'UDP:138',
+            'TCP:137',
+            'TCP:139',
+            'TCP:110',
+            'TCP:1723',
+            'UDP:1723',
+            'UDP:1900',
+            'TCP:111',
+            'UDP:111',
+            'TCP:5938',
+            'UDP:5938',
+            'TCP:23',
+            'UDP:23',
+            'TCP:5900',
+            'UDP:5900',
+            'TCP:3702',
+            'UDP:3702'
+        ];
+        let pceLabels = [];
+		let pceLabelTypes = [];
+        let pceServices = [];
+        let pceIPLists = [];
+        let pceLabelGroups = [];
+        let pceUserGroups = [];
+        let pceVServices = [];
+        let pceVServers = [];
+
+        function clearDiscoveryData() {
+            pceLabels = [];
+			pceLabelTypes = [];
+            pceServices = [];
+            pceIPLists = [];
+            pceLabelGroups = [];
+            pceUserGroups = [];
+            pceVServices = [];
+            pceVServers = [];
+            setupAutocomplete();
+			populateAnalysisLabelTypes();
+        }
+
+        function applyTheme(theme) {
+            document.body.dataset.theme = theme;
+            localStorage.setItem('ittTheme', theme);
+            document.getElementById('defaultThemeBtn').classList.toggle('active', theme === 'default');
+            document.getElementById('illumioThemeBtn').classList.toggle('active', theme === 'illumio');
+            document.getElementById('illumioLightThemeBtn').classList.toggle('active', theme === 'illumio-light');
+			document.querySelectorAll('[data-theme-option]').forEach((button) => {
+				button.setAttribute('aria-pressed', String(button.dataset.themeOption === theme));
+			});
+        }
+
+        function loadSavedTheme() {
+            applyTheme(localStorage.getItem('ittTheme') || 'default');
+        }
+
+        window.onload = () => {
+            loadSavedTheme();
+            document.getElementById('defaultThemeBtn').addEventListener('click', () => applyTheme('default'));
+            document.getElementById('illumioThemeBtn').addEventListener('click', () => applyTheme('illumio'));
+            document.getElementById('illumioLightThemeBtn').addEventListener('click', () => applyTheme('illumio-light'));
+            document.getElementById('profileSelect').addEventListener('change', loadSelectedProfile);
+            document.getElementById('deleteProfileBtn').addEventListener('click', deleteProfile);
+            document.getElementById('saveProfileBtn').addEventListener('click', saveProfile);
+            document.getElementById('toggleApiKeyBtn').addEventListener('click', (event) => toggleSecretField('api_key', event.currentTarget));
+            document.getElementById('toggleApiSecretBtn').addEventListener('click', (event) => toggleSecretField('api_secret', event.currentTarget));
+            document.getElementById('trafficDbMetricsBtn').addEventListener('click', loadTrafficDbMetrics);
+            document.getElementById('discoverBtn').addEventListener('click', loadDiscovery);
+            document.getElementById('riskyServicesBtn').addEventListener('click', appendRiskyServices);
+            document.getElementById('startBtn').addEventListener('click', startFetch);
+            document.getElementById('cancelBtn').addEventListener('click', cancelFetch);
+            document.getElementById('testBtn').addEventListener('click', testConnection);
+            document.getElementById('uploadCSVBtn').addEventListener('click', uploadCSVAndOpenSummary);
+            fetchProfiles();
+        };
+
+        async function fetchProfiles() {
+            const res = await fetch('/blocked-traffic/api/profiles/get');
+            profiles = await res.json();
+            const select = document.getElementById('profileSelect');
+            select.innerHTML = '<option value="">-- Select a Saved PCE --</option>';
+            Object.keys(profiles).forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name; opt.innerText = name;
+                select.appendChild(opt);
+            });
+        }
+
+        async function loadDiscovery() {
+            const btn = document.getElementById('discoverBtn');
+            btn.innerText = "Loading Policy Objects...";
+            btn.disabled = true;
+            document.getElementById('discoveryProgressWrap').classList.remove('hidden');
+            updateDiscoveryProgress({ discoveryDone: 0, discoveryTotal: 7, discoveryActive: true });
+            log('Fetching all Policy Objects from PCE...');
+            startDiscoveryLogPolling();
+            try {
+                const res = await fetch('/blocked-traffic/api/discovery', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(getConfig()) });
+                const data = await res.json();
+                await flushBackendLogs();
+                if (data.success) {
+                    pceLabels = data.labels || [];
+					pceLabelTypes = data.labelTypes || [];
+                    pceServices = data.services || [];
+                    pceIPLists = data.ipLists || [];
+                    pceLabelGroups = data.labelGroups || [];
+                    pceUserGroups = data.userGroups || [];
+                    pceVServices = data.virtualServices || [];
+                    pceVServers = data.virtualServers || [];
+                    log(`Discovery complete! Loaded ${pceLabels.length} Labels, ${pceLabelGroups.length} Label Groups, ${pceIPLists.length} IP Lists, ${pceUserGroups.length} User Groups, ${pceVServices.length} Virtual Services, and ${pceVServers.length} Virtual Servers.`);
+                    setupAutocomplete();
+					populateAnalysisLabelTypes();
+                    updateDiscoveryProgress({ discoveryDone: 7, discoveryTotal: 7, discoveryActive: false });
+                } else {
+                    clearDiscoveryData();
+                    updateDiscoveryProgress({ discoveryDone: 0, discoveryTotal: 7, discoveryActive: false, discoveryError: data.error });
+                    log(`Discovery failed: ${data.error}`);
+                }
+            } catch (e) {
+                await flushBackendLogs();
+                clearDiscoveryData();
+                updateDiscoveryProgress({ discoveryDone: 0, discoveryTotal: 7, discoveryActive: false, discoveryError: e.message });
+                log(`Error: ${e.message}`);
+            }
+            stopDiscoveryLogPolling();
+            btn.innerText = "1. Load Policy Objects from PCE";
+            btn.disabled = false;
+        }
+
+        async function flushBackendLogs() {
+            try {
+                const res = await fetch('/blocked-traffic/api/status');
+                const data = await res.json();
+                if (data.newLogs) data.newLogs.forEach(msg => log(msg));
+                updateDiscoveryProgress(data);
+            } catch (_) {
+                // Best-effort log flush only.
+            }
+        }
+
+        function updateDiscoveryProgress(data) {
+            const wrap = document.getElementById('discoveryProgressWrap');
+            const total = data.discoveryTotal || 0;
+            const done = data.discoveryDone || 0;
+            const active = Boolean(data.discoveryActive);
+            const error = data.discoveryError || '';
+
+            if (!active && total === 0 && !error) {
+                wrap.classList.add('hidden');
+                return;
+            }
+
+            wrap.classList.remove('hidden');
+            const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+            document.getElementById('discoveryProgressBar').style.width = `${percent}%`;
+            document.getElementById('discoveryPercentLabel').innerText = `${percent}%`;
+
+            if (error) {
+                document.getElementById('discoveryStatusLabel').innerText = `Discovery failed: ${error}`;
+                return;
+            }
+            if (active) {
+                document.getElementById('discoveryStatusLabel').innerText = `Loaded ${done}/${total} policy object collections`;
+                return;
+            }
+            if (total > 0 && done >= total) {
+                document.getElementById('discoveryStatusLabel').innerText = 'Policy object discovery complete';
+                return;
+            }
+            document.getElementById('discoveryStatusLabel').innerText = `Loaded ${done}/${total} policy object collections`;
+        }
+
+        function startDiscoveryLogPolling() {
+            stopDiscoveryLogPolling();
+            discoveryLogInterval = setInterval(() => {
+                flushBackendLogs();
+            }, 1000);
+        }
+
+        function stopDiscoveryLogPolling() {
+            if (!discoveryLogInterval) return;
+            clearInterval(discoveryLogInterval);
+            discoveryLogInterval = null;
+        }
+
+        function setupAutocomplete() {
+            const combined = [
+                ...pceLabels,
+                ...pceIPLists,
+                ...pceLabelGroups,
+                ...pceUserGroups,
+                ...pceVServices,
+                ...pceVServers
+            ];
+            ['src_labels', 'dst_labels', 'exclude_src', 'exclude_dst'].forEach(id => {
+                autocomplete(document.getElementById(id), combined);
+            });
+            autocomplete(document.getElementById('services'), pceServices);
+        }
+
+		function populateAnalysisLabelTypes(preferredPrimary, preferredSecondary) {
+			const primarySelect = document.getElementById('analysis_primary_label');
+			const secondarySelect = document.getElementById('analysis_secondary_label');
+			const requestedPrimary = preferredPrimary || primarySelect.value || 'env';
+			const requestedSecondary = preferredSecondary || secondarySelect.value || 'app';
+			const discoveredMatch = (value) => pceLabelTypes.find((key) => key.toLowerCase() === value.toLowerCase()) || value;
+			const currentPrimary = discoveredMatch(requestedPrimary);
+			const currentSecondary = discoveredMatch(requestedSecondary);
+			const seenKeys = new Set();
+			const keys = [currentPrimary, currentSecondary, ...pceLabelTypes, 'env', 'app'].filter((key) => {
+				if (!key || seenKeys.has(key.toLowerCase())) return false;
+				seenKeys.add(key.toLowerCase());
+				return true;
+			});
+
+			[primarySelect, secondarySelect].forEach((select) => {
+				select.replaceChildren();
+				keys.forEach((key) => {
+					const option = document.createElement('option');
+					option.value = key;
+					option.textContent = key;
+					select.appendChild(option);
+				});
+			});
+			primarySelect.value = currentPrimary;
+			secondarySelect.value = currentSecondary;
+		}
+
+        function autocomplete(inp, arr) {
+            let currentFocus;
+            inp.addEventListener("input", function(e) {
+                let a, b, i, val = this.value;
+                closeAllLists();
+                if (!val) return false;
+                const parts = val.split(",");
+                const currentVal = parts[parts.length - 1].trim();
+                if (currentVal.length < 1) return false;
+                currentFocus = -1;
+                a = document.createElement("DIV");
+                a.setAttribute("id", this.id + "autocomplete-list");
+                a.setAttribute("class", "autocomplete-items shadow-2xl rounded-b-lg");
+                this.parentNode.appendChild(a);
+                for (i = 0; i < arr.length; i++) {
+                    if (arr[i].toUpperCase().includes(currentVal.toUpperCase())) {
+                        b = document.createElement("DIV");
+                        const matchIndex = arr[i].toUpperCase().indexOf(currentVal.toUpperCase());
+                        b.appendChild(document.createTextNode(arr[i].slice(0, matchIndex)));
+                        const strong = document.createElement('strong');
+                        strong.textContent = arr[i].slice(matchIndex, matchIndex + currentVal.length);
+                        b.appendChild(strong);
+                        b.appendChild(document.createTextNode(arr[i].slice(matchIndex + currentVal.length)));
+                        const hidden = document.createElement('input');
+                        hidden.type = 'hidden';
+                        hidden.value = arr[i];
+                        b.appendChild(hidden);
+                        b.addEventListener("click", function(e) {
+                            parts[parts.length - 1] = " " + this.getElementsByTagName("input")[0].value;
+                            inp.value = parts.join(",").trim() + ", ";
+                            closeAllLists();
+                            inp.focus();
+                        });
+                        a.appendChild(b);
+                    }
+                }
+            });
+            inp.addEventListener("keydown", function(e) {
+                let x = document.getElementById(this.id + "autocomplete-list");
+                if (x) x = x.getElementsByTagName("div");
+                if (e.keyCode == 40) { currentFocus++; addActive(x); }
+                else if (e.keyCode == 38) { currentFocus--; addActive(x); }
+                else if (e.keyCode == 13) { e.preventDefault(); if (currentFocus > -1) { if (x) x[currentFocus].click(); } }
+            });
+            function addActive(x) {
+                if (!x) return false; removeActive(x);
+                if (currentFocus >= x.length) currentFocus = 0;
+                if (currentFocus < 0) currentFocus = (x.length - 1);
+                x[currentFocus].classList.add("autocomplete-active");
+            }
+            function removeActive(x) { for (let i = 0; i < x.length; i++) x[i].classList.remove("autocomplete-active"); }
+            function closeAllLists(elmnt) {
+                const x = document.getElementsByClassName("autocomplete-items");
+                for (let i = 0; i < x.length; i++) { if (elmnt != x[i] && elmnt != inp) x[i].parentNode.removeChild(x[i]); }
+            }
+            document.addEventListener("click", function (e) { closeAllLists(e.target); });
+        }
+
+        function loadSelectedProfile() {
+            const name = document.getElementById('profileSelect').value;
+            if (!name) return;
+            const p = profiles[name];
+            resetTrafficDbMetrics();
+            document.getElementById('profile_name').value = p.name || '';
+            document.getElementById('pce_url').value = p.pce_url || '';
+            document.getElementById('org_id').value = p.org_id || '';
+            document.getElementById('api_key').value = '';
+            document.getElementById('api_secret').value = '';
+            document.getElementById('api_key').placeholder = 'Stored securely in selected profile';
+            document.getElementById('api_secret').placeholder = 'Stored securely in selected profile';
+            document.getElementById('src_labels').value = p.src_labels || '';
+            document.getElementById('dst_labels').value = p.dst_labels || '';
+            document.getElementById('exclude_src').value = p.exclude_src || '';
+            document.getElementById('exclude_dst').value = p.exclude_dst || '';
+            document.getElementById('services').value = p.services || '';
+            document.getElementById('save_path').value = p.save_path || '';
+            document.getElementById('file_name').value = p.file_name || '';
+            document.getElementById('days').value = p.days || 90;
+            document.getElementById('chunk_interval').value = p.chunk_interval || '24h';
+            document.getElementById('start_date').value = p.start_date || '';
+            document.getElementById('end_date').value = p.end_date || '';
+			populateAnalysisLabelTypes(p.analysis_primary_label || 'env', p.analysis_secondary_label || 'app');
+        }
+
+        async function saveProfile() {
+            const name = document.getElementById('profile_name').value;
+            if (!name) return alert("Please enter a profile name");
+            const config = getConfig(); config.name = name;
+            delete config.profile_name;
+            const res = await fetch('/blocked-traffic/api/profiles/save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(config) });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                log(`Profile save failed: ${data.error || res.statusText}`);
+                return;
+            }
+            await fetchProfiles();
+            document.getElementById('profileSelect').value = name;
+            log(`Profile '${name}' saved.`);
+        }
+
+        async function deleteProfile() {
+            const name = document.getElementById('profileSelect').value;
+            if (!name) return;
+            if (!confirm(`Delete profile '${name}'?`)) return;
+            const res = await fetch('/blocked-traffic/api/profiles/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name}) });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                log(`Profile delete failed: ${data.error || res.statusText}`);
+                return;
+            }
+            await fetchProfiles(); log(`Profile '${name}' deleted.`);
+        }
+
+        function log(msg) {
+            const div = document.createElement('div');
+            div.className = 'mb-1';
+            const timestamp = document.createElement('span');
+            timestamp.className = 'text-gray-500';
+            timestamp.textContent = `[${new Date().toLocaleTimeString()}] `;
+            div.appendChild(timestamp);
+            div.appendChild(document.createTextNode(String(msg)));
+            const box = document.getElementById('logBox');
+            box.appendChild(div);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function toggleSecretField(fieldId, button) {
+            const input = document.getElementById(fieldId);
+            const nextType = input.type === 'password' ? 'text' : 'password';
+            input.type = nextType;
+            button.innerText = nextType === 'password' ? 'Show' : 'Hide';
+        }
+
+        function resetTrafficDbMetrics() {
+            document.getElementById('trafficDbStatus').innerText = 'Use this panel to load the PCE traffic database retention metrics.';
+            document.getElementById('trafficDbServerDays').innerText = '--';
+            document.getElementById('trafficDbOldestDay').innerText = '--';
+            document.getElementById('trafficDbUpdatedAt').innerText = '--';
+        }
+
+        function renderTrafficDbMetrics(metrics, errorMessage) {
+            if (!metrics || !metrics.server) {
+                document.getElementById('trafficDbStatus').innerText = errorMessage || 'Traffic database metrics were not returned by the PCE.';
+                document.getElementById('trafficDbServerDays').innerText = '--';
+                document.getElementById('trafficDbOldestDay').innerText = '--';
+                document.getElementById('trafficDbUpdatedAt').innerText = '--';
+                return;
+            }
+
+            document.getElementById('trafficDbStatus').innerText = 'Server traffic flow retention currently reported by the connected PCE.';
+            document.getElementById('trafficDbServerDays').innerText = `${metrics.server.num_flows_days ?? '--'}`;
+            document.getElementById('trafficDbOldestDay').innerText = metrics.server.flows_oldest_day || '--';
+            document.getElementById('trafficDbUpdatedAt').innerText = metrics.updated_at || '--';
+        }
+
+        async function loadTrafficDbMetrics() {
+            log('Loading traffic DB metrics...');
+            try {
+                const res = await fetch('/blocked-traffic/api/traffic-db-metrics', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(getConfig()) });
+                const data = await res.json();
+                if (!data.success) {
+                    renderTrafficDbMetrics(null, data.error || 'Unknown error');
+                    log(`Traffic DB metrics error: ${data.error || 'Unknown error'}`);
+                    return;
+                }
+                renderTrafficDbMetrics(data.metrics, '');
+                if (data.metrics && data.metrics.server) {
+                    log(`Traffic DB: ${data.metrics.server.num_flows_days} server flow days available, oldest day ${data.metrics.server.flows_oldest_day || 'unknown'}.`);
+                }
+            } catch (e) {
+                renderTrafficDbMetrics(null, e.message);
+                log(`Traffic DB metrics fatal: ${e.message}`);
+            }
+        }
+
+        function appendRiskyServices() {
+            const servicesInput = document.getElementById('services');
+            const existingEntries = servicesInput.value
+                .split(',')
+                .map((entry) => entry.trim())
+                .filter(Boolean);
+            const seen = new Set(existingEntries.map((entry) => entry.toLowerCase()));
+            let added = 0;
+
+            riskyServiceEntries.forEach((entry) => {
+                const key = entry.toLowerCase();
+                if (seen.has(key)) return;
+                seen.add(key);
+                existingEntries.push(entry);
+                added += 1;
+            });
+
+            servicesInput.value = existingEntries.join(', ');
+            log(`Added ${added} risky service filters.`);
+            servicesInput.focus();
+        }
+
+        async function uploadCSVAndOpenSummary() {
+            const fileInput = document.getElementById('mainCsvFile');
+            const files = Array.from(fileInput.files || []);
+            if (files.length === 0) {
+                alert('Please choose one or more CSV files first.');
+                return;
+            }
+
+            const formData = new FormData();
+			files.forEach(file => formData.append('files', file));
+			formData.append('primary_label_key', document.getElementById('analysis_primary_label').value || 'env');
+			formData.append('secondary_label_key', document.getElementById('analysis_secondary_label').value || 'app');
+			formData.append('dataset_name', document.getElementById('mainCsvDatasetName').value || '');
+
+			const selectionLabel = files.length === 1 ? `'${files[0].name}'` : `${files.length} CSV files`;
+            log(`Importing ${selectionLabel} for analytics review...`);
+
+            try {
+                const res = await fetch('/blocked-traffic/api/results/import-csv', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    log(`CSV import failed: ${data.error || 'Unknown error'}`);
+                    return;
+                }
+                window.location.href = '/blocked-traffic/summary';
+            } catch (e) {
+                log(`CSV import failed: ${e.message}`);
+            }
+        }
+
+        async function testConnection() {
+            log('Testing connection...');
+            try {
+                const res = await fetch('/blocked-traffic/api/test', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(getConfig()) });
+                const data = await res.json();
+                if (data.success) {
+                    log('Success! Connection authenticated.');
+                } else {
+                    log(`Error: ${data.error}`);
+                }
+            } catch (e) {
+                log(`Fatal: ${e.message}`);
+            }
+        }
+
+        async function cancelFetch() {
+            log('Sending cancel signal...');
+            await fetch('/blocked-traffic/api/cancel', { method: 'POST', headers: {'Content-Type': 'application/json'} });
+        }
+
+        async function startFetch() {
+            document.getElementById('startBtn').classList.add('hidden');
+            document.getElementById('cancelBtn').classList.remove('hidden');
+            document.getElementById('progressArea').classList.remove('hidden');
+            document.getElementById('summaryLinkWrap').classList.add('hidden');
+            const dateRange = getRequestedDateRange();
+            if (dateRange.error) {
+                log(`Start failed: ${dateRange.error}`);
+                resetButtons();
+                return;
+            }
+            const chunkInterval = document.getElementById('chunk_interval').value || '24h';
+            if (dateRange.start && dateRange.end) {
+                log(`Starting extraction for ${dateRange.start} through ${dateRange.end} (${dateRange.days} days) using ${chunkInterval} chunks.`);
+            } else {
+                log(`Starting ${dateRange.days}-day extraction using ${chunkInterval} chunks.`);
+            }
+            try {
+                const res = await fetch('/blocked-traffic/api/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(getConfig()) });
+                const data = await res.json();
+                if (!data.success) {
+                    log(`Start failed: ${data.error || 'Unknown error'}`);
+                    resetButtons();
+                    return;
+                }
+                pollStatus();
+            } catch (e) { log(`Fatal: ${e.message}`); resetButtons(); }
+        }
+
+        function pollStatus() {
+            if (pollingInterval) clearInterval(pollingInterval);
+            pollingInterval = setInterval(async () => {
+                const res = await fetch('/blocked-traffic/api/status');
+                const data = await res.json();
+                const requestedChunks = data.requestedChunks || 1;
+                const completedChunks = data.completedChunks || 0;
+                const requestedDays = data.requestedDays || 90;
+                const chunkInterval = data.chunkInterval || '1 day';
+                const percent = Math.round((completedChunks / requestedChunks) * 100);
+                document.getElementById('progressBar').style.width = `${percent}%`;
+                document.getElementById('percentLabel').innerText = `${percent}%`;
+                document.getElementById('statusLabel').innerText = `Processed ${completedChunks}/${requestedChunks} ${chunkInterval} chunks across ${requestedDays} days (${data.totalConnections} unique connections)`;
+                if (data.newLogs) data.newLogs.forEach(msg => log(msg));
+                if (data.done || data.cancelled) {
+                    clearInterval(pollingInterval); resetButtons();
+                    if (data.done && data.fileName) {
+                        log(`COMPLETED: ${data.fileName}`);
+                        document.getElementById('summaryLinkWrap').classList.remove('hidden');
+                    }
+                    if (data.done && !data.fileName && !data.cancelled) log('RUN FINISHED WITHOUT OUTPUT. Check logs for errors.');
+                    if (data.cancelled) log('CANCELLED BY USER');
+                }
+            }, 1000);
+        }
+
+        function resetButtons() {
+            document.getElementById('startBtn').classList.remove('hidden');
+            document.getElementById('cancelBtn').classList.add('hidden');
+        }
+
+        function getRequestedDays() {
+            const raw = parseInt(document.getElementById('days').value, 10);
+            if (Number.isNaN(raw) || raw < 1) return 90;
+            return Math.min(raw, 365);
+        }
+
+        function getRequestedDateRange() {
+            const start = document.getElementById('start_date').value;
+            const end = document.getElementById('end_date').value;
+            if ((start && !end) || (!start && end)) {
+                return { error: 'Both Start Date and End Date are required when using an explicit date range.' };
+            }
+            if (start && end) {
+                const startDate = new Date(`${start}T00:00:00Z`);
+                const endDate = new Date(`${end}T00:00:00Z`);
+                if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+                    return { error: 'Start Date and End Date must be valid dates.' };
+                }
+                if (endDate < startDate) {
+                    return { error: 'End Date must be on or after Start Date.' };
+                }
+                const days = Math.floor((endDate - startDate) / 86400000) + 1;
+                return { start, end, days };
+            }
+            return { start: '', end: '', days: getRequestedDays() };
+        }
+
+        function getConfig() {
+            const dateRange = getRequestedDateRange();
+            return {
+                profile_name: document.getElementById('profileSelect').value,
+                pce_url: document.getElementById('pce_url').value,
+                org_id: document.getElementById('org_id').value,
+                api_key: document.getElementById('api_key').value,
+                api_secret: document.getElementById('api_secret').value,
+                src_labels: document.getElementById('src_labels').value,
+                dst_labels: document.getElementById('dst_labels').value,
+                exclude_src: document.getElementById('exclude_src').value,
+                exclude_dst: document.getElementById('exclude_dst').value,
+                services: document.getElementById('services').value,
+                save_path: document.getElementById('save_path').value,
+                file_name: document.getElementById('file_name').value,
+                days: dateRange.days,
+                chunk_interval: document.getElementById('chunk_interval').value || '24h',
+                start_date: dateRange.start,
+				end_date: dateRange.end,
+				analysis_primary_label: document.getElementById('analysis_primary_label').value || 'env',
+				analysis_secondary_label: document.getElementById('analysis_secondary_label').value || 'app'
+            };
+        }
+    </script>
+</body>
+</html>
