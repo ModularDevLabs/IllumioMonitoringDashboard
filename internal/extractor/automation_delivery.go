@@ -880,7 +880,7 @@ func deliverEmail(ctx context.Context, destination DeliveryDestination, message 
 	// buildEmailMessage parses every address, rejects control characters in
 	// headers, RFC 2047-encodes the subject, quoted-printable-encodes the body,
 	// and base64-encodes attachments before the SMTP DATA sink.
-	// lgtm[go/email-injection]
+	// codeql[go/email-injection]
 	if _, err := writer.Write(payload); err != nil {
 		_ = writer.Close()
 		return err
