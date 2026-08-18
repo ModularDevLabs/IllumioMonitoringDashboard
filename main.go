@@ -874,11 +874,14 @@ func main() {
 	http.HandleFunc("/report", withRequestTiming("report", serveReport))
 	http.HandleFunc("/trends", withRequestTiming("trends", serveTrends))
 	http.HandleFunc("/executive", withRequestTiming("executive", serveExecutive))
+	http.HandleFunc("/static/product-shell.css", extractor.ServeProductShellCSS)
+	http.HandleFunc("/static/product-shell.js", extractor.ServeProductShellJS)
 	staticFS, err := fs.Sub(templateFS, "static")
 	if err == nil {
 		http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	}
 	http.HandleFunc("/api/stats", withRequestTiming("api.stats", handleStats))
+	http.HandleFunc("/api/version", withRequestTiming("api.version", handleDashboardVersion))
 	http.HandleFunc("/api/drilldown", withRequestTiming("api.drilldown", handleDrilldown))
 	http.HandleFunc("/api/export/drilldown.csv", withRequestTiming("api.export.drilldown_csv", handleExportDrilldownCSV))
 	http.HandleFunc("/api/export/report.csv", withRequestTiming("api.export.report_csv", handleExportReportCSV))
@@ -11516,6 +11519,16 @@ func serveExecutive(w http.ResponseWriter, r *http.Request) {
 	if err := executivePageTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, "failed to render executive page", http.StatusInternalServerError)
 	}
+}
+
+func handleDashboardVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]string{"version": dashboardVersionLabel()})
 }
 
 func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {

@@ -27,7 +27,7 @@ import (
 	"illumio-dash/internal/extractor/illumio"
 )
 
-//go:embed frontend/*.html frontend/tailwind.css frontend/app-shell.css frontend/theme-init.js frontend/collapsible.js frontend/app-version.js
+//go:embed frontend/*.html frontend/tailwind.css frontend/app-shell.css frontend/product-shell.css frontend/theme-init.js frontend/collapsible.js frontend/app-version.js frontend/product-shell.js
 var staticFiles embed.FS
 
 // appVersion is replaced by scripts/build_release.sh using -ldflags. Source
@@ -723,6 +723,18 @@ func serveEmbeddedAsset(w http.ResponseWriter, r *http.Request, fileName, conten
 	_, _ = w.Write(data)
 }
 
+// ServeProductShellCSS exposes the shared product navigation styles on the
+// dashboard's neutral /static route without relaxing Extractor route security.
+func ServeProductShellCSS(w http.ResponseWriter, r *http.Request) {
+	serveEmbeddedAsset(w, r, "frontend/product-shell.css", "text/css; charset=utf-8")
+}
+
+// ServeProductShellJS exposes the shared product navigation behavior on the
+// dashboard's neutral /static route without relaxing Extractor route security.
+func ServeProductShellJS(w http.ResponseWriter, r *http.Request) {
+	serveEmbeddedAsset(w, r, "frontend/product-shell.js", "text/javascript; charset=utf-8")
+}
+
 func handleVersion(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -762,6 +774,12 @@ func NewHandler(appCtx context.Context, version string) (http.Handler, error) {
 	})
 	mux.HandleFunc("/assets/app-shell.css", func(w http.ResponseWriter, r *http.Request) {
 		serveEmbeddedAsset(w, r, "frontend/app-shell.css", "text/css; charset=utf-8")
+	})
+	mux.HandleFunc("/assets/product-shell.css", func(w http.ResponseWriter, r *http.Request) {
+		serveEmbeddedAsset(w, r, "frontend/product-shell.css", "text/css; charset=utf-8")
+	})
+	mux.HandleFunc("/assets/product-shell.js", func(w http.ResponseWriter, r *http.Request) {
+		serveEmbeddedAsset(w, r, "frontend/product-shell.js", "text/javascript; charset=utf-8")
 	})
 	mux.HandleFunc("/assets/theme-init.js", func(w http.ResponseWriter, r *http.Request) {
 		serveEmbeddedAsset(w, r, "frontend/theme-init.js", "text/javascript; charset=utf-8")

@@ -263,6 +263,8 @@
 		}
     </style>
     <link rel="stylesheet" href="/blocked-traffic/assets/app-shell.css">
+    <link rel="stylesheet" href="/static/product-shell.css">
+    <script src="/static/product-shell.js" defer></script>
 </head>
 <body data-theme="default" class="min-h-screen px-4 py-5 md:px-6 md:py-8 xl:px-8">
     <script src="/blocked-traffic/assets/theme-init.js"></script>
@@ -1266,6 +1268,8 @@
 				const body = document.body.cloneNode(true);
 				body.dataset.theme = exportTheme;
 				body.dataset.collapseScope = 'exported-executive-report';
+				body.classList.remove('product-shell-enabled', 'product-shell-compact', 'product-shell-menu-open');
+				body.classList.add('product-shell-offline-export');
 				setExportFilter(body, selectedSections);
 				body.querySelectorAll('.app-nav, .app-header-action, [data-offline-remove], script').forEach(node => node.remove());
 				const closingScriptPrefix = '<' + '/script';

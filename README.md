@@ -13,6 +13,8 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 - Integrated Blocked Traffic Extractor development preview:
   - Available within the dashboard at `/blocked-traffic/`
+  - Uses one PCE-inspired application shell across monitoring and extractor pages, with grouped/collapsible left navigation and a responsive mobile drawer
+  - Shares a persistent light/dark preference and active-page context across both functions
   - Includes extraction, multi-CSV analytics, configurable label dimensions, heatmaps, executive summaries, datasets, templates, scheduling, and artifact delivery
   - Uses independent PCE profiles and API credentials; dashboard collector credentials are never reused by the extractor
   - Remains localhost-only even when the Monitoring Dashboard is configured for network hosting
@@ -84,7 +86,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 - Operational confidence:
   - Dashboard pipeline strip includes an SLO confidence badge (`HIGH`/`MEDIUM`/`LOW`/`UNKNOWN`)
 - Theme:
-  - Light/dark mode toggle in dashboard, drilldown, and report views
+  - Unified light/dark mode toggle across dashboard, drilldown, report, extractor, analytics, heatmap, executive-summary, and automation views
   - Shared UI helpers embedded from `/static/ui-common.js`
 - Durable cross-version state:
   - State files are stored in a shared data directory so new fork/binary versions can reuse history.

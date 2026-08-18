@@ -14,7 +14,10 @@ branch_slug="$(printf '%s' "$branch_name" | tr '/[:space:]' '__')"
 OUT_DIR="${REBUILD_OUTPUT_DIR:-$ROOT_DIR/build/$branch_slug}"
 mkdir -p "$OUT_DIR"
 
-version_label="$(git tag --points-at HEAD | head -n1 || true)"
+version_label="${VERSION_LABEL:-}"
+if [[ -z "$version_label" ]]; then
+  version_label="$(git tag --points-at HEAD | head -n1 || true)"
+fi
 if [[ -z "$version_label" ]]; then
   version_label="$(git tag --list "*-rc*" --sort=-creatordate | head -n1 || true)"
 fi

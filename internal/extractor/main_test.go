@@ -864,6 +864,12 @@ func TestApplicationHeadersUseConsistentNavigationAndThemeControls(t *testing.T)
 		if !strings.Contains(html, `<link rel="stylesheet" href="/blocked-traffic/assets/app-shell.css">`) {
 			t.Fatalf("%s does not load the shared header styles", page.file)
 		}
+		if !strings.Contains(html, `<link rel="stylesheet" href="/static/product-shell.css">`) {
+			t.Fatalf("%s does not load the unified product shell styles", page.file)
+		}
+		if !strings.Contains(html, `<script src="/static/product-shell.js" defer></script>`) {
+			t.Fatalf("%s does not load the unified product shell behavior", page.file)
+		}
 		if !strings.Contains(html, `<script src="/blocked-traffic/assets/collapsible.js"></script>`) {
 			t.Fatalf("%s does not load the shared collapsible-section behavior", page.file)
 		}
@@ -886,6 +892,51 @@ func TestApplicationHeadersUseConsistentNavigationAndThemeControls(t *testing.T)
 	for _, rule := range []string{"scrollbar-gutter: stable", ".app-header-action {\n        order: 1", ".app-nav {\n        order: 2", ".theme-switcher {\n        order: 3"} {
 		if !strings.Contains(shellCSS, rule) {
 			t.Fatalf("shared app shell is missing the stable header rule %q", rule)
+		}
+	}
+	productShell, err := staticFiles.ReadFile("frontend/product-shell.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	productShellSource := string(productShell)
+	for _, expected := range []string{"Monitoring", "Blocked Traffic", "Automation", "Administration", "product-shell-compact", "product-shell-menu-open", "illumio_product_theme", "product-shell-sidebar-tools", "product-shell-page-toolbar"} {
+		if !strings.Contains(productShellSource, expected) {
+			t.Fatalf("unified product shell is missing %q", expected)
+		}
+	}
+	productShellCSS, err := staticFiles.ReadFile("frontend/product-shell.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{".product-shell-sidebar", ".product-shell-topbar", "@media (max-width: 1099px)", "@media print"} {
+		if !strings.Contains(string(productShellCSS), expected) {
+			t.Fatalf("unified product shell styles are missing %q", expected)
+		}
+	}
+}
+
+func TestUnifiedProductShellAssetsAreServed(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		fileName    string
+		contentType string
+		contains    string
+	}{
+		{"frontend/product-shell.css", "text/css; charset=utf-8", ".product-shell-sidebar"},
+		{"frontend/product-shell.js", "text/javascript; charset=utf-8", "Illumio Operations Hub"},
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "http://localhost/assets/test", nil)
+		serveEmbeddedAsset(recorder, request, test.fileName, test.contentType)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s returned HTTP %d", test.fileName, recorder.Code)
+		}
+		if got := recorder.Header().Get("Content-Type"); got != test.contentType {
+			t.Fatalf("%s content type = %q, want %q", test.fileName, got, test.contentType)
+		}
+		if !strings.Contains(recorder.Body.String(), test.contains) {
+			t.Fatalf("%s response is missing %q", test.fileName, test.contains)
 		}
 	}
 }
