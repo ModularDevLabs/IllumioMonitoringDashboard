@@ -359,8 +359,16 @@ func (c *Client) FetchDayOfTraffic(ctx context.Context, req AsyncQueryRequest, l
 		return nil, fmt.Errorf("invalid query start date")
 	}
 	req.MaxResults = 200000
-	req.PolicyDecisions = []string{"blocked"}
-	req.QueryName = fmt.Sprintf("BT_%s_%d", req.StartDate[:10], time.Now().UnixNano()%1000)
+	if req.PolicyDecisions == nil {
+		// Preserve the historical safe default for callers that do not select a
+		// scope. A non-nil empty slice intentionally requests all decisions.
+		req.PolicyDecisions = []string{"blocked"}
+	}
+	queryPrefix := "AT"
+	if len(req.PolicyDecisions) == 1 && strings.EqualFold(req.PolicyDecisions[0], "blocked") {
+		queryPrefix = "BT"
+	}
+	req.QueryName = fmt.Sprintf("%s_%s_%d", queryPrefix, req.StartDate[:10], time.Now().UnixNano()%1000)
 
 	// 1. Create
 	var queryUUID string
@@ -400,6 +408,7 @@ func (c *Client) FetchDayOfTraffic(ctx context.Context, req AsyncQueryRequest, l
 
 	// 2. Poll
 	backoff := 5 * time.Second
+	completedStatus := AsyncQueryStatus{}
 	for {
 		data, code, err := c.request(ctx, "GET", fmt.Sprintf("traffic_flows/async_queries/%s", queryUUID), nil)
 		if err == nil && code == 200 {
@@ -408,6 +417,7 @@ func (c *Client) FetchDayOfTraffic(ctx context.Context, req AsyncQueryRequest, l
 				return nil, fmt.Errorf("decode PCE query status: %w", err)
 			}
 			if strings.EqualFold(status.Status, "completed") {
+				completedStatus = status
 				break
 			}
 			if strings.EqualFold(status.Status, "failed") {
@@ -422,6 +432,9 @@ func (c *Client) FetchDayOfTraffic(ctx context.Context, req AsyncQueryRequest, l
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
+	}
+	if completedStatus.MatchesCount > completedStatus.FlowsCount && completedStatus.FlowsCount >= req.MaxResults {
+		return nil, fmt.Errorf("PCE query matched %d rows but returned the %d-row maximum; use a smaller chunk interval to avoid an incomplete export", completedStatus.MatchesCount, req.MaxResults)
 	}
 
 	// 3. Download
@@ -480,6 +493,12 @@ func (c *Client) FetchDayOfTraffic(ctx context.Context, req AsyncQueryRequest, l
 		if v, ok := r["num_connections"].(float64); ok {
 			f.NumConnections = int(v)
 		}
+		if v, ok := r["policy_decision"].(string); ok {
+			f.PolicyDecision = strings.ToLower(strings.TrimSpace(v))
+		}
+		if v, ok := r["draft_policy_decision"].(string); ok {
+			f.DraftDecision = strings.ToLower(strings.TrimSpace(v))
+		}
 		if ts, ok := r["timestamp_range"].(map[string]interface{}); ok {
 			if v, ok := ts["first_detected"].(string); ok {
 				f.FirstDetected, err = time.Parse(time.RFC3339, v)
@@ -499,6 +518,12 @@ func (c *Client) FetchDayOfTraffic(ctx context.Context, req AsyncQueryRequest, l
 		}
 		if f.LastDetected.IsZero() {
 			f.LastDetected = f.FirstDetected
+		}
+		if f.PolicyDecision == "" {
+			f.PolicyDecision = "unknown"
+			if len(req.PolicyDecisions) == 1 && strings.EqualFold(req.PolicyDecisions[0], "blocked") {
+				f.PolicyDecision = "blocked"
+			}
 		}
 		flows = append(flows, f)
 	}

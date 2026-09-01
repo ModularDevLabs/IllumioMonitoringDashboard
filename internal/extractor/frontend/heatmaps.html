@@ -234,7 +234,7 @@
                         <h2 id="heatmapTitle" class="text-xl font-bold text-sky-300">Environment Heatmap</h2>
                         <p id="heatmapSubtitle" class="text-xs uppercase tracking-widest text-gray-500">Source environment to destination environment</p>
                     </div>
-                    <p class="muted text-xs">Cell shading and large numbers are based on total blocked flows.</p>
+                    <p class="muted text-xs">Cell shading and large numbers are based on total flows in the selected traffic scope.</p>
                 </div>
                 <div id="heatmapWrap" class="overflow-auto rounded-2xl border border-gray-800 bg-gray-900 p-3"></div>
             </section>
@@ -717,7 +717,8 @@
         function renderPage(payload) {
             latestInsights = payload.insights || {};
 			applyDimensionMetadata(latestInsights);
-            document.getElementById('fileLabel').innerText = `Latest CSV: ${payload.fileName}`;
+			const scopeLabel = payload.traffic_scope === 'all' ? 'All policy decisions' : 'Blocked traffic only';
+            document.getElementById('fileLabel').innerText = `Latest CSV: ${payload.fileName} · ${scopeLabel}`;
 			applyMode(currentMode);
         }
 

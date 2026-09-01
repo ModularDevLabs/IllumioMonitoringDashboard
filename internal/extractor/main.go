@@ -53,6 +53,7 @@ type PCEProfile struct {
 	ChunkIntvl        string `json:"chunk_interval"`
 	AnalysisPrimary   string `json:"analysis_primary_label"`
 	AnalysisSecondary string `json:"analysis_secondary_label"`
+	TrafficScope      string `json:"traffic_scope"`
 }
 
 type PublicPCEProfile struct {
@@ -72,6 +73,7 @@ type PublicPCEProfile struct {
 	ChunkIntvl        string `json:"chunk_interval"`
 	AnalysisPrimary   string `json:"analysis_primary_label"`
 	AnalysisSecondary string `json:"analysis_secondary_label"`
+	TrafficScope      string `json:"traffic_scope"`
 }
 
 func (profile PCEProfile) public() PublicPCEProfile {
@@ -92,6 +94,7 @@ func (profile PCEProfile) public() PublicPCEProfile {
 		ChunkIntvl:        profile.ChunkIntvl,
 		AnalysisPrimary:   profile.AnalysisPrimary,
 		AnalysisSecondary: profile.AnalysisSecondary,
+		TrafficScope:      normalizedTrafficScope(profile.TrafficScope),
 	}
 }
 
@@ -116,6 +119,7 @@ type AppState struct {
 	DatasetID        string
 	DatasetCoverage  DatasetCoverage
 	ReportMetadata   ReportMetadata
+	TrafficScope     string
 	DiscoveryCache   *DiscoveryData
 	DiscoveryKey     string
 	RunError         string
@@ -240,6 +244,9 @@ type AnalyticsRecord struct {
 	FlowCount      int
 	FirstSeen      time.Time
 	LastSeen       time.Time
+	PolicyDecision string
+	DraftDecision  string
+	TrafficScope   string
 }
 
 type DiscoveryData struct {
@@ -1002,6 +1009,11 @@ func handleSaveProfile(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	prof.TrafficScope, err = normalizeTrafficScope(prof.TrafficScope)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	state.Mu.Lock()
 	previous, existed := state.Profiles[prof.Name]
 	state.Mu.Unlock()
@@ -1093,6 +1105,44 @@ type Config struct {
 	ChunkIntvl        string `json:"chunk_interval"`
 	AnalysisPrimary   string `json:"analysis_primary_label"`
 	AnalysisSecondary string `json:"analysis_secondary_label"`
+	TrafficScope      string `json:"traffic_scope"`
+}
+
+const (
+	trafficScopeBlocked = "blocked"
+	trafficScopeAll     = "all"
+)
+
+func normalizedTrafficScope(scope string) string {
+	if strings.EqualFold(strings.TrimSpace(scope), trafficScopeAll) {
+		return trafficScopeAll
+	}
+	return trafficScopeBlocked
+}
+
+func normalizeTrafficScope(scope string) (string, error) {
+	scope = strings.ToLower(strings.TrimSpace(scope))
+	if scope == "" {
+		return trafficScopeBlocked, nil
+	}
+	if scope != trafficScopeBlocked && scope != trafficScopeAll {
+		return "", fmt.Errorf("traffic scope must be blocked or all")
+	}
+	return scope, nil
+}
+
+func policyDecisionsForScope(scope string) []string {
+	if normalizedTrafficScope(scope) == trafficScopeAll {
+		return []string{}
+	}
+	return []string{"blocked"}
+}
+
+func reportTitleForScope(scope string) string {
+	if normalizedTrafficScope(scope) == trafficScopeAll {
+		return "All Traffic Executive Summary"
+	}
+	return "Blocked Traffic Executive Summary"
 }
 
 func normalizeAnalysisLabelKeys(primary, secondary string) (string, string, error) {
@@ -1226,6 +1276,9 @@ func resolveConfigCredentials(cfg Config) (Config, error) {
 	if strings.TrimSpace(cfg.AnalysisSecondary) == "" {
 		cfg.AnalysisSecondary = profile.AnalysisSecondary
 	}
+	if strings.TrimSpace(cfg.TrafficScope) == "" {
+		cfg.TrafficScope = profile.TrafficScope
+	}
 
 	normalizedURL, err := validatePCEURL(cfg.PCEURL)
 	if err != nil {
@@ -1241,6 +1294,10 @@ func resolveConfigCredentials(cfg Config) (Config, error) {
 		return Config{}, fmt.Errorf("PCE URL, Org ID, API Key, and API Secret are required")
 	}
 	cfg.AnalysisPrimary, cfg.AnalysisSecondary, err = normalizeAnalysisLabelKeys(cfg.AnalysisPrimary, cfg.AnalysisSecondary)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.TrafficScope, err = normalizeTrafficScope(cfg.TrafficScope)
 	if err != nil {
 		return Config{}, err
 	}
@@ -1328,6 +1385,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		"discoveryDone":    state.DiscoveryDone,
 		"discoveryTotal":   state.DiscoveryTotal,
 		"discoveryActive":  state.DiscoveryActive,
+		"trafficScope":     normalizedTrafficScope(state.TrafficScope),
 	}
 	state.Logs = []string{}
 	state.Mu.Unlock()
@@ -1349,6 +1407,7 @@ func handleSummary(w http.ResponseWriter, r *http.Request) {
 	datasetID := state.DatasetID
 	coverage := state.DatasetCoverage
 	reportMetadata := state.ReportMetadata
+	trafficScope := normalizedTrafficScope(state.TrafficScope)
 	state.Mu.Unlock()
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1359,6 +1418,7 @@ func handleSummary(w http.ResponseWriter, r *http.Request) {
 		"insights":        insights,
 		"coverage":        coverage,
 		"report_metadata": reportMetadata,
+		"traffic_scope":   trafficScope,
 	})
 }
 
@@ -1681,7 +1741,7 @@ func parseCSVAnalyticsInputsDetailed(inputs []csvAnalyticsInput, primaryLabelKey
 	}
 
 	allRecords := []AnalyticsRecord{}
-	coverage := DatasetCoverage{Source: "csv_import", Files: make([]DatasetFileCoverage, 0, len(inputs))}
+	coverage := DatasetCoverage{Source: "csv_import", TrafficScope: trafficScopeBlocked, Files: make([]DatasetFileCoverage, 0, len(inputs))}
 	seenExactRecords := make(map[string]int)
 	for inputIndex, input := range inputs {
 		records, err := parseCSVAnalyticsRecords(input.Reader, input.Name, primaryLabelKey, secondaryLabelKey)
@@ -1691,6 +1751,9 @@ func parseCSVAnalyticsInputsDetailed(inputs []csvAnalyticsInput, primaryLabelKey
 		fileCoverage := DatasetFileCoverage{Name: input.Name, SHA256: input.SHA256, Size: input.Size, Rows: len(records)}
 		monthSet := map[string]bool{}
 		for _, record := range records {
+			if normalizedTrafficScope(record.TrafficScope) == trafficScopeAll || (record.PolicyDecision != "" && !strings.EqualFold(record.PolicyDecision, "blocked")) {
+				coverage.TrafficScope = trafficScopeAll
+			}
 			if fileCoverage.FirstDetected.IsZero() || (!record.FirstSeen.IsZero() && record.FirstSeen.Before(fileCoverage.FirstDetected)) {
 				fileCoverage.FirstDetected = record.FirstSeen
 			}
@@ -1734,6 +1797,9 @@ func parseCSVAnalyticsInputsDetailed(inputs []csvAnalyticsInput, primaryLabelKey
 func importedAnalyticsRecordFingerprint(record AnalyticsRecord) string {
 	return strings.Join([]string{
 		record.Identity,
+		record.PolicyDecision,
+		record.DraftDecision,
+		normalizedTrafficScope(record.TrafficScope),
 		record.Month,
 		strconv.Itoa(record.FlowCount),
 		record.FirstSeen.UTC().Format(time.RFC3339Nano),
@@ -1961,6 +2027,9 @@ func parseCSVAnalyticsRecords(reader io.Reader, sourceName, primaryLabelKey, sec
 			FlowCount:      flowCount,
 			FirstSeen:      firstSeen,
 			LastSeen:       lastSeen,
+			PolicyDecision: strings.ToLower(strings.TrimSpace(getValue(row, "Policy Decision"))),
+			DraftDecision:  strings.ToLower(strings.TrimSpace(getValue(row, "Draft Policy Decision"))),
+			TrafficScope:   normalizedTrafficScope(getValue(row, "Traffic Scope")),
 		})
 	}
 	return records, nil
@@ -2137,7 +2206,7 @@ func handleImportCSV(w http.ResponseWriter, r *http.Request) {
 	if len(fileNames) > 1 {
 		fileName = fmt.Sprintf("Imported CSV set: %d files", len(fileNames))
 	}
-	reportMetadata := ReportMetadata{Title: "Blocked Traffic Executive Summary"}
+	reportMetadata := ReportMetadata{Title: reportTitleForScope(parsed.Coverage.TrafficScope)}
 	datasetID := ""
 	if datasetName := strings.TrimSpace(r.FormValue("dataset_name")); datasetName != "" {
 		saved, err := datasetManager.saveDataset(SavedDataset{
@@ -2158,6 +2227,7 @@ func handleImportCSV(w http.ResponseWriter, r *http.Request) {
 	state.DatasetID = datasetID
 	state.DatasetCoverage = parsed.Coverage
 	state.ReportMetadata = reportMetadata
+	state.TrafficScope = normalizedTrafficScope(parsed.Coverage.TrafficScope)
 	state.IsDone = true
 	state.IsCancelled = false
 	state.Mu.Unlock()
@@ -2242,7 +2312,8 @@ func beginExtractionWithContext(parent context.Context, cfg Config) (Config, con
 	state.LastInsights = AnalyticsInsights{}
 	state.DatasetID = ""
 	state.DatasetCoverage = DatasetCoverage{}
-	state.ReportMetadata = ReportMetadata{Title: "Blocked Traffic Executive Summary"}
+	state.ReportMetadata = ReportMetadata{Title: reportTitleForScope(resolved.TrafficScope)}
+	state.TrafficScope = resolved.TrafficScope
 	state.RunError = ""
 
 	ctx, cancel := context.WithTimeout(parent, maxExtractionTime)
@@ -2979,6 +3050,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 			Include: make([]interface{}, 0),
 			Exclude: make([]interface{}, 0),
 		},
+		PolicyDecisions: policyDecisionsForScope(cfg.TrafficScope),
 	}
 
 	var selectorWarnings []string
@@ -3014,13 +3086,26 @@ func runExtraction(ctx context.Context, cfg Config) {
 		Process, FQDN        string
 		SrcLabels, DstLabels string
 	}
-	aggregatedFlows := make(map[FlowKey]struct {
+	type AggregateKey struct {
+		Connection     FlowKey
+		PolicyDecision string
+		DraftDecision  string
+	}
+	flowIdentity := func(key FlowKey) string {
+		return strings.Join([]string{
+			key.SrcIP, key.DstIP, strconv.Itoa(key.Port), strconv.Itoa(key.Proto),
+			key.SrcWkld, key.DstWkld, key.Process, key.FQDN, key.SrcLabels, key.DstLabels,
+		}, "\x1f")
+	}
+	aggregatedFlows := make(map[AggregateKey]struct {
 		TotalCount          int
 		FirstSeen, LastSeen time.Time
 		Raw                 illumio.TrafficFlow
 	})
+	connectionSet := make(map[FlowKey]struct{})
 	monthlySummaryMap := make(map[string]MonthlyPortProtocolSummary)
 	monthlyUniqueConnectionSet := make(map[string]map[FlowKey]struct{})
+	monthlyActiveConnectionSet := make(map[string]map[FlowKey]struct{})
 	monthlyRelationshipMap := make(map[string]MonthlyRelationshipSummary)
 	monthlyRelationshipSet := make(map[string]map[FlowKey]struct{})
 	monthlyExternalDestinationMap := make(map[string]MonthlyDestinationSummary)
@@ -3083,13 +3168,14 @@ func runExtraction(ctx context.Context, cfg Config) {
 					if err == nil {
 						aggMu.Lock()
 						for _, f := range flows {
-							key := FlowKey{
+							connectionKey := FlowKey{
 								SrcIP: f.SrcIP, DstIP: f.DstIP, Port: f.DstPort, Proto: f.Proto,
 								SrcWkld: f.SrcWorkloadHref, DstWkld: f.DstWorkloadHref,
 								Process: f.ProcessName, FQDN: f.DstFQDN,
 								SrcLabels: canonicalFlowLabels(f.SrcLabels), DstLabels: canonicalFlowLabels(f.DstLabels),
 							}
-							entry, exists := aggregatedFlows[key]
+							aggregateKey := AggregateKey{Connection: connectionKey, PolicyDecision: f.PolicyDecision, DraftDecision: f.DraftDecision}
+							entry, exists := aggregatedFlows[aggregateKey]
 							if !exists {
 								entry.FirstSeen = f.FirstDetected
 								entry.LastSeen = f.LastDetected
@@ -3102,7 +3188,8 @@ func runExtraction(ctx context.Context, cfg Config) {
 							if f.LastDetected.After(entry.LastSeen) {
 								entry.LastSeen = f.LastDetected
 							}
-							aggregatedFlows[key] = entry
+							aggregatedFlows[aggregateKey] = entry
+							connectionSet[connectionKey] = struct{}{}
 
 							protocol := fmt.Sprintf("%d", f.Proto)
 							if name, ok := protoMap[f.Proto]; ok {
@@ -3123,7 +3210,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 									set = make(map[FlowKey]struct{})
 									monthlyUniqueConnectionSet[summaryKey] = set
 								}
-								set[key] = struct{}{}
+								set[connectionKey] = struct{}{}
 
 								sourcePrimary := externalOrManagedLabel(f, true, primaryLabelKey)
 								destinationPrimary := externalOrManagedLabel(f, false, primaryLabelKey)
@@ -3137,7 +3224,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 								if monthlyRelationshipSet[relationshipKey] == nil {
 									monthlyRelationshipSet[relationshipKey] = map[FlowKey]struct{}{}
 								}
-								monthlyRelationshipSet[relationshipKey][key] = struct{}{}
+								monthlyRelationshipSet[relationshipKey][connectionKey] = struct{}{}
 
 								if !endpointHasClassification(f, false) {
 									destinationName := endpointDisplayName(f, false)
@@ -3150,13 +3237,13 @@ func runExtraction(ctx context.Context, cfg Config) {
 									if monthlyExternalDestinationSet[destinationKey] == nil {
 										monthlyExternalDestinationSet[destinationKey] = map[FlowKey]struct{}{}
 									}
-									monthlyExternalDestinationSet[destinationKey][key] = struct{}{}
+									monthlyExternalDestinationSet[destinationKey][connectionKey] = struct{}{}
 								}
 							}
 						}
 						state.Mu.Lock()
 						state.CompletedChunks++
-						state.TotalConnections = len(aggregatedFlows)
+						state.TotalConnections = len(connectionSet)
 						state.Mu.Unlock()
 						aggMu.Unlock()
 						addLog(fmt.Sprintf("Chunk %d/%d (%s to %s): %d connections gathered", chunkIdx+1, len(chunks), chunks[chunkIdx].Start.Format("2006-01-02 15:04Z"), chunks[chunkIdx].End.Format("2006-01-02 15:04Z"), len(flows)))
@@ -3172,7 +3259,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 			}
 		}()
 	}
-	addLog(fmt.Sprintf("Extraction window: %s through %s (%d days) using %s chunks (%d total).", rangeStart.Format("2006-01-02"), rangeEnd.Format("2006-01-02"), requestedDays, chunkLabel, len(chunks)))
+	addLog(fmt.Sprintf("Extraction window: %s through %s (%d days) using %s chunks (%d total); traffic scope: %s.", rangeStart.Format("2006-01-02"), rangeEnd.Format("2006-01-02"), requestedDays, chunkLabel, len(chunks), normalizedTrafficScope(cfg.TrafficScope)))
 	for i := 0; i < len(chunks); i++ {
 		jobs <- i
 	}
@@ -3227,7 +3314,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 	for _, k := range orderedKeys {
 		header = append(header, "Dst "+strings.ToUpper(k[:1])+k[1:])
 	}
-	header = append(header, "FQDN", "Port", "Protocol", "Process Name", "Flows")
+	header = append(header, "FQDN", "Port", "Protocol", "Process Name", "Policy Decision", "Draft Policy Decision", "Traffic Scope", "Flows")
 	if err := w.Write(header); err != nil {
 		addLog(fmt.Sprintf("Error writing CSV header: %v", err))
 		markRunFinished("", false)
@@ -3235,8 +3322,9 @@ func runExtraction(ctx context.Context, cfg Config) {
 	}
 
 	summaryMap := make(map[string]PortProtocolSummary)
+	summaryUniqueConnectionSet := make(map[string]map[FlowKey]struct{})
 	analyticsRecords := make([]AnalyticsRecord, 0, len(aggregatedFlows))
-	for _, entry := range aggregatedFlows {
+	for aggregateKey, entry := range aggregatedFlows {
 		flow := entry.Raw
 		protocol := fmt.Sprintf("%d", flow.Proto)
 		if name, ok := protoMap[flow.Proto]; ok {
@@ -3274,6 +3362,9 @@ func runExtraction(ctx context.Context, cfg Config) {
 			fmt.Sprintf("%d", flow.DstPort),
 			protocol,
 			flow.ProcessName,
+			flow.PolicyDecision,
+			flow.DraftDecision,
+			normalizedTrafficScope(cfg.TrafficScope),
 			fmt.Sprintf("%d", entry.TotalCount),
 		)
 		for i := range row {
@@ -3291,22 +3382,31 @@ func runExtraction(ctx context.Context, cfg Config) {
 		summaryEntry.Protocol = protocol
 		summaryEntry.ProtocolNumber = flow.Proto
 		summaryEntry.FlowCount += entry.TotalCount
-		summaryEntry.UniqueConnections++
 		summaryMap[summaryKey] = summaryEntry
+		if summaryUniqueConnectionSet[summaryKey] == nil {
+			summaryUniqueConnectionSet[summaryKey] = map[FlowKey]struct{}{}
+		}
+		summaryUniqueConnectionSet[summaryKey][aggregateKey.Connection] = struct{}{}
 
 		analyticsRecords = append(analyticsRecords, AnalyticsRecord{
-			SrcEnv:     externalOrManagedLabel(flow, true, primaryLabelKey),
-			DstEnv:     externalOrManagedLabel(flow, false, primaryLabelKey),
-			SrcApp:     externalOrManagedLabel(flow, true, secondaryLabelKey),
-			DstApp:     externalOrManagedLabel(flow, false, secondaryLabelKey),
-			SrcIP:      endpointDisplayName(flow, true),
-			DstIP:      endpointDisplayName(flow, false),
-			DstFQDN:    flow.DstFQDN,
-			SrcManaged: endpointHasClassification(flow, true),
-			DstManaged: endpointHasClassification(flow, false),
-			Protocol:   protocol,
-			Port:       flow.DstPort,
-			FlowCount:  entry.TotalCount,
+			Identity:       flowIdentity(aggregateKey.Connection),
+			SrcEnv:         externalOrManagedLabel(flow, true, primaryLabelKey),
+			DstEnv:         externalOrManagedLabel(flow, false, primaryLabelKey),
+			SrcApp:         externalOrManagedLabel(flow, true, secondaryLabelKey),
+			DstApp:         externalOrManagedLabel(flow, false, secondaryLabelKey),
+			SrcIP:          endpointDisplayName(flow, true),
+			DstIP:          endpointDisplayName(flow, false),
+			DstFQDN:        flow.DstFQDN,
+			SrcManaged:     endpointHasClassification(flow, true),
+			DstManaged:     endpointHasClassification(flow, false),
+			Protocol:       protocol,
+			Port:           flow.DstPort,
+			FlowCount:      entry.TotalCount,
+			FirstSeen:      entry.FirstSeen,
+			LastSeen:       entry.LastSeen,
+			PolicyDecision: flow.PolicyDecision,
+			DraftDecision:  flow.DraftDecision,
+			TrafficScope:   normalizedTrafficScope(cfg.TrafficScope),
 		})
 	}
 	w.Flush()
@@ -3327,7 +3427,8 @@ func runExtraction(ctx context.Context, cfg Config) {
 	}
 
 	summary := make([]PortProtocolSummary, 0, len(summaryMap))
-	for _, item := range summaryMap {
+	for key, item := range summaryMap {
+		item.UniqueConnections = len(summaryUniqueConnectionSet[key])
 		summary = append(summary, item)
 	}
 	sort.Slice(summary, func(i, j int) bool {
@@ -3346,7 +3447,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 		entry.UniqueConnections = len(set)
 		monthlySummaryMap[summaryKey] = entry
 	}
-	for _, entry := range aggregatedFlows {
+	for aggregateKey, entry := range aggregatedFlows {
 		flow := entry.Raw
 		protocol := fmt.Sprintf("%d", flow.Proto)
 		if name, ok := protoMap[flow.Proto]; ok {
@@ -3358,11 +3459,15 @@ func runExtraction(ctx context.Context, cfg Config) {
 			monthEntry.Month = activeMonth
 			monthEntry.Protocol = protocol
 			monthEntry.Port = flow.DstPort
-			monthEntry.ActiveConnections++
 			monthlySummaryMap[summaryKey] = monthEntry
+			if monthlyActiveConnectionSet[summaryKey] == nil {
+				monthlyActiveConnectionSet[summaryKey] = map[FlowKey]struct{}{}
+			}
+			monthlyActiveConnectionSet[summaryKey][aggregateKey.Connection] = struct{}{}
 		}
 	}
-	for _, item := range monthlySummaryMap {
+	for key, item := range monthlySummaryMap {
+		item.ActiveConnections = len(monthlyActiveConnectionSet[key])
 		monthlySummaries = append(monthlySummaries, item)
 	}
 	sort.Slice(monthlySummaries, func(i, j int) bool {
@@ -3378,6 +3483,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 		return monthlySummaries[i].Port < monthlySummaries[j].Port
 	})
 
+	analyticsRecords = mergeImportedAnalyticsRecords(analyticsRecords)
 	insights := buildInsightsForDimensions(analyticsRecords, primaryLabelKey, secondaryLabelKey)
 	insights.MonthlyPortProtocol = monthlySummaries
 	for key, row := range monthlyRelationshipMap {
@@ -3407,7 +3513,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 		return insights.MonthlyExternalDestinations[i].Destination < insights.MonthlyExternalDestinations[j].Destination
 	})
 	coverageEnd := rangeEnd.Add(24*time.Hour - time.Second)
-	coverage := normalizeCoverage(DatasetCoverage{Source: "live_extraction", Files: []DatasetFileCoverage{{
+	coverage := normalizeCoverage(DatasetCoverage{Source: "live_extraction", TrafficScope: normalizedTrafficScope(cfg.TrafficScope), Files: []DatasetFileCoverage{{
 		Name: filepath.Base(finalPath), Rows: len(aggregatedFlows), FirstDetected: rangeStart, LastDetected: coverageEnd,
 		Months: monthSpan(rangeStart, coverageEnd),
 	}}})
@@ -3419,6 +3525,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 	state.LastSummary = summary
 	state.LastInsights = insights
 	state.DatasetCoverage = coverage
+	state.TrafficScope = normalizedTrafficScope(cfg.TrafficScope)
 	state.Mu.Unlock()
 
 	outputComplete = true

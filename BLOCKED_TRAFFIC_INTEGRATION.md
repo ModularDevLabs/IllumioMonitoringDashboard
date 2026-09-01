@@ -7,6 +7,7 @@ This branch embeds the Illumio Blocked Traffic Extractor `v1.5.0` in the Monitor
 The Monitoring Dashboard remains at `/`. The integrated extractor is available at `/blocked-traffic/` with its complete workspace:
 
 - Extractor and policy-object discovery
+- Blocked-only or all-policy-decision traffic extraction
 - Single- and multi-CSV import with exact-row deduplication
 - Configurable primary and secondary label dimensions
 - Analytics dashboard and month-over-month service trends
@@ -16,6 +17,10 @@ The Monitoring Dashboard remains at `/`. The integrated extractor is available a
 - Report templates, schedules, run history, and delivery destinations
 
 Navigation links connect the dashboard, settings, drilldowns, reports, executive view, and extractor workspaces.
+
+The traffic-scope selector defaults to `blocked` for backward compatibility. Selecting `all` sends an empty `policy_decisions` filter to the PCE, which returns allowed, potentially blocked, blocked, and unknown flows. The CSV records the active policy decision, draft policy decision, and selected scope. Profiles and automation templates retain the selection independently. Analytics continue to use the established endpoint/service identity for unique connections, so the same connection appearing under multiple policy decisions contributes its flows without being counted as multiple unique connections.
+
+All-traffic queries can be substantially larger. If a query reports more matches than the PCE's 200,000-row response ceiling, the extractor aborts without writing a partial CSV and instructs the user to choose a smaller chunk interval.
 
 ## Credential boundary
 

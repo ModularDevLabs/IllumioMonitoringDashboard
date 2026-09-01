@@ -1132,3 +1132,54 @@ func TestSecurityHeadersAllowLoopbackHostAndRemote(t *testing.T) {
 		t.Fatalf("loopback request status = %d, want 204", recorder.Code)
 	}
 }
+
+func TestTrafficScopeDefaultsAndPolicyDecisionFilters(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		input        string
+		wantScope    string
+		wantDecision []string
+	}{
+		{"", trafficScopeBlocked, []string{"blocked"}},
+		{"blocked", trafficScopeBlocked, []string{"blocked"}},
+		{"ALL", trafficScopeAll, []string{}},
+	} {
+		scope, err := normalizeTrafficScope(test.input)
+		if err != nil {
+			t.Fatalf("normalizeTrafficScope(%q): %v", test.input, err)
+		}
+		if scope != test.wantScope {
+			t.Fatalf("normalizeTrafficScope(%q) = %q, want %q", test.input, scope, test.wantScope)
+		}
+		decisions := policyDecisionsForScope(scope)
+		if len(decisions) != len(test.wantDecision) {
+			t.Fatalf("policy decisions for %q = %#v, want %#v", scope, decisions, test.wantDecision)
+		}
+		for index := range decisions {
+			if decisions[index] != test.wantDecision[index] {
+				t.Fatalf("policy decisions for %q = %#v, want %#v", scope, decisions, test.wantDecision)
+			}
+		}
+	}
+	if _, err := normalizeTrafficScope("allowed-only"); err == nil {
+		t.Fatal("unsupported traffic scope was accepted")
+	}
+}
+
+func TestTrafficScopeSelectorsAreAvailableForManualAndAutomatedRuns(t *testing.T) {
+	t.Parallel()
+
+	for _, fileName := range []string{"frontend/index.html", "frontend/automation.html"} {
+		page, err := staticFiles.ReadFile(fileName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		html := string(page)
+		for _, expected := range []string{`value="blocked"`, `value="all"`, "traffic_scope"} {
+			if !strings.Contains(html, expected) {
+				t.Fatalf("%s is missing %q", fileName, expected)
+			}
+		}
+	}
+}

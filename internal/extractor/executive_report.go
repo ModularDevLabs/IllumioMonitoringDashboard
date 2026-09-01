@@ -80,7 +80,7 @@ func reportTrendSVG(months []reportMonth) string {
 		return float64(left) + float64(plotWidth*index)/float64(len(months)-1)
 	}
 	var out strings.Builder
-	fmt.Fprintf(&out, `<svg viewBox="0 0 %d %d" role="img" aria-label="Monthly blocked flow trend"><rect width="%d" height="%d" rx="16" fill="#fff"/>`, width, height, width, height)
+	fmt.Fprintf(&out, `<svg viewBox="0 0 %d %d" role="img" aria-label="Monthly traffic flow trend"><rect width="%d" height="%d" rx="16" fill="#fff"/>`, width, height, width, height)
 	for step := 0; step <= 4; step++ {
 		y := float64(top) + float64(plotHeight*step)/4
 		value := maxValue * (4 - step) / 4
@@ -142,9 +142,15 @@ func generateExecutiveHTML(path string, metadata ReportMetadata, summary []PortP
 	if !coverage.FirstDetected.IsZero() && !coverage.LastDetected.IsZero() {
 		coverageText = coverage.FirstDetected.Format("Jan 2, 2006") + " through " + coverage.LastDetected.Format("Jan 2, 2006")
 	}
+	flowLabel := "Blocked Flows"
+	trendLabel := "Month-over-month blocked traffic"
+	if normalizedTrafficScope(coverage.TrafficScope) == trafficScopeAll {
+		flowLabel = "All Traffic Flows"
+		trendLabel = "Month-over-month all traffic"
+	}
 	document := fmt.Sprintf(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>%s</title><style>
 body{margin:0;background:#f5f2e9;color:#232b2e;font:14px Inter,Arial,sans-serif}main{max-width:1100px;margin:auto;padding:36px}.panel{background:#fff;border:1px solid #d9cdbb;border-radius:20px;padding:24px;margin:18px 0}.eyebrow{color:#d94700;text-transform:uppercase;letter-spacing:.18em;font-weight:700}.muted{color:#6f7274}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{background:#faf8f2;border:1px solid #eadfce;border-radius:16px;padding:18px}.value{color:#e84b00;font-size:30px;font-weight:800;margin-top:8px}h1{font-size:38px;margin:8px 0}h2{margin-top:0}table{width:100%%;border-collapse:collapse}th,td{text-align:left;border-bottom:1px solid #eadfce;padding:10px}th{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#6f7274}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.notes{white-space:pre-wrap}@media(max-width:760px){.cards,.grid{grid-template-columns:1fr}main{padding:18px}}@media print{body{background:#fff}main{max-width:none}.panel{break-inside:avoid}}
-</style></head><body><main><section class="panel"><div class="eyebrow">%s</div><h1>%s</h1><p class="muted">%s%s</p><p class="notes">%s</p></section><section class="cards"><div class="card"><div class="eyebrow">Blocked Flows</div><div class="value">%s</div></div><div class="card"><div class="eyebrow">Connections</div><div class="value">%s</div></div><div class="card"><div class="eyebrow">External / Unmanaged</div><div class="value">%s</div></div></section><section class="panel"><h2>Month-over-month blocked traffic</h2>%s</section><section class="grid"><div class="panel"><h2>Top services</h2><table><thead><tr><th>Protocol</th><th>Port</th><th>Flows</th><th>Connections</th></tr></thead><tbody>%s</tbody></table></div><div class="panel"><h2>Top relationships</h2><table><thead><tr><th>Source</th><th>Destination</th><th>Flows</th></tr></thead><tbody>%s</tbody></table></div></section><p class="muted">Generated %s by Illumio Blocked Traffic Extractor.</p></main></body></html>`, html.EscapeString(metadata.Title), html.EscapeString(metadata.CustomerName), html.EscapeString(metadata.Title), html.EscapeString(coverageText), preparedSuffix(metadata.PreparedBy), html.EscapeString(metadata.Notes), formatInteger(flows), formatInteger(connections), formatInteger(external), reportTrendSVG(months), serviceRows.String(), relationshipRows.String(), time.Now().Format(time.RFC1123))
+</style></head><body><main><section class="panel"><div class="eyebrow">%s</div><h1>%s</h1><p class="muted">%s%s</p><p class="notes">%s</p></section><section class="cards"><div class="card"><div class="eyebrow">%s</div><div class="value">%s</div></div><div class="card"><div class="eyebrow">Connections</div><div class="value">%s</div></div><div class="card"><div class="eyebrow">External / Unmanaged</div><div class="value">%s</div></div></section><section class="panel"><h2>%s</h2>%s</section><section class="grid"><div class="panel"><h2>Top services</h2><table><thead><tr><th>Protocol</th><th>Port</th><th>Flows</th><th>Connections</th></tr></thead><tbody>%s</tbody></table></div><div class="panel"><h2>Top relationships</h2><table><thead><tr><th>Source</th><th>Destination</th><th>Flows</th></tr></thead><tbody>%s</tbody></table></div></section><p class="muted">Generated %s by Illumio Traffic Extractor.</p></main></body></html>`, html.EscapeString(metadata.Title), html.EscapeString(metadata.CustomerName), html.EscapeString(metadata.Title), html.EscapeString(coverageText), preparedSuffix(metadata.PreparedBy), html.EscapeString(metadata.Notes), flowLabel, formatInteger(flows), formatInteger(connections), formatInteger(external), trendLabel, reportTrendSVG(months), serviceRows.String(), relationshipRows.String(), time.Now().Format(time.RFC1123))
 	return writeExclusiveFile(path, []byte(document))
 }
 
@@ -187,13 +193,19 @@ func generateExecutivePDF(path string, metadata ReportMetadata, summary []PortPr
 	if metadata.PreparedBy != "" {
 		pdfText(54, 678, 10, "Prepared by "+metadata.PreparedBy)
 	}
-	pdfText(54, 635, 12, "TOTAL BLOCKED FLOWS")
+	flowLabel := "TOTAL BLOCKED FLOWS"
+	trendLabel := "Monthly blocked traffic"
+	if normalizedTrafficScope(coverage.TrafficScope) == trafficScopeAll {
+		flowLabel = "TOTAL TRAFFIC FLOWS"
+		trendLabel = "Monthly all traffic"
+	}
+	pdfText(54, 635, 12, flowLabel)
 	pdfText(54, 607, 22, formatInteger(flows))
 	pdfText(235, 635, 12, "CONNECTIONS")
 	pdfText(235, 607, 22, formatInteger(connections))
 	pdfText(410, 635, 12, "EXTERNAL / UNMANAGED")
 	pdfText(410, 607, 22, formatInteger(external))
-	pdfText(54, 560, 15, "Monthly blocked traffic")
+	pdfText(54, 560, 15, trendLabel)
 	start := 0
 	if len(months) > 12 {
 		start = len(months) - 12

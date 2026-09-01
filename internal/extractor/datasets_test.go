@@ -73,6 +73,30 @@ func TestDetailedCSVImportDeduplicatesExactRowsAcrossDifferentFiles(t *testing.T
 	}
 }
 
+func TestAllTrafficCSVImportPreservesDecisionRowsWithoutInflatingUniqueConnections(t *testing.T) {
+	t.Parallel()
+
+	header := "Source IP,Destination IP,Port,Protocol,Flows,Src Env,Dst Env,Src App,Dst App,First Detected,Last Detected,Policy Decision,Draft Policy Decision,Traffic Scope"
+	rows := strings.Join([]string{
+		header,
+		"10.0.0.1,10.0.0.2,443,TCP,3,Prod,Shared,Web,API,2026-01-02 01:00:00,2026-01-02 02:00:00,allowed,allowed,all",
+		"10.0.0.1,10.0.0.2,443,TCP,2,Prod,Shared,Web,API,2026-01-02 01:00:00,2026-01-02 02:00:00,blocked,blocked,all",
+	}, "\n")
+	dataset, err := parseCSVAnalyticsInputsDetailed([]csvAnalyticsInput{{Name: "all.csv", Reader: strings.NewReader(rows)}}, "env", "app")
+	if err != nil {
+		t.Fatalf("parseCSVAnalyticsInputsDetailed: %v", err)
+	}
+	if dataset.Coverage.TrafficScope != trafficScopeAll {
+		t.Fatalf("traffic scope = %q, want all", dataset.Coverage.TrafficScope)
+	}
+	if len(dataset.Summary) != 1 || dataset.Summary[0].FlowCount != 5 || dataset.Summary[0].UniqueConnections != 1 {
+		t.Fatalf("summary = %#v, want 5 flows across one unique connection", dataset.Summary)
+	}
+	if len(dataset.Insights.MonthlyPortProtocol) != 1 || dataset.Insights.MonthlyPortProtocol[0].FlowCount != 5 || dataset.Insights.MonthlyPortProtocol[0].UniqueConnections != 1 {
+		t.Fatalf("monthly summary = %#v, want decision rows combined without inflating connections", dataset.Insights.MonthlyPortProtocol)
+	}
+}
+
 func TestValidateReportMetadataCanonicalizesIncludedSections(t *testing.T) {
 	t.Parallel()
 

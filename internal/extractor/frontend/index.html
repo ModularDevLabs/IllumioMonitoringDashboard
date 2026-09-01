@@ -320,6 +320,14 @@
         <!-- Query Filters -->
         <div class="mb-8 rounded-lg border themed-soft-panel p-4" data-auto-collapsible="query-filters" data-collapse-title="Query Filters and Date Range">
         <div class="grid grid-cols-2 gap-6 mb-8">
+            <div class="col-span-2">
+                <label for="traffic_scope" class="block text-sm font-semibold mb-2 text-orange-300 uppercase tracking-tighter">Traffic Scope</label>
+                <select id="traffic_scope" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-orange-500 outline-none">
+                    <option value="blocked" selected>Blocked traffic only</option>
+                    <option value="all">All traffic (all policy decisions)</option>
+                </select>
+                <p class="mt-2 text-xs text-gray-400">All traffic includes allowed, potentially blocked, blocked, and unknown decisions. Large environments may require a smaller chunk interval to remain below the PCE's 200,000-row query limit.</p>
+            </div>
             <div class="col-span-2 relative">
                 <label class="block text-sm font-semibold mb-2 text-blue-300 uppercase tracking-tighter">Sources (Labels or IP)</label>
                 <input id="src_labels" type="text" placeholder="Role: DB, App: Core" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none autocomplete">
@@ -777,6 +785,7 @@
             document.getElementById('chunk_interval').value = p.chunk_interval || '24h';
             document.getElementById('start_date').value = p.start_date || '';
             document.getElementById('end_date').value = p.end_date || '';
+			document.getElementById('traffic_scope').value = p.traffic_scope || 'blocked';
 			populateAnalysisLabelTypes(p.analysis_primary_label || 'env', p.analysis_secondary_label || 'app');
         }
 
@@ -958,10 +967,11 @@
                 return;
             }
             const chunkInterval = document.getElementById('chunk_interval').value || '24h';
+			const scopeLabel = document.getElementById('traffic_scope').value === 'all' ? 'all policy decisions' : 'blocked traffic only';
             if (dateRange.start && dateRange.end) {
-                log(`Starting extraction for ${dateRange.start} through ${dateRange.end} (${dateRange.days} days) using ${chunkInterval} chunks.`);
+				log(`Starting extraction for ${dateRange.start} through ${dateRange.end} (${dateRange.days} days) using ${chunkInterval} chunks; scope: ${scopeLabel}.`);
             } else {
-                log(`Starting ${dateRange.days}-day extraction using ${chunkInterval} chunks.`);
+				log(`Starting ${dateRange.days}-day extraction using ${chunkInterval} chunks; scope: ${scopeLabel}.`);
             }
             try {
                 const res = await fetch('/blocked-traffic/api/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(getConfig()) });
@@ -1042,6 +1052,7 @@
                 exclude_src: document.getElementById('exclude_src').value,
                 exclude_dst: document.getElementById('exclude_dst').value,
                 services: document.getElementById('services').value,
+				traffic_scope: document.getElementById('traffic_scope').value || 'blocked',
                 save_path: document.getElementById('save_path').value,
                 file_name: document.getElementById('file_name').value,
                 days: dateRange.days,

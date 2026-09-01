@@ -272,7 +272,7 @@
         <header class="app-header mb-8 flex flex-col gap-4 2xl:flex-row 2xl:justify-between">
             <div>
                 <p class="label mb-2">Executive View</p>
-                <h1 class="headline text-4xl font-extrabold tracking-tight md:text-5xl">Blocked Traffic Executive Summary</h1>
+                <h1 class="headline text-4xl font-extrabold tracking-tight md:text-5xl">Traffic Executive Summary</h1>
                 <p id="fileLabel" class="muted mt-3 text-sm">Loading latest analytics...</p>
             </div>
             <div class="app-header-actions">
@@ -300,8 +300,8 @@
 				<div class="flex min-w-0 items-center gap-5">
 					<img id="reportLogo" class="report-logo hidden" alt="Report logo">
 					<div class="min-w-0">
-						<p id="reportCustomer" class="label">Blocked Traffic Analysis</p>
-						<h2 id="reportTitle" class="headline mt-2 text-3xl font-extrabold">Blocked Traffic Executive Summary</h2>
+						<p id="reportCustomer" class="label">Traffic Analysis</p>
+						<h2 id="reportTitle" class="headline mt-2 text-3xl font-extrabold">Traffic Executive Summary</h2>
 						<p id="reportPrepared" class="muted mt-2 text-sm"></p>
 					</div>
 				</div>
@@ -348,7 +348,7 @@
 		<div class="hero mb-8 rounded-3xl p-6" data-auto-collapsible="executive-overview" data-collapse-title="Executive Overview" data-image-section="executive-overview" data-export-section="executive-overview">
             <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                 <div class="panel-soft rounded-2xl p-5">
-                    <p class="label">Total Blocked Flows</p>
+                    <p class="label">Total Traffic Flows</p>
                     <p id="totalFlows" class="metric-accent metric-value mt-3 font-extrabold">0</p>
                 </div>
                 <div class="panel-soft rounded-2xl p-5">
@@ -406,7 +406,7 @@
 
 			<section class="panel rounded-3xl p-6" data-auto-collapsible="monthly-trends" data-collapse-title="Month-over-Month Trends" data-image-section="monthly-trends" data-export-section="monthly-trends">
 				<div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-					<div><p class="label">Month-over-Month Trends</p><h2 class="headline mt-2 text-2xl font-bold">Blocked traffic movement over time</h2></div>
+					<div><p class="label">Month-over-Month Trends</p><h2 class="headline mt-2 text-2xl font-bold">Traffic movement over time</h2></div>
 					<div class="no-export flex flex-wrap items-end gap-3">
 						<label class="text-xs">Range<select id="trendRangeSelect" class="mt-1 rounded-lg border px-3 py-2 text-sm"><option value="6">Last 6 months</option><option value="12">Last 12 months</option><option value="all">All months</option></select></label>
 						<button type="button" class="export-button rounded-lg px-3 py-2 text-xs font-semibold" data-chart-download="monthlyFlowChart" data-format="svg">Flow SVG</button>
@@ -416,7 +416,7 @@
 					</div>
 				</div>
 				<div class="mt-6 grid gap-8 xl:grid-cols-2">
-					<div><h3 class="headline text-lg font-bold">Total blocked flows</h3><p class="muted mt-1 text-sm">Missing coverage is displayed as a gap, not zero activity.</p><div id="monthlyFlowChart" class="trend-chart mt-4"></div></div>
+					<div><h3 class="headline text-lg font-bold">Total traffic flows</h3><p class="muted mt-1 text-sm">Missing coverage is displayed as a gap, not zero activity.</p><div id="monthlyFlowChart" class="trend-chart mt-4"></div></div>
 					<div><h3 class="headline text-lg font-bold">Observed and active connections</h3><p class="muted mt-1 text-sm">Observed connections are compared with month-spanning active connections.</p><div id="monthlyConnectionChart" class="trend-chart mt-4"></div></div>
 				</div>
 			</section>
@@ -468,7 +468,7 @@
 
 				<div class="panel rounded-3xl p-6" data-auto-collapsible="risky-services" data-collapse-title="Risky Services" data-image-section="risky-services" data-export-section="risky-services">
                     <p class="label">Risky Services</p>
-                    <h2 class="headline mt-2 text-2xl font-bold">Blocked traffic by high-risk service</h2>
+                    <h2 class="headline mt-2 text-2xl font-bold">Traffic by high-risk service</h2>
                     <div id="riskyServiceChart" class="mt-6 space-y-3"></div>
                 </div>
             </section>
@@ -476,7 +476,7 @@
             <section class="grid gap-8 xl:grid-cols-2">
 				<div class="panel rounded-3xl p-6" data-auto-collapsible="persistent-relationships" data-collapse-title="Persistent Relationships" data-image-section="persistent-relationships" data-export-section="persistent-relationships">
                     <p class="label">Persistent Relationships</p>
-                    <h2 class="headline mt-2 text-2xl font-bold">Blocked services that persist across months</h2>
+                    <h2 class="headline mt-2 text-2xl font-bold">Services that persist across months</h2>
                     <div id="persistentServices" class="mt-6 space-y-3"></div>
                 </div>
 
@@ -851,7 +851,7 @@
 			const monthInfo = trendMonthInfo(latestExecutivePayload);
 			const months = monthInfo.map(item => item.month);
 			const rollups = new Map(monthlyRollup(latestExecutivePayload.insights?.monthly_port_protocol || []).map(row => [row.month, row]));
-			renderLineChart('monthlyFlowChart', monthInfo, [{name: 'Blocked flows', color: trendColors[0], values: months.map(month => rollups.get(month)?.flows ?? 0)}]);
+			renderLineChart('monthlyFlowChart', monthInfo, [{name: 'Traffic flows', color: trendColors[0], values: months.map(month => rollups.get(month)?.flows ?? 0)}]);
 			renderLineChart('monthlyConnectionChart', monthInfo, [
 				{name: 'Observed connections', color: trendColors[2], values: months.map(month => rollups.get(month)?.unique_connections ?? 0)},
 				{name: 'Active connections', color: trendColors[1], values: months.map(month => rollups.get(month)?.active_connections ?? 0)}
@@ -1354,13 +1354,13 @@
 
             if (crossTalk[0]) {
                 findings.push({
-					title: `${crossTalk[0].source} to ${crossTalk[0].destination} is the busiest blocked ${primaryDimensionName} path`,
-                    body: `${formatNumber(crossTalk[0].flow_count)} flows, representing ${percentage(crossTalk[0].flow_count, totalFlows)} of all blocked traffic in the current dataset.`
+					title: `${crossTalk[0].source} to ${crossTalk[0].destination} is the busiest ${primaryDimensionName} traffic path`,
+					body: `${formatNumber(crossTalk[0].flow_count)} flows, representing ${percentage(crossTalk[0].flow_count, totalFlows)} of all traffic in the current dataset.`
                 });
             }
             if (risky[0]) {
                 findings.push({
-                    title: `${risky[0].name} is the top risky blocked service`,
+					title: `${risky[0].name} is the top risky service`,
                     body: `${formatNumber(risky[0].flow_count)} flows across ${formatNumber(risky[0].unique_connections)} unique connections.`
                 });
             }
@@ -1373,12 +1373,12 @@
             if (topExternal) {
                 findings.push({
                     title: `${topExternal.name} is the leading external or unmanaged destination`,
-                    body: `${formatNumber(topExternal.flow_count)} blocked flows were directed to this endpoint.`
+					body: `${formatNumber(topExternal.flow_count)} traffic flows were directed to this endpoint.`
                 });
             }
             if (latest) {
                 findings.push({
-                    title: `${latest.month} recorded ${formatNumber(latest.flows)} observed blocked flows`,
+					title: `${latest.month} recorded ${formatNumber(latest.flows)} observed traffic flows`,
                     body: `${formatNumber(latest.active_connections)} active month-spanning connections were present, ${previous ? `${signedPercentageChange(latest.flows, previous.flows)} versus ${previous.month}.` : 'with no prior month available for comparison.'}`
                 });
             }
@@ -1391,7 +1391,7 @@
             if (changeSet.latest && changeSet.newRows.length) {
                 const row = changeSet.newRows[0];
                 findings.push({
-                    title: `${row.protocol} ${row.port} emerged as a new blocked service pair in ${changeSet.latest.month}`,
+					title: `${row.protocol} ${row.port} emerged as a new service pair in ${changeSet.latest.month}`,
                     body: `${formatNumber(row.flow_count)} observed flows in the latest month with no presence in earlier months of the loaded dataset.`
                 });
             }
@@ -1459,7 +1459,7 @@
         function renderPersistentServices(rows) {
             const container = document.getElementById('persistentServices');
             if (!rows.length) {
-                container.innerHTML = '<div class="panel-soft rounded-2xl px-4 py-4 text-sm muted">No month-spanning blocked service patterns were identified in the loaded dataset.</div>';
+                container.innerHTML = '<div class="panel-soft rounded-2xl px-4 py-4 text-sm muted">No month-spanning service patterns were identified in the loaded dataset.</div>';
                 return;
             }
             container.innerHTML = '';
@@ -1576,13 +1576,13 @@
                     <div class="mt-4 grid gap-3 text-sm">
                         <div class="rounded-xl px-3 py-2 panel">
                             <div class="flex items-center justify-between">
-                                <span class="muted">Outbound blocked flows</span>
+                                <span class="muted">Outbound traffic flows</span>
                                 <span class="headline font-semibold">${formatNumber(row.outbound)}</span>
                             </div>
                         </div>
                         <div class="rounded-xl px-3 py-2 panel">
                             <div class="flex items-center justify-between">
-                                <span class="muted">Inbound blocked flows</span>
+                                <span class="muted">Inbound traffic flows</span>
                                 <span class="headline font-semibold">${formatNumber(row.inbound)}</span>
                             </div>
                         </div>
@@ -1613,7 +1613,8 @@
             const topRisky = risky[0];
             const monthlyRows = insights.monthly_port_protocol || [];
 
-            document.getElementById('fileLabel').innerText = `Current dataset: ${payload.fileName}`;
+			const scopeLabel = payload.traffic_scope === 'all' ? 'All policy decisions' : 'Blocked traffic only';
+            document.getElementById('fileLabel').innerText = `Current dataset: ${payload.fileName} · ${scopeLabel}`;
             document.getElementById('totalFlows').innerText = formatNumber(totalFlows);
             document.getElementById('totalConnections').innerText = formatNumber(totalConnections);
             document.getElementById('environmentCount').innerText = formatNumber(envCount);

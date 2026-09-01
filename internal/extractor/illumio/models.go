@@ -80,6 +80,8 @@ type TrafficFlow struct {
 	DstWorkloadHref string `json:"dst_workload_href"`
 	ProcessName     string `json:"process_name"`
 	DstFQDN         string `json:"dst_fqdn"`
+	PolicyDecision  string `json:"policy_decision"`
+	DraftDecision   string `json:"draft_policy_decision"`
 }
 
 type AsyncQueryRequest struct {
@@ -129,8 +131,10 @@ type Href struct {
 }
 
 type AsyncQueryStatus struct {
-	Href   string `json:"href"`
-	Status string `json:"status"`
+	Href         string `json:"href"`
+	Status       string `json:"status"`
+	MatchesCount int    `json:"matches_count"`
+	FlowsCount   int    `json:"flows_count"`
 }
 
 type AsyncJobResult struct {

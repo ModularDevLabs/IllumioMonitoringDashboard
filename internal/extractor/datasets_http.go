@@ -81,6 +81,7 @@ func handleDatasetLoad(w http.ResponseWriter, r *http.Request) {
 	state.DatasetID = dataset.ID
 	state.DatasetCoverage = dataset.Coverage
 	state.ReportMetadata = dataset.Report
+	state.TrafficScope = normalizedTrafficScope(dataset.Coverage.TrafficScope)
 	state.IsDone = true
 	state.IsCancelled = false
 	state.Mu.Unlock()

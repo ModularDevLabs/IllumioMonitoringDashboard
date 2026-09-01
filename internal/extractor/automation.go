@@ -41,6 +41,7 @@ type ReportTemplate struct {
 	ChunkInterval         string      `json:"chunk_interval"`
 	AnalysisPrimary       string      `json:"analysis_primary_label"`
 	AnalysisSecondary     string      `json:"analysis_secondary_label"`
+	TrafficScope          string      `json:"traffic_scope"`
 	RetentionCount        int         `json:"retention_count"`
 	GenerateExecutiveHTML bool        `json:"generate_executive_html"`
 	GenerateExecutivePDF  bool        `json:"generate_executive_pdf"`
@@ -394,6 +395,7 @@ func templateToConfig(template ReportTemplate, runID string, now time.Time) Conf
 		SavePath: template.SavePath, FileName: expandFileNamePattern(template.FileNamePattern, template, now, runID),
 		Days: template.Days, ChunkIntvl: template.ChunkInterval,
 		AnalysisPrimary: template.AnalysisPrimary, AnalysisSecondary: template.AnalysisSecondary,
+		TrafficScope: normalizedTrafficScope(template.TrafficScope),
 	}
 }
 
@@ -425,6 +427,11 @@ func validateTemplate(template *ReportTemplate) error {
 		return err
 	}
 	template.AnalysisPrimary, template.AnalysisSecondary, _ = normalizeAnalysisLabelKeys(template.AnalysisPrimary, template.AnalysisSecondary)
+	trafficScope, err := normalizeTrafficScope(template.TrafficScope)
+	if err != nil {
+		return err
+	}
+	template.TrafficScope = trafficScope
 	chunkDuration, _, err := parseChunkInterval(template.ChunkInterval)
 	if err != nil {
 		return err

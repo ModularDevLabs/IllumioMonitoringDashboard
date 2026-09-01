@@ -357,10 +357,14 @@ func (manager *AutomationManager) deliverCompletedRun(ctx context.Context, runID
 		return
 	}
 
+	flowDescription := "blocked flows"
+	if normalizedTrafficScope(template.TrafficScope) == trafficScopeAll {
+		flowDescription = "traffic flows across all policy decisions"
+	}
 	message := deliveryMessage{
 		RunID: runID, Title: template.Name + " completed",
-		Text: fmt.Sprintf("%s completed with %d blocked flows across %d unique connections. External/unmanaged flows: %d. New relationships: %d. New services: %d.",
-			template.Name, metrics.TotalFlows, metrics.UniqueConnections, metrics.ExternalFlows, len(metrics.NewRelationships), len(metrics.NewServices)),
+		Text: fmt.Sprintf("%s completed with %d %s across %d unique connections. External/unmanaged flows: %d. New relationships: %d. New services: %d.",
+			template.Name, metrics.TotalFlows, flowDescription, metrics.UniqueConnections, metrics.ExternalFlows, len(metrics.NewRelationships), len(metrics.NewServices)),
 		ArtifactPath: artifactPath, AdditionalArtifactPaths: additionalArtifactPaths, Metrics: metrics,
 	}
 	manager.deliverToTemplateDestinations(ctx, runID, template, message)

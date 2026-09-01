@@ -52,6 +52,7 @@ type DatasetOverlap struct {
 
 type DatasetCoverage struct {
 	Source              string                `json:"source"`
+	TrafficScope        string                `json:"traffic_scope"`
 	Files               []DatasetFileCoverage `json:"files"`
 	FirstDetected       time.Time             `json:"first_detected,omitempty"`
 	LastDetected        time.Time             `json:"last_detected,omitempty"`
@@ -289,6 +290,7 @@ func (manager *DatasetManager) delete(id string) error {
 }
 
 func normalizeCoverage(coverage DatasetCoverage) DatasetCoverage {
+	coverage.TrafficScope = normalizedTrafficScope(coverage.TrafficScope)
 	monthSet := map[string]bool{}
 	for _, file := range coverage.Files {
 		for _, month := range file.Months {

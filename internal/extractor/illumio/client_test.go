@@ -2,6 +2,7 @@ package illumio
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -28,6 +29,13 @@ func TestFetchDayOfTrafficParsesTimestampRangeAndCleansUp(t *testing.T) {
 		body := `{}`
 		switch {
 		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/traffic_flows/async_queries"):
+			var query AsyncQueryRequest
+			if err := json.NewDecoder(req.Body).Decode(&query); err != nil {
+				t.Fatalf("decode query: %v", err)
+			}
+			if len(query.PolicyDecisions) != 1 || query.PolicyDecisions[0] != "blocked" {
+				t.Fatalf("policy decisions = %#v, want blocked-only default", query.PolicyDecisions)
+			}
 			status = http.StatusCreated
 			body = `{"href":"/api/v2/orgs/1/traffic_flows/async_queries/query-123"}`
 		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/query-123/download"):
@@ -36,6 +44,7 @@ func TestFetchDayOfTrafficParsesTimestampRangeAndCleansUp(t *testing.T) {
 				"dst":{"ip":"10.0.0.2","workload":{"href":"/workloads/2","labels":[{"key":"app","value":"API"}]}},
 				"service":{"port":443,"proto":6},
 				"num_connections":7,
+				"policy_decision":"blocked",
 				"timestamp_range":{"first_detected":"2026-03-01T01:02:03Z","last_detected":"2026-03-01T04:05:06Z"}
 			}]`
 		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/query-123"):
@@ -63,8 +72,79 @@ func TestFetchDayOfTrafficParsesTimestampRangeAndCleansUp(t *testing.T) {
 	if got, want := flows[0].LastDetected, time.Date(2026, 3, 1, 4, 5, 6, 0, time.UTC); !got.Equal(want) {
 		t.Fatalf("LastDetected = %v, want %v", got, want)
 	}
+	if flows[0].PolicyDecision != "blocked" {
+		t.Fatalf("PolicyDecision = %q, want blocked", flows[0].PolicyDecision)
+	}
 	if !deleted {
 		t.Fatal("FetchDayOfTraffic did not delete the asynchronous query")
+	}
+}
+
+func TestFetchDayOfTrafficAllScopeSendsEmptyDecisionFilterAndPreservesDecision(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient("https://pce.example.com", "1", "key", "secret")
+	client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		status := http.StatusOK
+		body := `{}`
+		switch {
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/traffic_flows/async_queries"):
+			var query AsyncQueryRequest
+			if err := json.NewDecoder(req.Body).Decode(&query); err != nil {
+				t.Fatalf("decode query: %v", err)
+			}
+			if query.PolicyDecisions == nil || len(query.PolicyDecisions) != 0 {
+				t.Fatalf("policy decisions = %#v, want a non-nil empty all-traffic filter", query.PolicyDecisions)
+			}
+			status = http.StatusCreated
+			body = `{"href":"/api/v2/orgs/1/traffic_flows/async_queries/query-all"}`
+		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/query-all"):
+			body = `{"status":"completed","matches_count":1,"flows_count":1}`
+		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/query-all/download"):
+			body = `[{"src":{"ip":"10.0.0.1"},"dst":{"ip":"10.0.0.2"},"service":{"port":443,"proto":6},"num_connections":3,"policy_decision":"allowed","draft_policy_decision":"potentially_blocked","timestamp_range":{"first_detected":"2026-03-01T01:02:03Z","last_detected":"2026-03-01T01:03:03Z"}}]`
+		case req.Method == http.MethodDelete && strings.HasSuffix(req.URL.Path, "/query-all"):
+			status = http.StatusNoContent
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+
+	flows, err := client.FetchDayOfTraffic(context.Background(), AsyncQueryRequest{
+		StartDate: "2026-03-01T00:00:00Z", EndDate: "2026-03-02T00:00:00Z", PolicyDecisions: []string{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("FetchDayOfTraffic: %v", err)
+	}
+	if len(flows) != 1 || flows[0].PolicyDecision != "allowed" || flows[0].DraftDecision != "potentially_blocked" {
+		t.Fatalf("flows = %#v, want preserved allowed and potentially_blocked decisions", flows)
+	}
+}
+
+func TestFetchDayOfTrafficRejectsTruncatedResult(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient("https://pce.example.com", "1", "key", "secret")
+	client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		status := http.StatusOK
+		body := `{}`
+		switch {
+		case req.Method == http.MethodPost:
+			status = http.StatusCreated
+			body = `{"href":"/api/v2/orgs/1/traffic_flows/async_queries/query-large"}`
+		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/query-large"):
+			body = `{"status":"completed","matches_count":250001,"flows_count":200000}`
+		case req.Method == http.MethodDelete && strings.HasSuffix(req.URL.Path, "/query-large"):
+			status = http.StatusNoContent
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+
+	_, err := client.FetchDayOfTraffic(context.Background(), AsyncQueryRequest{StartDate: "2026-03-01T00:00:00Z", PolicyDecisions: []string{}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "200000-row maximum") {
+		t.Fatalf("error = %v, want explicit truncation error", err)
 	}
 }
 

@@ -749,7 +749,8 @@
             const totalFlows = summary.reduce((sum, row) => sum + (row.flow_count || 0), 0);
             const totalConnections = summary.reduce((sum, row) => sum + (row.unique_connections || 0), 0);
 
-            document.getElementById('fileLabel').innerText = `Latest CSV: ${payload.fileName}`;
+			const scopeLabel = payload.traffic_scope === 'all' ? 'All policy decisions' : 'Blocked traffic only';
+            document.getElementById('fileLabel').innerText = `Latest CSV: ${payload.fileName} · ${scopeLabel}`;
             document.getElementById('rowCount').innerText = formatNumber(summary.length);
             document.getElementById('totalFlows').innerText = formatNumber(totalFlows);
             document.getElementById('totalConnections').innerText = formatNumber(totalConnections);

@@ -16,6 +16,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Uses one PCE-inspired application shell across monitoring and extractor pages, with grouped/collapsible left navigation and a responsive mobile drawer
   - Shares a persistent light/dark preference and active-page context across both functions
   - Includes extraction, multi-CSV analytics, configurable label dimensions, heatmaps, executive summaries, datasets, templates, scheduling, and artifact delivery
+  - Supports blocked-only or all-policy-decision extraction; all-traffic exports preserve active and draft policy decisions on every CSV row
   - Uses independent PCE profiles and API credentials; dashboard collector credentials are never reused by the extractor
   - Remains localhost-only even when the Monitoring Dashboard is configured for network hosting
   - Namespaces extractor pages and APIs so existing dashboard routes remain unchanged
@@ -122,6 +123,9 @@ This development build embeds the Blocked Traffic Extractor as an isolated modul
 - Extractor templates, delivery destinations, run history, and saved datasets remain in that same dedicated extractor directory.
 - The integration is based on Blocked Traffic Extractor `v1.5.0`.
 - PCE operations require a saved extractor profile, and non-loopback PCE origins require HTTPS.
+- Manual runs and automation templates can select **Blocked traffic only** (the backward-compatible default) or **All traffic**. All-traffic queries include allowed, potentially blocked, blocked, and unknown decisions.
+- All-traffic CSVs add `Policy Decision`, `Draft Policy Decision`, and `Traffic Scope` columns. Imports use these fields to retain scope and keep different decision rows distinct while preserving the established endpoint/service-based unique-connection definition.
+- A query that reaches the PCE's 200,000-row result ceiling is rejected as incomplete with guidance to select a smaller chunk interval.
 - Artifact reads and writes are root-confined to prevent path and symlink traversal.
 
 See [BLOCKED_TRAFFIC_INTEGRATION.md](BLOCKED_TRAFFIC_INTEGRATION.md) for route, storage, security, and maintenance details.
