@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Automation - Illumio Blocked Traffic Extractor</title>
+    <link rel="stylesheet" href="/blocked-traffic/assets/tailwind.css">
+    <style>
+        :root {
+            --bg: #111827;
+            --shell: #1f2937;
+            --panel-soft: rgba(17, 24, 39, 0.55);
+            --field: #374151;
+            --field-border: #4b5563;
+            --border: #4b5563;
+            --text: #f3f4f6;
+            --muted: #9ca3af;
+            --title: #60a5fa;
+            --accent: #10b981;
+            --accent-strong: #059669;
+            --secondary: #4f46e5;
+            --secondary-text: #ffffff;
+            --warn: #f59e0b;
+            --danger: #ef4444;
+        }
+        body[data-theme="illumio"] {
+            --bg: #1a2c32;
+            --shell: #24393f;
+            --panel-soft: rgba(36, 57, 63, 0.78);
+            --field: #313638;
+            --field-border: #f97607;
+            --border: #356069;
+            --text: #ffffff;
+            --muted: #d6d7d7;
+            --title: #ff5500;
+            --accent: #ff5500;
+            --accent-strong: #ff5500;
+            --secondary: #94cee5;
+            --secondary-text: #1a2c32;
+            --warn: #ffa22f;
+            --danger: #88132e;
+        }
+        body[data-theme="illumio-light"] {
+            --bg: #f7f4ee;
+            --shell: rgba(255, 255, 255, 0.98);
+            --panel-soft: rgba(242, 237, 226, 0.88);
+            --field: #ffffff;
+            --field-border: #f97607;
+            --border: #d1bea0;
+            --text: #313638;
+            --muted: #6f7274;
+            --title: #ff5500;
+            --accent: #ff5500;
+            --accent-strong: #ff5500;
+            --secondary: #2d454c;
+            --secondary-text: #ffffff;
+            --warn: #ffa22f;
+            --danger: #88132e;
+        }
+        body {
+            background: linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg) 82%, black));
+            color: var(--text);
+            font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+            transition: background 200ms ease, color 200ms ease;
+        }
+        .panel { background:var(--shell); border-color:var(--border) !important; color:var(--text); }
+        .soft { background:var(--panel-soft); border-color:var(--border) !important; color:var(--text); }
+        .muted { color:var(--muted) !important; }
+        .title { color:var(--title) !important; }
+        input, select, textarea { background:var(--field); border:1px solid var(--field-border); color:var(--text); }
+        input::placeholder, textarea::placeholder { color:var(--muted); }
+        input:focus, select:focus, textarea:focus { outline:2px solid color-mix(in srgb,var(--accent) 60%,transparent); }
+        button.primary { background:var(--accent); color:#ffffff; }
+        button.secondary { background:var(--secondary); color:var(--secondary-text); }
+        button.danger { background:var(--danger); color:#ffffff; }
+        .theme-button { border:1px solid var(--border); background:var(--panel-soft); color:var(--muted); }
+        .theme-button.active { background:color-mix(in srgb,var(--accent) 14%,transparent); color:var(--text); border-color:var(--accent); }
+        #messageBar { background:var(--panel-soft); color:var(--text); }
+        .status-completed { color:var(--accent); } .status-failed { color:var(--danger); } .status-running { color:var(--title); } .status-queued { color:var(--warn); }
+        summary { cursor:pointer; }
+    </style>
+    <link rel="stylesheet" href="/blocked-traffic/assets/app-shell.css">
+    <link rel="stylesheet" href="/static/product-shell.css">
+    <script src="/static/product-shell.js" defer></script>
+</head>
+<body data-theme="default" class="min-h-screen px-4 py-5 md:px-6 md:py-8 xl:px-8">
+    <script src="/blocked-traffic/assets/theme-init.js"></script>
+    <main class="mx-auto max-w-[118rem] space-y-8">
+        <header class="app-header flex flex-col gap-4 2xl:flex-row 2xl:justify-between">
+            <div>
+                <p class="title text-xs uppercase tracking-[0.35em]">Local Automation</p>
+                <h1 class="mt-2 text-3xl font-bold md:text-4xl">Report Templates & Delivery</h1>
+                <p class="muted mt-2 text-sm">Create reusable reports, schedule them, compare runs, and deliver artifacts without exposing the local web interface.</p>
+            </div>
+            <div class="app-header-actions">
+                <nav class="app-nav" aria-label="Primary navigation">
+                    <a href="/" class="app-nav-link">Monitoring Dashboard</a>
+                    <a href="/blocked-traffic/" class="app-nav-link">Extractor</a>
+                    <a href="/blocked-traffic/summary" class="app-nav-link">Analytics</a>
+                    <a href="/blocked-traffic/heatmaps" class="app-nav-link">Heatmaps</a>
+                    <a href="/blocked-traffic/executive-summary" class="app-nav-link">Executive</a>
+                    <a href="/blocked-traffic/automation" class="app-nav-link" aria-current="page">Automation</a>
+                </nav>
+                <div class="theme-switcher" role="group" aria-label="Color theme">
+                    <button id="defaultThemeBtn" data-theme-option="default" aria-pressed="false" type="button" class="theme-button">Dark</button>
+                    <button id="illumioThemeBtn" data-theme-option="illumio" aria-pressed="false" type="button" class="theme-button">Illumio Dark</button>
+                    <button id="illumioLightThemeBtn" data-theme-option="illumio-light" aria-pressed="false" type="button" class="theme-button">Illumio Light</button>
+                </div>
+            </div>
+        </header>
+
+        <div id="messageBar" class="hidden rounded-xl border px-4 py-3 text-sm"></div>
+
+        <section class="panel rounded-2xl border p-5" data-auto-collapsible="report-templates" data-collapse-title="Report Templates">
+            <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div>
+                    <h2 class="text-xl font-bold">Report Templates</h2>
+                    <p class="muted mt-1 text-sm">Templates reference a saved PCE profile but contain no PCE credentials.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <select id="templateSelect" class="min-w-64 rounded-lg px-3 py-2 text-sm"><option value="">New template</option></select>
+                    <button id="newTemplateBtn" type="button" class="soft rounded-lg border px-4 py-2 text-sm font-semibold">New</button>
+                    <button id="duplicateTemplateBtn" type="button" class="soft rounded-lg border px-4 py-2 text-sm font-semibold">Duplicate</button>
+                    <button id="exportTemplateBtn" type="button" class="soft rounded-lg border px-4 py-2 text-sm font-semibold">Export</button>
+                    <label class="soft cursor-pointer rounded-lg border px-4 py-2 text-sm font-semibold">Import<input id="importTemplateFile" type="file" accept="application/json,.json" class="hidden"></label>
+                    <button id="deleteTemplateBtn" type="button" class="danger rounded-lg px-4 py-2 text-sm font-semibold">Delete</button>
+                </div>
+            </div>
+
+            <form id="templateForm" class="mt-6 space-y-6">
+                <input id="templateId" type="hidden">
+                <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                    <label class="text-sm">Template Name<input id="templateName" required maxlength="120" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="Weekly BU Report"></label>
+                    <label class="text-sm">PCE Profile<select id="templateProfile" required class="mt-1 w-full rounded-lg px-3 py-2"></select></label>
+                    <label class="text-sm">Traffic Scope<select id="templateTrafficScope" class="mt-1 w-full rounded-lg px-3 py-2"><option value="blocked">Blocked traffic only</option><option value="all">All policy decisions</option></select></label>
+                    <label class="text-sm">Primary Dimension<input id="templatePrimary" class="mt-1 w-full rounded-lg px-3 py-2" value="env"></label>
+                    <label class="text-sm">Secondary Dimension<input id="templateSecondary" class="mt-1 w-full rounded-lg px-3 py-2" value="app"></label>
+                </div>
+                <div class="grid gap-4 md:grid-cols-2">
+                    <label class="text-sm">Sources<input id="templateSources" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="App: Payments"></label>
+                    <label class="text-sm">Destinations<input id="templateDestinations" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="Role: Database"></label>
+                    <label class="text-sm">Source Exclusions<input id="templateExcludeSources" class="mt-1 w-full rounded-lg px-3 py-2"></label>
+                    <label class="text-sm">Destination Exclusions<input id="templateExcludeDestinations" class="mt-1 w-full rounded-lg px-3 py-2"></label>
+					<label class="text-sm">Services<input id="templateServices" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="TCP:445, SSH"></label>
+					<label class="text-sm">Service Exclusions<input id="templateExcludeServices" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="DNS, TCP:22"></label>
+                </div>
+                <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                    <label class="text-sm xl:col-span-2">Output Folder<input id="templateSavePath" required class="mt-1 w-full rounded-lg px-3 py-2" placeholder="/absolute/report/path"></label>
+                    <label class="text-sm xl:col-span-2">Filename Pattern<input id="templateFilePattern" class="mt-1 w-full rounded-lg px-3 py-2" value="blocked-{template}-{date}-{time}.csv"><span class="muted mt-1 block text-xs">Tokens: {template}, {date}, {time}, {timestamp}, {run_id}</span></label>
+                    <label class="text-sm">Keep Artifacts<input id="templateRetention" type="number" min="1" max="1000" value="20" class="mt-1 w-full rounded-lg px-3 py-2"></label>
+                    <label class="text-sm">Trailing Days<input id="templateDays" type="number" min="1" value="90" class="mt-1 w-full rounded-lg px-3 py-2"></label>
+                    <label class="text-sm">Chunk Interval<select id="templateChunk" class="mt-1 w-full rounded-lg px-3 py-2"><option value="24h">1 day</option><option value="12h">12 hours</option><option value="6h">6 hours</option><option value="3h">3 hours</option><option value="1h">1 hour</option><option value="30m">30 minutes</option><option value="10m">10 minutes</option><option value="5m">5 minutes</option></select></label>
+                </div>
+
+				<details open class="soft rounded-xl border p-4">
+					<summary class="font-semibold">Executive Report Artifacts</summary>
+					<p class="muted mt-2 text-xs">Generate presentation-ready artifacts after the CSV and deliver each selected file to the template destinations.</p>
+					<div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+						<label class="flex items-center gap-2 text-sm"><input id="templateExecutiveHTML" type="checkbox" checked> Generate self-contained HTML</label>
+						<label class="flex items-center gap-2 text-sm"><input id="templateExecutivePDF" type="checkbox" checked> Generate PDF</label>
+						<label class="text-sm xl:col-span-2">Report Title<input id="templateReportTitle" maxlength="160" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="Blocked Traffic Executive Summary"></label>
+						<label class="text-sm">Customer Name<input id="templateReportCustomer" maxlength="160" class="mt-1 w-full rounded-lg px-3 py-2"></label>
+						<label class="text-sm">Prepared By<input id="templateReportPrepared" maxlength="160" class="mt-1 w-full rounded-lg px-3 py-2"></label>
+						<label class="text-sm md:col-span-2">Report Notes<textarea id="templateReportNotes" maxlength="4000" rows="3" class="mt-1 w-full rounded-lg px-3 py-2"></textarea></label>
+					</div>
+				</details>
+
+                <details open class="soft rounded-xl border p-4">
+                    <summary class="font-semibold">Schedule</summary>
+                    <div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                        <label class="flex items-center gap-2 text-sm"><input id="scheduleEnabled" type="checkbox"> Enable schedule</label>
+                        <label class="text-sm">Frequency<select id="scheduleKind" class="mt-1 w-full rounded-lg px-3 py-2"><option value="daily">Daily</option><option value="weekdays">Weekdays</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="cron">Advanced cron</option></select></label>
+                        <label class="text-sm">Time<input id="scheduleTime" type="time" value="06:00" class="mt-1 w-full rounded-lg px-3 py-2"></label>
+                        <label class="text-sm">Timezone<input id="scheduleTimezone" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="America/Chicago"></label>
+                        <label class="text-sm">Weekday<select id="scheduleWeekday" class="mt-1 w-full rounded-lg px-3 py-2"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
+                        <label class="text-sm">Day of Month<input id="scheduleDay" type="number" min="1" max="28" value="1" class="mt-1 w-full rounded-lg px-3 py-2"></label>
+                        <label class="text-sm xl:col-span-2">Cron Expression<input id="scheduleCron" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="0 6 * * 1"></label>
+                        <label class="text-sm">After Missed Run<select id="scheduleMissed" class="mt-1 w-full rounded-lg px-3 py-2"><option value="run_once">Run once after startup</option><option value="skip">Skip missed run</option></select></label>
+                        <label class="text-sm">If Already Queued<select id="scheduleOverlap" class="mt-1 w-full rounded-lg px-3 py-2"><option value="queue">Queue another</option><option value="skip">Skip overlap</option></select></label>
+                    </div>
+                    <p id="nextRunLabel" class="muted mt-3 text-xs">Next run will be calculated after saving.</p>
+                </details>
+
+                <details open class="soft rounded-xl border p-4">
+                    <summary class="font-semibold">Delivery & Alert Conditions</summary>
+                    <div class="mt-4 grid gap-5 xl:grid-cols-2">
+                        <div>
+                            <p class="mb-2 text-sm font-semibold">Delivery Destinations</p>
+                            <div id="templateDestinationChoices" class="grid gap-2 sm:grid-cols-2"></div>
+                            <p class="muted mt-2 text-xs">Configure and test destinations below before attaching them to a template.</p>
+                        </div>
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            <label class="text-sm">Delivery Mode<select id="alertMode" class="mt-1 w-full rounded-lg px-3 py-2"><option value="always">Every successful run</option><option value="on_change">Only when data changes</option><option value="threshold">Only when thresholds match</option></select></label>
+                            <label class="text-sm">Minimum Flows<input id="alertMinimumFlows" type="number" min="0" value="0" class="mt-1 w-full rounded-lg px-3 py-2"></label>
+                            <label class="text-sm">Flow Change %<input id="alertFlowChange" type="number" min="0" step="0.1" value="0" class="mt-1 w-full rounded-lg px-3 py-2"></label>
+                            <div class="space-y-2 text-sm">
+                                <label class="flex items-center gap-2"><input id="alertNewRelationships" type="checkbox" checked> New relationships</label>
+                                <label class="flex items-center gap-2"><input id="alertNewServices" type="checkbox" checked> New services</label>
+                                <label class="flex items-center gap-2"><input id="alertExternal" type="checkbox"> External traffic</label>
+                                <label class="flex items-center gap-2"><input id="alertFailure" type="checkbox" checked> Delivery on failure</label>
+                                <label class="flex items-center gap-2"><input id="alertManual" type="checkbox"> Deliver manual runs</label>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <div class="flex flex-wrap gap-3">
+                    <button type="submit" class="primary rounded-lg px-5 py-3 font-semibold">Save Template</button>
+                    <button id="runTemplateBtn" type="button" class="secondary rounded-lg px-5 py-3 font-semibold">Queue Manual Run</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="panel rounded-2xl border p-5" data-auto-collapsible="delivery-destinations" data-collapse-title="Delivery Destinations">
+            <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div><h2 class="text-xl font-bold">Delivery Destinations</h2><p class="muted mt-1 text-sm">Secrets are stored locally with owner-only permissions and are never returned to the browser.</p></div>
+                <div class="flex gap-2"><select id="destinationSelect" class="min-w-64 rounded-lg px-3 py-2 text-sm"><option value="">New destination</option></select><button id="newDestinationBtn" type="button" class="soft rounded-lg border px-4 py-2 text-sm font-semibold">New</button><button id="deleteDestinationBtn" type="button" class="danger rounded-lg px-4 py-2 text-sm font-semibold">Delete</button></div>
+            </div>
+            <form id="destinationForm" class="mt-6 space-y-5">
+                <input id="destinationId" type="hidden">
+                <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <label class="text-sm">Name<input id="destinationName" required class="mt-1 w-full rounded-lg px-3 py-2"></label>
+                    <label class="text-sm">Type<select id="destinationType" class="mt-1 w-full rounded-lg px-3 py-2"><option value="generic_webhook">Generic Webhook</option><option value="slack_webhook">Slack Webhook (message)</option><option value="slack_api">Slack App (CSV upload)</option><option value="teams_workflow">Teams Workflow</option><option value="email">Email / SMTP</option><option value="shared_folder">Shared Folder</option><option value="sftp">SFTP</option></select></label>
+                    <label class="flex items-center gap-2 text-sm"><input id="destinationEnabled" type="checkbox" checked> Enabled</label>
+                </div>
+                <div id="webhookFields" class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <label class="text-sm xl:col-span-2">Webhook URL<input id="destinationURL" type="password" autocomplete="new-password" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="Stored URLs are not returned"></label>
+                    <label class="text-sm">Payload Mode<select id="destinationWebhookMode" class="mt-1 w-full rounded-lg px-3 py-2"><option value="notification">Notification only</option><option value="base64_file">JSON + base64 file</option><option value="multipart">Multipart file upload</option></select></label>
+                    <label class="flex items-center gap-2 text-sm"><input id="destinationAllowPrivate" type="checkbox"> Allow private-network target</label>
+                    <label class="text-sm md:col-span-2 xl:col-span-4">HTTP Headers (JSON)<textarea id="destinationHeaders" rows="2" class="mt-1 w-full rounded-lg px-3 py-2" placeholder='{"Authorization":"Bearer ..."}'></textarea></label>
+                </div>
+                <div id="slackApiFields" class="hidden grid gap-4 md:grid-cols-2">
+                    <label class="text-sm">Slack Bot Token<input id="destinationToken" type="password" autocomplete="new-password" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="Stored tokens are not returned"></label>
+                    <label class="text-sm">Channel ID<input id="destinationChannel" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="C0123456789"></label>
+                </div>
+                <div id="smtpFields" class="hidden grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <label class="text-sm">SMTP Host<input id="smtpHost" class="mt-1 w-full rounded-lg px-3 py-2"></label><label class="text-sm">Port<input id="smtpPort" type="number" value="587" class="mt-1 w-full rounded-lg px-3 py-2"></label><label class="text-sm">Username<input id="smtpUsername" class="mt-1 w-full rounded-lg px-3 py-2"></label><label class="text-sm">Password<input id="smtpPassword" type="password" autocomplete="new-password" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="Stored passwords are not returned"></label><label class="text-sm">From<input id="smtpFrom" type="email" class="mt-1 w-full rounded-lg px-3 py-2"></label><label class="text-sm xl:col-span-2">Recipients (comma separated)<input id="smtpTo" class="mt-1 w-full rounded-lg px-3 py-2"></label><label class="flex items-center gap-2 text-sm"><input id="smtpTLS" type="checkbox" checked> Require TLS</label>
+                </div>
+                <div id="folderFields" class="hidden"><label class="text-sm">Absolute Shared Folder Path<input id="folderPath" class="mt-1 w-full rounded-lg px-3 py-2"></label></div>
+                <div id="sftpFields" class="hidden grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <label class="text-sm">Host<input id="sftpHost" class="mt-1 w-full rounded-lg px-3 py-2"></label><label class="text-sm">Port<input id="sftpPort" type="number" value="22" class="mt-1 w-full rounded-lg px-3 py-2"></label><label class="text-sm">Username<input id="sftpUsername" class="mt-1 w-full rounded-lg px-3 py-2"></label><label class="text-sm">Password<input id="sftpPassword" type="password" autocomplete="new-password" class="mt-1 w-full rounded-lg px-3 py-2"></label><label class="text-sm xl:col-span-2">Private Key Path<input id="sftpKeyPath" class="mt-1 w-full rounded-lg px-3 py-2"></label><label class="text-sm xl:col-span-2">Remote Directory<input id="sftpRemotePath" class="mt-1 w-full rounded-lg px-3 py-2"></label><label class="text-sm xl:col-span-4">Pinned Host Public Key<input id="sftpHostKey" class="mt-1 w-full rounded-lg px-3 py-2" placeholder="ssh-ed25519 AAAA..."></label>
+                </div>
+                <div class="flex gap-3"><button type="submit" class="primary rounded-lg px-5 py-3 font-semibold">Save Destination</button><button id="testDestinationBtn" type="button" class="secondary rounded-lg px-5 py-3 font-semibold">Test Saved Destination</button></div>
+            </form>
+        </section>
+
+        <section class="panel rounded-2xl border p-5" data-auto-collapsible="run-history" data-collapse-title="Run History">
+            <div class="flex items-center justify-between"><div><h2 class="text-xl font-bold">Run History</h2><p class="muted mt-1 text-sm">Queued and scheduled runs survive restarts. The most recent 200 runs are shown.</p></div><button id="refreshBtn" type="button" class="soft rounded-lg border px-4 py-2 text-sm font-semibold">Refresh</button></div>
+            <div class="mt-5 overflow-auto"><table class="min-w-full text-left text-sm"><thead class="muted border-b"><tr><th class="px-3 py-3">Template</th><th class="px-3 py-3">Trigger</th><th class="px-3 py-3">Status</th><th class="px-3 py-3">Queued</th><th class="px-3 py-3">Flows</th><th class="px-3 py-3">Changes</th><th class="px-3 py-3">Delivery</th><th class="px-3 py-3">Artifact</th></tr></thead><tbody id="runHistoryBody"></tbody></table></div>
+        </section>
+    </main>
+
+    <script src="/blocked-traffic/assets/app-version.js"></script>
+    <script src="/blocked-traffic/assets/collapsible.js"></script>
+    <script>
+        let automationState = { templates: [], destinations: [], runs: [], timezone: '' };
+        let profiles = {};
+        let refreshTimer = null;
+
+        function applyTheme(theme) {
+            document.body.dataset.theme = theme;
+            localStorage.setItem('ittTheme', theme);
+            document.getElementById('defaultThemeBtn').classList.toggle('active', theme === 'default');
+            document.getElementById('illumioThemeBtn').classList.toggle('active', theme === 'illumio');
+            document.getElementById('illumioLightThemeBtn').classList.toggle('active', theme === 'illumio-light');
+            document.querySelectorAll('[data-theme-option]').forEach((button) => {
+                button.setAttribute('aria-pressed', String(button.dataset.themeOption === theme));
+            });
+        }
+
+        function showMessage(message, isError = false) {
+            const bar = document.getElementById('messageBar');
+            bar.classList.remove('hidden');
+            bar.textContent = message;
+            bar.style.borderColor = isError ? 'var(--danger)' : 'var(--accent)';
+            window.clearTimeout(showMessage.timer);
+            showMessage.timer = window.setTimeout(() => bar.classList.add('hidden'), 8000);
+        }
+
+        async function requestJSON(url, options = {}) {
+            const response = await fetch(url, options);
+            const data = await response.json();
+            if (!response.ok || data.success === false) throw new Error(data.error || response.statusText);
+            return data;
+        }
+
+        async function loadProfiles() {
+            profiles = await (await fetch('/blocked-traffic/api/profiles/get')).json();
+            const select = document.getElementById('templateProfile');
+            select.replaceChildren();
+            const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'Select a saved PCE'; select.appendChild(empty);
+            Object.keys(profiles).sort().forEach(name => { const option = document.createElement('option'); option.value = name; option.textContent = name; select.appendChild(option); });
+        }
+
+        async function loadState(preserveSelections = true) {
+            const templateID = preserveSelections ? document.getElementById('templateSelect').value : '';
+            const destinationID = preserveSelections ? document.getElementById('destinationSelect').value : '';
+            automationState = await requestJSON(`/blocked-traffic/api/automation/state?ts=${Date.now()}`, { cache: 'no-store' });
+            renderTemplateSelect(templateID);
+            renderDestinationSelect(destinationID);
+            renderDestinationChoices();
+            renderRunHistory();
+        }
+
+        function renderTemplateSelect(selectedID) {
+            const select = document.getElementById('templateSelect');
+            select.replaceChildren();
+            const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'New template'; select.appendChild(empty);
+            automationState.templates.forEach(template => { const option = document.createElement('option'); option.value = template.id; option.textContent = template.name; select.appendChild(option); });
+            if (automationState.templates.some(template => template.id === selectedID)) select.value = selectedID;
+        }
+
+        function renderDestinationSelect(selectedID) {
+            const select = document.getElementById('destinationSelect');
+            select.replaceChildren();
+            const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'New destination'; select.appendChild(empty);
+            automationState.destinations.forEach(destination => { const option = document.createElement('option'); option.value = destination.id; option.textContent = destination.name; select.appendChild(option); });
+            if (automationState.destinations.some(destination => destination.id === selectedID)) select.value = selectedID;
+        }
+
+        function renderDestinationChoices(selected = null) {
+            const selectedIDs = selected || new Set(Array.from(document.querySelectorAll('[data-destination-choice]:checked')).map(input => input.value));
+            const container = document.getElementById('templateDestinationChoices');
+            container.replaceChildren();
+            if (!automationState.destinations.length) { const text = document.createElement('p'); text.className = 'muted text-sm'; text.textContent = 'No destinations configured.'; container.appendChild(text); return; }
+            automationState.destinations.forEach(destination => {
+                const label = document.createElement('label'); label.className = 'soft flex items-center gap-2 rounded-lg border px-3 py-2 text-sm';
+                const input = document.createElement('input'); input.type = 'checkbox'; input.value = destination.id; input.dataset.destinationChoice = 'true'; input.checked = selectedIDs.has(destination.id);
+                label.append(input, document.createTextNode(`${destination.name} (${destination.type})${destination.enabled ? '' : ' — disabled'}`)); container.appendChild(label);
+            });
+        }
+
+        function resetTemplateForm() {
+            document.getElementById('templateForm').reset();
+            document.getElementById('templateId').value = '';
+            document.getElementById('templatePrimary').value = 'env'; document.getElementById('templateSecondary').value = 'app';
+			document.getElementById('templateTrafficScope').value = 'blocked';
+            document.getElementById('templateDays').value = 90; document.getElementById('templateChunk').value = '24h';
+            document.getElementById('templateRetention').value = 20; document.getElementById('templateFilePattern').value = 'blocked-{template}-{date}-{time}.csv';
+			document.getElementById('templateExecutiveHTML').checked = true; document.getElementById('templateExecutivePDF').checked = true;
+            document.getElementById('scheduleTime').value = '06:00'; document.getElementById('scheduleTimezone').value = automationState.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+            document.getElementById('scheduleMissed').value = 'run_once'; document.getElementById('scheduleOverlap').value = 'queue';
+            document.getElementById('alertMode').value = 'always'; document.getElementById('alertNewRelationships').checked = true; document.getElementById('alertNewServices').checked = true; document.getElementById('alertFailure').checked = true;
+            renderDestinationChoices(new Set()); document.getElementById('nextRunLabel').textContent = 'Next run will be calculated after saving.';
+        }
+
+        function profileToNewTemplate() {
+            if (document.getElementById('templateId').value) return;
+            const profile = profiles[document.getElementById('templateProfile').value]; if (!profile) return;
+            document.getElementById('templateSources').value = profile.src_labels || ''; document.getElementById('templateDestinations').value = profile.dst_labels || '';
+            document.getElementById('templateExcludeSources').value = profile.exclude_src || ''; document.getElementById('templateExcludeDestinations').value = profile.exclude_dst || '';
+			document.getElementById('templateServices').value = profile.services || ''; document.getElementById('templateExcludeServices').value = profile.exclude_services || ''; document.getElementById('templateSavePath').value = profile.save_path || '';
+            document.getElementById('templateDays').value = profile.days || 90; document.getElementById('templateChunk').value = profile.chunk_interval || '24h';
+			document.getElementById('templateTrafficScope').value = profile.traffic_scope || 'blocked';
+            document.getElementById('templatePrimary').value = profile.analysis_primary_label || 'env'; document.getElementById('templateSecondary').value = profile.analysis_secondary_label || 'app';
+        }
+
+        function loadTemplate(id) {
+            const template = automationState.templates.find(item => item.id === id); if (!template) { resetTemplateForm(); return; }
+            document.getElementById('templateId').value = template.id; document.getElementById('templateName').value = template.name; document.getElementById('templateProfile').value = template.profile_name;
+			document.getElementById('templateSources').value = template.src_labels || ''; document.getElementById('templateDestinations').value = template.dst_labels || ''; document.getElementById('templateExcludeSources').value = template.exclude_src || ''; document.getElementById('templateExcludeDestinations').value = template.exclude_dst || ''; document.getElementById('templateServices').value = template.services || ''; document.getElementById('templateExcludeServices').value = template.exclude_services || '';
+            document.getElementById('templateSavePath').value = template.save_path || ''; document.getElementById('templateFilePattern').value = template.file_name_pattern || ''; document.getElementById('templateDays').value = template.days || 90; document.getElementById('templateChunk').value = template.chunk_interval || '24h'; document.getElementById('templatePrimary').value = template.analysis_primary_label || 'env'; document.getElementById('templateSecondary').value = template.analysis_secondary_label || 'app'; document.getElementById('templateRetention').value = template.retention_count || 20;
+			document.getElementById('templateTrafficScope').value = template.traffic_scope || 'blocked';
+			document.getElementById('templateExecutiveHTML').checked = Boolean(template.generate_executive_html); document.getElementById('templateExecutivePDF').checked = Boolean(template.generate_executive_pdf); document.getElementById('templateReportTitle').value = template.report_title || ''; document.getElementById('templateReportCustomer').value = template.report_customer || ''; document.getElementById('templateReportPrepared').value = template.report_prepared_by || ''; document.getElementById('templateReportNotes').value = template.report_notes || '';
+            const schedule = template.schedule || {}; document.getElementById('scheduleEnabled').checked = Boolean(schedule.enabled); document.getElementById('scheduleKind').value = schedule.kind || 'daily'; document.getElementById('scheduleTime').value = schedule.time_of_day || '06:00'; document.getElementById('scheduleTimezone').value = schedule.timezone || automationState.timezone; document.getElementById('scheduleWeekday').value = String(schedule.weekday || 0); document.getElementById('scheduleDay').value = schedule.day_of_month || 1; document.getElementById('scheduleCron').value = schedule.cron_expression || ''; document.getElementById('scheduleMissed').value = schedule.missed_run_policy || 'run_once'; document.getElementById('scheduleOverlap').value = schedule.overlap_policy || 'queue'; document.getElementById('nextRunLabel').textContent = schedule.next_run_at ? `Next run: ${new Date(schedule.next_run_at).toLocaleString()}` : 'Schedule disabled.';
+            const alert = template.alert_policy || {}; document.getElementById('alertMode').value = alert.mode || 'always'; document.getElementById('alertMinimumFlows').value = alert.minimum_flows || 0; document.getElementById('alertFlowChange').value = alert.flow_change_percent || 0; document.getElementById('alertNewRelationships').checked = Boolean(alert.on_new_relationships); document.getElementById('alertNewServices').checked = Boolean(alert.on_new_services); document.getElementById('alertExternal').checked = Boolean(alert.on_external_traffic); document.getElementById('alertFailure').checked = Boolean(alert.deliver_on_failure); document.getElementById('alertManual').checked = Boolean(alert.deliver_manual_runs);
+            renderDestinationChoices(new Set(template.delivery_destination_ids || []));
+        }
+
+        function templateFromForm() {
+			return { id: document.getElementById('templateId').value, name: document.getElementById('templateName').value, profile_name: document.getElementById('templateProfile').value, traffic_scope: document.getElementById('templateTrafficScope').value || 'blocked', src_labels: document.getElementById('templateSources').value, dst_labels: document.getElementById('templateDestinations').value, exclude_src: document.getElementById('templateExcludeSources').value, exclude_dst: document.getElementById('templateExcludeDestinations').value, services: document.getElementById('templateServices').value, exclude_services: document.getElementById('templateExcludeServices').value, save_path: document.getElementById('templateSavePath').value, file_name_pattern: document.getElementById('templateFilePattern').value, days: Number(document.getElementById('templateDays').value), chunk_interval: document.getElementById('templateChunk').value, analysis_primary_label: document.getElementById('templatePrimary').value, analysis_secondary_label: document.getElementById('templateSecondary').value, retention_count: Number(document.getElementById('templateRetention').value), generate_executive_html: document.getElementById('templateExecutiveHTML').checked, generate_executive_pdf: document.getElementById('templateExecutivePDF').checked, report_title: document.getElementById('templateReportTitle').value, report_customer: document.getElementById('templateReportCustomer').value, report_prepared_by: document.getElementById('templateReportPrepared').value, report_notes: document.getElementById('templateReportNotes').value, delivery_destination_ids: Array.from(document.querySelectorAll('[data-destination-choice]:checked')).map(input => input.value), schedule: { enabled: document.getElementById('scheduleEnabled').checked, kind: document.getElementById('scheduleKind').value, time_of_day: document.getElementById('scheduleTime').value, weekday: Number(document.getElementById('scheduleWeekday').value), day_of_month: Number(document.getElementById('scheduleDay').value), cron_expression: document.getElementById('scheduleCron').value, timezone: document.getElementById('scheduleTimezone').value, missed_run_policy: document.getElementById('scheduleMissed').value, overlap_policy: document.getElementById('scheduleOverlap').value }, alert_policy: { mode: document.getElementById('alertMode').value, minimum_flows: Number(document.getElementById('alertMinimumFlows').value), flow_change_percent: Number(document.getElementById('alertFlowChange').value), on_new_relationships: document.getElementById('alertNewRelationships').checked, on_new_services: document.getElementById('alertNewServices').checked, on_external_traffic: document.getElementById('alertExternal').checked, deliver_on_failure: document.getElementById('alertFailure').checked, deliver_manual_runs: document.getElementById('alertManual').checked } };
+        }
+
+        async function saveTemplate(event) { event.preventDefault(); try { const data = await requestJSON('/blocked-traffic/api/automation/templates/save', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(templateFromForm()) }); await loadState(false); document.getElementById('templateSelect').value = data.template.id; loadTemplate(data.template.id); showMessage(`Template '${data.template.name}' saved.`); } catch (error) { showMessage(error.message, true); } }
+        async function deleteTemplate() { const id = document.getElementById('templateId').value; if (!id || !confirm('Delete this template? Existing run history and artifacts are retained.')) return; try { await requestJSON('/blocked-traffic/api/automation/templates/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); await loadState(false); resetTemplateForm(); showMessage('Template deleted.'); } catch(error){ showMessage(error.message,true); } }
+        async function runTemplate() { const id = document.getElementById('templateId').value; if (!id) return showMessage('Save the template before running it.',true); try { const data=await requestJSON('/blocked-traffic/api/automation/runs/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({template_id:id})}); showMessage(`Run ${data.run.id} queued.`); await loadState(); } catch(error){ showMessage(error.message,true); } }
+
+		function updateDestinationFields() {
+			const type = document.getElementById('destinationType').value;
+			document.getElementById('webhookFields').classList.toggle('hidden', !['generic_webhook','slack_webhook','teams_workflow'].includes(type)); document.getElementById('slackApiFields').classList.toggle('hidden', type !== 'slack_api'); document.getElementById('smtpFields').classList.toggle('hidden', type !== 'email'); document.getElementById('folderFields').classList.toggle('hidden', type !== 'shared_folder'); document.getElementById('sftpFields').classList.toggle('hidden', type !== 'sftp');
+			const mode = document.getElementById('destinationWebhookMode'); const base64 = mode.querySelector('option[value="base64_file"]'); const multipart = mode.querySelector('option[value="multipart"]');
+			base64.disabled = type === 'slack_webhook'; multipart.disabled = type !== 'generic_webhook';
+			if (mode.selectedOptions[0]?.disabled) mode.value = 'notification';
+		}
+        function resetDestinationForm(){ document.getElementById('destinationForm').reset(); document.getElementById('destinationId').value=''; document.getElementById('destinationEnabled').checked=true; document.getElementById('destinationWebhookMode').value='notification'; document.getElementById('smtpPort').value=587; document.getElementById('smtpTLS').checked=true; document.getElementById('sftpPort').value=22; updateDestinationFields(); }
+        function loadDestination(id){ const destination=automationState.destinations.find(item=>item.id===id); if(!destination){resetDestinationForm();return;} document.getElementById('destinationId').value=destination.id; document.getElementById('destinationName').value=destination.name; document.getElementById('destinationType').value=destination.type; document.getElementById('destinationEnabled').checked=destination.enabled; document.getElementById('destinationURL').value=''; document.getElementById('destinationURL').placeholder=destination.endpoint_host?`Stored for ${destination.endpoint_host}`:'Enter webhook URL'; document.getElementById('destinationAllowPrivate').checked=Boolean(destination.allow_private_network); document.getElementById('destinationWebhookMode').value=destination.webhook_mode||'notification'; document.getElementById('destinationHeaders').value=''; document.getElementById('destinationHeaders').placeholder=(destination.header_names||[]).length?`Stored headers: ${destination.header_names.join(', ')}`:'{"Authorization":"Bearer ..."}'; document.getElementById('destinationToken').value=''; document.getElementById('destinationToken').placeholder=destination.has_token?'Stored token':'Enter bot token'; document.getElementById('destinationChannel').value=destination.channel_id||''; document.getElementById('smtpHost').value=destination.smtp_host||''; document.getElementById('smtpPort').value=destination.smtp_port||587; document.getElementById('smtpUsername').value=destination.smtp_username||''; document.getElementById('smtpPassword').value=''; document.getElementById('smtpPassword').placeholder=destination.has_smtp_password?'Stored password':'Enter password'; document.getElementById('smtpFrom').value=destination.smtp_from||''; document.getElementById('smtpTo').value=(destination.smtp_to||[]).join(', '); document.getElementById('smtpTLS').checked=Boolean(destination.smtp_use_tls); document.getElementById('folderPath').value=destination.folder_path||''; document.getElementById('sftpHost').value=destination.sftp_host||''; document.getElementById('sftpPort').value=destination.sftp_port||22; document.getElementById('sftpUsername').value=destination.sftp_username||''; document.getElementById('sftpPassword').value=''; document.getElementById('sftpKeyPath').value=destination.sftp_private_key_path||''; document.getElementById('sftpRemotePath').value=destination.sftp_remote_path||''; document.getElementById('sftpHostKey').value=destination.sftp_host_key||''; updateDestinationFields(); }
+        function destinationFromForm(){ let headers={}; const headerText=document.getElementById('destinationHeaders').value.trim(); if(headerText) headers=JSON.parse(headerText); return {id:document.getElementById('destinationId').value,name:document.getElementById('destinationName').value,type:document.getElementById('destinationType').value,enabled:document.getElementById('destinationEnabled').checked,endpoint_url:document.getElementById('destinationURL').value,allow_private_network:document.getElementById('destinationAllowPrivate').checked,webhook_mode:document.getElementById('destinationWebhookMode').value,headers,token:document.getElementById('destinationToken').value,channel_id:document.getElementById('destinationChannel').value,smtp_host:document.getElementById('smtpHost').value,smtp_port:Number(document.getElementById('smtpPort').value),smtp_username:document.getElementById('smtpUsername').value,smtp_password:document.getElementById('smtpPassword').value,smtp_from:document.getElementById('smtpFrom').value,smtp_to:document.getElementById('smtpTo').value.split(',').map(value=>value.trim()).filter(Boolean),smtp_use_tls:document.getElementById('smtpTLS').checked,folder_path:document.getElementById('folderPath').value,sftp_host:document.getElementById('sftpHost').value,sftp_port:Number(document.getElementById('sftpPort').value),sftp_username:document.getElementById('sftpUsername').value,sftp_password:document.getElementById('sftpPassword').value,sftp_private_key_path:document.getElementById('sftpKeyPath').value,sftp_host_key:document.getElementById('sftpHostKey').value,sftp_remote_path:document.getElementById('sftpRemotePath').value}; }
+        async function saveDestination(event){event.preventDefault();try{const data=await requestJSON('/blocked-traffic/api/automation/destinations/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(destinationFromForm())});await loadState();document.getElementById('destinationSelect').value=data.destination.id;loadDestination(data.destination.id);showMessage(`Destination '${data.destination.name}' saved.`);}catch(error){showMessage(error.message,true);}}
+        async function deleteDestination(){const id=document.getElementById('destinationId').value;if(!id||!confirm('Delete this delivery destination?'))return;try{await requestJSON('/blocked-traffic/api/automation/destinations/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});await loadState(false);resetDestinationForm();showMessage('Destination deleted.');}catch(error){showMessage(error.message,true);}}
+        async function testDestination(){const id=document.getElementById('destinationId').value;if(!id)return showMessage('Save the destination before testing it.',true);showMessage('Testing destination...');try{await requestJSON('/blocked-traffic/api/automation/destinations/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});showMessage('Destination test succeeded.');}catch(error){showMessage(`Destination test failed: ${error.message}`,true);}}
+
+		function renderRunHistory() {
+			const body = document.getElementById('runHistoryBody'); body.replaceChildren();
+			automationState.runs.forEach(run => {
+				const row = document.createElement('tr'); row.className = 'border-b';
+				const delivery = (run.delivery_results || []).map(result => `${result.destination_name}: ${result.success ? 'sent' : 'failed'}`).join(', ') || run.delivery_skipped || '—';
+				const changes = `${(run.metrics?.new_relationships || []).length} relationships / ${(run.metrics?.new_services || []).length} services`;
+				row.innerHTML = `<td class="px-3 py-3"></td><td class="px-3 py-3"></td><td class="px-3 py-3 font-semibold"></td><td class="px-3 py-3"></td><td class="px-3 py-3"></td><td class="px-3 py-3"></td><td class="px-3 py-3"></td><td class="px-3 py-3"></td>`;
+				const cells = row.querySelectorAll('td'); cells[0].textContent = run.template_name; cells[1].textContent = run.trigger; cells[2].textContent = run.status + (run.error ? `: ${run.error}` : ''); cells[2].classList.add(`status-${run.status}`); cells[3].textContent = new Date(run.queued_at).toLocaleString(); cells[4].textContent = Number(run.metrics?.total_flows || 0).toLocaleString(); cells[5].textContent = changes; cells[6].textContent = delivery;
+				if (run.artifact_path) {
+					cells[7].classList.add('space-y-1');
+					const addLink = (kind, label) => { const link = document.createElement('a'); link.className = 'block underline'; link.href = `/blocked-traffic/api/automation/runs/artifact?id=${encodeURIComponent(run.id)}&kind=${kind}`; link.textContent = label; cells[7].appendChild(link); };
+					addLink('csv', 'Download CSV');
+					const extensions = new Set((run.additional_artifact_paths || []).map(path => path.split('.').pop().toLowerCase()));
+					if (extensions.has('html')) addLink('html', 'Download HTML');
+					if (extensions.has('pdf')) addLink('pdf', 'Download PDF');
+				}
+				else if (run.status === 'queued' || run.status === 'running') { const button = document.createElement('button'); button.type = 'button'; button.className = 'danger rounded px-3 py-1 text-xs font-semibold'; button.textContent = 'Cancel'; button.addEventListener('click', () => cancelRun(run.id)); cells[7].appendChild(button); }
+				else cells[7].textContent = '—'; body.appendChild(row);
+			});
+		}
+
+		async function cancelRun(runID) {
+			try { await requestJSON('/blocked-traffic/api/automation/runs/cancel', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({run_id:runID}) }); showMessage('Run cancellation requested.'); await loadState(); }
+			catch (error) { showMessage(error.message, true); }
+		}
+
+        async function importTemplateFile(event){const file=event.target.files[0];if(!file)return;try{const template=JSON.parse(await file.text());template.id='';const data=await requestJSON('/blocked-traffic/api/automation/templates/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(template)});await loadState(false);document.getElementById('templateSelect').value=data.template.id;loadTemplate(data.template.id);showMessage(`Template '${data.template.name}' imported.`);}catch(error){showMessage(`Import failed: ${error.message}`,true);}event.target.value='';}
+
+        window.onload=async()=>{applyTheme(localStorage.getItem('ittTheme')||'default');document.getElementById('defaultThemeBtn').addEventListener('click',()=>applyTheme('default'));document.getElementById('illumioThemeBtn').addEventListener('click',()=>applyTheme('illumio'));document.getElementById('illumioLightThemeBtn').addEventListener('click',()=>applyTheme('illumio-light'));document.getElementById('templateSelect').addEventListener('change',event=>loadTemplate(event.target.value));document.getElementById('newTemplateBtn').addEventListener('click',()=>{document.getElementById('templateSelect').value='';resetTemplateForm();});document.getElementById('duplicateTemplateBtn').addEventListener('click',()=>{if(!document.getElementById('templateId').value)return;document.getElementById('templateId').value='';document.getElementById('templateName').value+=' Copy';});document.getElementById('exportTemplateBtn').addEventListener('click',()=>{const id=document.getElementById('templateId').value;if(id)window.location.href=`/blocked-traffic/api/automation/templates/export?id=${encodeURIComponent(id)}`;});document.getElementById('importTemplateFile').addEventListener('change',importTemplateFile);document.getElementById('deleteTemplateBtn').addEventListener('click',deleteTemplate);document.getElementById('templateForm').addEventListener('submit',saveTemplate);document.getElementById('runTemplateBtn').addEventListener('click',runTemplate);document.getElementById('templateProfile').addEventListener('change',profileToNewTemplate);document.getElementById('destinationSelect').addEventListener('change',event=>loadDestination(event.target.value));document.getElementById('newDestinationBtn').addEventListener('click',()=>{document.getElementById('destinationSelect').value='';resetDestinationForm();});document.getElementById('deleteDestinationBtn').addEventListener('click',deleteDestination);document.getElementById('destinationType').addEventListener('change',updateDestinationFields);document.getElementById('destinationForm').addEventListener('submit',saveDestination);document.getElementById('testDestinationBtn').addEventListener('click',testDestination);document.getElementById('refreshBtn').addEventListener('click',()=>loadState());await loadProfiles();await loadState(false);resetTemplateForm();resetDestinationForm();refreshTimer=window.setInterval(()=>loadState(),5000);};
+    </script>
+</body>
+</html>

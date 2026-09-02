@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"embed"
@@ -28,6 +29,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"illumio-dash/internal/extractor"
 
 	_ "modernc.org/sqlite"
 )
@@ -856,18 +859,29 @@ func main() {
 	maybeStartStartupBlockedHistoryReconcile()
 	maybeStartStartupTamperingHistoryReconcile()
 	go backgroundCollector()
+	extractorHandler, err := extractor.NewHandler(context.Background(), "dashboard-dev-"+dashboardVersionLabel())
+	if err != nil {
+		log.Fatalf("initialize blocked traffic extractor: %v", err)
+	}
 
 	http.HandleFunc("/", withRequestTiming("dashboard", serveDashboard))
+	http.HandleFunc("/blocked-traffic", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/blocked-traffic/", http.StatusTemporaryRedirect)
+	})
+	http.Handle("/blocked-traffic/", http.StripPrefix("/blocked-traffic", extractorHandler))
 	http.HandleFunc("/settings", withRequestTiming("settings", serveSettings))
 	http.HandleFunc("/details", withRequestTiming("details", serveDetails))
 	http.HandleFunc("/report", withRequestTiming("report", serveReport))
 	http.HandleFunc("/trends", withRequestTiming("trends", serveTrends))
 	http.HandleFunc("/executive", withRequestTiming("executive", serveExecutive))
+	http.HandleFunc("/static/product-shell.css", extractor.ServeProductShellCSS)
+	http.HandleFunc("/static/product-shell.js", extractor.ServeProductShellJS)
 	staticFS, err := fs.Sub(templateFS, "static")
 	if err == nil {
 		http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	}
 	http.HandleFunc("/api/stats", withRequestTiming("api.stats", handleStats))
+	http.HandleFunc("/api/version", withRequestTiming("api.version", handleDashboardVersion))
 	http.HandleFunc("/api/drilldown", withRequestTiming("api.drilldown", handleDrilldown))
 	http.HandleFunc("/api/export/drilldown.csv", withRequestTiming("api.export.drilldown_csv", handleExportDrilldownCSV))
 	http.HandleFunc("/api/export/report.csv", withRequestTiming("api.export.report_csv", handleExportReportCSV))
@@ -945,7 +959,11 @@ func backgroundCollector() {
 }
 
 func runCollectionCycle() {
-	isRefreshing.Store(true)
+	if !isRefreshing.CompareAndSwap(false, true) {
+		log.Println("[COLLECTOR] Refresh skipped because another dashboard refresh is already running.")
+		return
+	}
+	defer isRefreshing.Store(false)
 	log.Println("[COLLECTOR] Starting PCE data collection cycle...")
 	cycleStart := time.Now().UTC()
 	apiRateLimiter.beginCycle(cycleStart, cycleStart.Add(5*time.Minute))
@@ -959,7 +977,6 @@ func runCollectionCycle() {
 	processWebhookAlerts(newStats)
 	apiRateLimiter.endCycle(time.Now().UTC())
 
-	isRefreshing.Store(false)
 	log.Println("[COLLECTOR] Cycle complete.")
 }
 
@@ -1960,8 +1977,8 @@ func handleRefreshNow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	go runCollectionCycle()
 	w.Header().Set("Content-Type", "application/json")
+	go runCollectionCycle()
 	_ = json.NewEncoder(w).Encode(map[string]bool{"started": true})
 }
 
@@ -11505,6 +11522,16 @@ func serveExecutive(w http.ResponseWriter, r *http.Request) {
 	if err := executivePageTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, "failed to render executive page", http.StatusInternalServerError)
 	}
+}
+
+func handleDashboardVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]string{"version": dashboardVersionLabel()})
 }
 
 func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {

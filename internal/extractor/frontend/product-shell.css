@@ -1,0 +1,546 @@
+:root {
+    --product-nav-width: 17.5rem;
+    --product-nav-width-compact: 5.25rem;
+    --product-topbar-height: 4.5rem;
+}
+
+html[data-unified-theme="light"] {
+    --product-shell-bg: #f5f3ee;
+    --product-shell-panel: #ffffff;
+    --product-shell-panel-soft: #eeebe4;
+    --product-shell-panel-hover: #e6e1d8;
+    --product-shell-border: #d7d1c5;
+    --product-shell-text: #272b2d;
+    --product-shell-muted: #6d706f;
+    --product-shell-sidebar: #242a2c;
+    --product-shell-sidebar-soft: #303739;
+    --product-shell-sidebar-text: #f7f5f0;
+    --product-shell-sidebar-muted: #b9bdbb;
+    --product-shell-accent: #f26322;
+    --product-shell-accent-soft: rgba(242, 99, 34, 0.16);
+    --product-shell-shadow: 0 12px 32px rgba(39, 43, 45, 0.09);
+}
+
+html[data-unified-theme="dark"] {
+    --product-shell-bg: #171a1b;
+    --product-shell-panel: #222627;
+    --product-shell-panel-soft: #2b3031;
+    --product-shell-panel-hover: #343a3b;
+    --product-shell-border: #3f4647;
+    --product-shell-text: #f5f4f0;
+    --product-shell-muted: #b3b8b6;
+    --product-shell-sidebar: #111415;
+    --product-shell-sidebar-soft: #202526;
+    --product-shell-sidebar-text: #f8f6f1;
+    --product-shell-sidebar-muted: #a9afad;
+    --product-shell-accent: #ff6b2b;
+    --product-shell-accent-soft: rgba(255, 107, 43, 0.18);
+    --product-shell-shadow: 0 14px 38px rgba(0, 0, 0, 0.28);
+}
+
+body.product-shell-enabled {
+    min-width: 20rem;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body.product-shell-enabled[data-theme="light"] {
+    --bg: var(--product-shell-bg);
+    --surface-1: var(--product-shell-panel);
+    --surface-2: var(--product-shell-panel-soft);
+    --text-1: var(--product-shell-text);
+    --text-2: var(--product-shell-muted);
+    --border: var(--product-shell-border);
+    --tile-hover: var(--product-shell-panel-hover);
+}
+
+body.product-shell-enabled[data-theme="dark"] {
+    --bg: var(--product-shell-bg);
+    --surface-1: var(--product-shell-panel);
+    --surface-2: var(--product-shell-panel-soft);
+    --text-1: var(--product-shell-text);
+    --text-2: var(--product-shell-muted);
+    --border: var(--product-shell-border);
+    --tile-hover: var(--product-shell-panel-hover);
+}
+
+body.product-shell-enabled[data-theme="illumio-light"],
+body.product-shell-enabled[data-theme="illumio"] {
+    --bg: var(--product-shell-bg);
+    --panel: var(--product-shell-panel);
+    --panel-soft: var(--product-shell-panel-soft);
+    --border: var(--product-shell-border);
+    --text: var(--product-shell-text);
+    --muted: var(--product-shell-muted);
+    --title: var(--product-shell-accent);
+    --accent: var(--product-shell-accent);
+    --accent-strong: var(--product-shell-accent);
+}
+
+.product-shell-sidebar,
+.product-shell-topbar,
+.product-shell-overlay,
+.product-shell-sidebar * ,
+.product-shell-topbar * {
+    box-sizing: border-box;
+}
+
+.product-shell-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 2100;
+    display: flex;
+    width: var(--product-nav-width);
+    flex-direction: column;
+    overflow: hidden;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--product-shell-sidebar);
+    color: var(--product-shell-sidebar-text);
+    box-shadow: 8px 0 28px rgba(0, 0, 0, 0.12);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    transition: width 180ms ease, transform 180ms ease;
+}
+
+.product-shell-brand {
+    display: flex;
+    min-height: var(--product-topbar-height);
+    align-items: center;
+    gap: 0.8rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+    padding: 0.85rem 1rem;
+}
+
+.product-shell-mark {
+    position: relative;
+    width: 2.7rem;
+    height: 2.7rem;
+    flex: 0 0 2.7rem;
+    overflow: hidden;
+    border-radius: 0.7rem;
+    background: var(--product-shell-accent);
+}
+
+.product-shell-mark::before,
+.product-shell-mark::after {
+    position: absolute;
+    top: 0.62rem;
+    width: 0.28rem;
+    height: 1.46rem;
+    background: #fff;
+    content: "";
+}
+
+.product-shell-mark::before { left: 0.88rem; }
+.product-shell-mark::after { right: 0.88rem; }
+
+.product-shell-brand-copy {
+    min-width: 0;
+    line-height: 1.15;
+}
+
+.product-shell-brand-name {
+    display: block;
+    overflow: hidden;
+    color: var(--product-shell-sidebar-text);
+    font-size: 0.9rem;
+    font-weight: 780;
+    letter-spacing: 0.035em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.product-shell-brand-subtitle {
+    display: block;
+    margin-top: 0.26rem;
+    overflow: hidden;
+    color: var(--product-shell-sidebar-muted);
+    font-size: 0.68rem;
+    font-weight: 650;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.product-shell-nav {
+    flex: 1 1 auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 0.8rem 0.65rem 1rem;
+    scrollbar-color: var(--product-shell-sidebar-soft) transparent;
+    scrollbar-width: thin;
+}
+
+.product-shell-group + .product-shell-group { margin-top: 0.5rem; }
+
+.product-shell-group-toggle {
+    display: flex;
+    width: 100%;
+    min-height: 2rem;
+    align-items: center;
+    justify-content: space-between;
+    border: 0;
+    border-radius: 0.45rem;
+    background: transparent;
+    color: var(--product-shell-sidebar-muted);
+    padding: 0.35rem 0.65rem;
+    font: inherit;
+    font-size: 0.66rem;
+    font-weight: 760;
+    letter-spacing: 0.13em;
+    text-align: left;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.product-shell-group-toggle:hover,
+.product-shell-group-toggle:focus-visible {
+    background: rgba(255, 255, 255, 0.055);
+    color: var(--product-shell-sidebar-text);
+}
+
+.product-shell-chevron {
+    width: 0.9rem;
+    height: 0.9rem;
+    flex: 0 0 auto;
+    transition: transform 160ms ease;
+}
+
+.product-shell-group.is-collapsed .product-shell-chevron { transform: rotate(-90deg); }
+.product-shell-group.is-collapsed .product-shell-group-items { display: none; }
+
+.product-shell-group-items {
+    display: grid;
+    gap: 0.2rem;
+    margin-top: 0.16rem;
+}
+
+.product-shell-nav-link {
+    display: flex;
+    min-height: 2.65rem;
+    align-items: center;
+    gap: 0.72rem;
+    border: 1px solid transparent;
+    border-radius: 0.58rem;
+    color: var(--product-shell-sidebar-muted);
+    padding: 0.56rem 0.68rem;
+    font-size: 0.82rem;
+    font-weight: 620;
+    line-height: 1.15;
+    text-decoration: none;
+    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.product-shell-nav-link:hover,
+.product-shell-nav-link:focus-visible {
+    border-color: rgba(255, 255, 255, 0.08);
+    background: var(--product-shell-sidebar-soft);
+    color: var(--product-shell-sidebar-text);
+    text-decoration: none;
+}
+
+.product-shell-nav-link[aria-current="page"] {
+    border-color: rgba(255, 107, 43, 0.34);
+    background: var(--product-shell-accent-soft);
+    color: #fff;
+    box-shadow: inset 3px 0 0 var(--product-shell-accent);
+}
+
+.product-shell-icon {
+    display: inline-flex;
+    width: 1.18rem;
+    height: 1.18rem;
+    flex: 0 0 1.18rem;
+    align-items: center;
+    justify-content: center;
+}
+
+.product-shell-icon svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.product-shell-nav-link[aria-current="page"] .product-shell-icon { color: var(--product-shell-accent); }
+
+.product-shell-sidebar-footer {
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
+    padding: 0.85rem 1rem 1rem;
+}
+
+.product-shell-sidebar-tools {
+    flex: 0 0 auto;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    padding: 0.55rem 0.65rem;
+}
+
+.product-shell-sidebar-tool {
+    display: flex;
+    width: 100%;
+    min-height: 2.35rem;
+    align-items: center;
+    gap: 0.65rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.55rem;
+    background: var(--product-shell-sidebar-soft);
+    color: var(--product-shell-sidebar-muted);
+    padding: 0.5rem 0.68rem;
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 680;
+    cursor: pointer;
+}
+
+.product-shell-sidebar-tool:hover,
+.product-shell-sidebar-tool:focus-visible {
+    border-color: var(--product-shell-accent);
+    color: var(--product-shell-sidebar-text);
+}
+
+.product-shell-sidebar-tool svg {
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 1rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.8;
+}
+
+.product-shell-runtime {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.55rem;
+    color: var(--product-shell-sidebar-muted);
+    font-size: 0.68rem;
+}
+
+.product-shell-runtime-dot {
+    width: 0.48rem;
+    height: 0.48rem;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: #41c47a;
+    box-shadow: 0 0 0 3px rgba(65, 196, 122, 0.12);
+}
+
+.product-shell-runtime-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.product-shell-version { display: block; margin-top: 0.28rem; color: var(--product-shell-sidebar-text); font-variant-numeric: tabular-nums; }
+
+.product-shell-main {
+    min-height: 100vh;
+    margin-left: var(--product-nav-width);
+    background: var(--product-shell-bg);
+    transition: margin-left 180ms ease;
+}
+
+.product-shell-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 1900;
+    display: flex;
+    height: var(--product-topbar-height);
+    min-height: var(--product-topbar-height);
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid var(--product-shell-border);
+    background: color-mix(in srgb, var(--product-shell-panel) 92%, transparent);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.05);
+    color: var(--product-shell-text);
+    padding: 0.65rem clamp(1rem, 2vw, 2rem);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    backdrop-filter: blur(16px);
+}
+
+.product-shell-topbar-start,
+.product-shell-topbar-actions {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.62rem;
+}
+
+.product-shell-topbar-actions { flex: 0 0 auto; flex-wrap: nowrap; justify-content: flex-end; }
+
+.product-shell-page-heading { min-width: 0; }
+.product-shell-breadcrumb { color: var(--product-shell-muted); font-size: 0.65rem; font-weight: 720; letter-spacing: 0.11em; text-transform: uppercase; }
+.product-shell-page-title { margin: 0.16rem 0 0; overflow: hidden; color: var(--product-shell-text); font-size: clamp(1rem, 1.45vw, 1.28rem); font-weight: 760; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+
+.product-shell-control {
+    display: inline-flex;
+    min-height: 2.35rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border: 1px solid var(--product-shell-border);
+    border-radius: 0.58rem;
+    background: var(--product-shell-panel-soft);
+    color: var(--product-shell-text);
+    padding: 0.45rem 0.65rem;
+    font: inherit;
+    font-size: 0.74rem;
+    font-weight: 680;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.product-shell-control:hover,
+.product-shell-control:focus-visible {
+    border-color: var(--product-shell-accent);
+    background: var(--product-shell-panel-hover);
+    color: var(--product-shell-text);
+}
+
+.product-shell-control svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.product-shell-mobile-toggle { display: none; }
+
+.product-shell-page {
+    min-width: 0;
+    padding: clamp(1rem, 1.7vw, 1.75rem) 0 3.5rem;
+}
+
+.product-shell-page-toolbar {
+    display: flex;
+    width: min(calc(100% - 2rem), 1920px);
+    min-height: 3.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.55rem;
+    margin: 0 auto 1rem;
+    border: 1px solid var(--product-shell-border);
+    border-radius: 0.8rem;
+    background: var(--product-shell-panel);
+    box-shadow: var(--product-shell-shadow);
+    padding: 0.55rem 0.7rem;
+}
+
+.product-shell-page-toolbar:empty { display: none; }
+
+body.product-shell-enabled .version-badge,
+body.product-shell-enabled .app-version-footer,
+.product-shell-obsolete { display: none !important; }
+
+body.product-shell-enabled .dashboard-shell,
+body.product-shell-enabled .wrap {
+    width: min(calc(100% - 2rem), 1920px) !important;
+    max-width: 1920px;
+}
+
+body:not(.product-shell-enabled) .header .status-actions,
+body:not(.product-shell-enabled) .app-header-actions { visibility: hidden; }
+
+body.product-shell-enabled .product-shell-page > .header,
+body.product-shell-enabled .product-shell-page .app-header {
+    width: min(calc(100% - 2rem), 1920px);
+    margin: 0 auto 1.25rem !important;
+    border: 1px solid var(--product-shell-border) !important;
+    border-radius: 0.8rem !important;
+    background: var(--product-shell-panel) !important;
+    box-shadow: var(--product-shell-shadow) !important;
+    color: var(--product-shell-text) !important;
+    padding: 0.78rem 1rem !important;
+    text-align: left !important;
+}
+
+body.product-shell-enabled .product-shell-page > .header h1,
+body.product-shell-enabled .product-shell-page .app-header h1,
+body.product-shell-enabled .product-shell-page .app-header > div:first-child > p:first-child { display: none; }
+
+body.product-shell-enabled .product-shell-page > .header #status-bar,
+body.product-shell-enabled .product-shell-page .app-header > div:first-child > p:last-child {
+    margin: 0 !important;
+    color: var(--product-shell-muted) !important;
+}
+
+body.product-shell-enabled .status-actions:empty,
+body.product-shell-enabled .app-header-actions:empty,
+body.product-shell-enabled .product-shell-context-empty { display: none !important; }
+
+.product-shell-page-toolbar > .btn,
+.product-shell-page-toolbar > button,
+.product-shell-page-toolbar > a,
+.product-shell-page-toolbar .btn {
+    min-height: 2.35rem;
+    border-color: var(--product-shell-border) !important;
+    border-radius: 0.58rem !important;
+    background: var(--product-shell-panel-soft) !important;
+    color: var(--product-shell-text) !important;
+    box-shadow: none !important;
+    font-size: 0.74rem !important;
+    font-weight: 680 !important;
+}
+
+.product-shell-page-toolbar > button:hover,
+.product-shell-page-toolbar > a:hover,
+.product-shell-page-toolbar .btn:hover { border-color: var(--product-shell-accent) !important; }
+
+.product-shell-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2050;
+    display: none;
+    background: rgba(0, 0, 0, 0.52);
+    backdrop-filter: blur(2px);
+}
+
+body.product-shell-compact .product-shell-sidebar { width: var(--product-nav-width-compact); }
+body.product-shell-compact .product-shell-main { margin-left: var(--product-nav-width-compact); }
+body.product-shell-compact .product-shell-brand { justify-content: center; padding-inline: 0.6rem; }
+body.product-shell-compact .product-shell-brand-copy,
+body.product-shell-compact .product-shell-group-toggle,
+body.product-shell-compact .product-shell-nav-label,
+body.product-shell-compact .product-shell-sidebar-footer { display: none; }
+body.product-shell-compact .product-shell-sidebar-tools { padding-inline: 0.55rem; }
+body.product-shell-compact .product-shell-sidebar-tool { justify-content: center; padding-inline: 0.5rem; }
+body.product-shell-compact .product-shell-sidebar-tool-label { display: none; }
+body.product-shell-compact .product-shell-nav { padding-inline: 0.55rem; }
+body.product-shell-compact .product-shell-group + .product-shell-group { margin-top: 0.7rem; }
+body.product-shell-compact .product-shell-group-items { display: grid !important; gap: 0.32rem; }
+body.product-shell-compact .product-shell-nav-link { justify-content: center; padding-inline: 0.5rem; }
+body.product-shell-compact .product-shell-nav-link[aria-current="page"] { box-shadow: inset 0 -3px 0 var(--product-shell-accent); }
+
+@media (max-width: 1099px) {
+    .product-shell-sidebar { width: min(19rem, calc(100vw - 3rem)); transform: translateX(-105%); }
+    .product-shell-main,
+    body.product-shell-compact .product-shell-main { margin-left: 0; }
+    .product-shell-mobile-toggle { display: inline-flex; }
+    .product-shell-desktop-toggle { display: none; }
+    body.product-shell-menu-open .product-shell-sidebar { transform: translateX(0); }
+    body.product-shell-menu-open .product-shell-overlay { display: block; }
+    body.product-shell-menu-open { overflow: hidden; }
+}
+
+@media (max-width: 720px) {
+    .product-shell-topbar { padding: 0.65rem 0.75rem; }
+    .product-shell-page-title { max-width: calc(100vw - 5rem); }
+    .product-shell-breadcrumb { display: none; }
+    .product-shell-theme-label { display: none; }
+    .product-shell-page-toolbar { width: calc(100% - 1rem); justify-content: flex-start; }
+    .product-shell-page-toolbar > .period-controls,
+    .product-shell-page-toolbar > .control-group { width: 100%; }
+    body.product-shell-enabled .product-shell-page > .header,
+    body.product-shell-enabled .product-shell-page .app-header { width: calc(100% - 1rem); }
+    body.product-shell-enabled .dashboard-shell,
+    body.product-shell-enabled .wrap { width: calc(100% - 1rem) !important; padding-inline: 0 !important; }
+}
+
+@media print {
+    .product-shell-sidebar,
+    .product-shell-topbar,
+    .product-shell-page-toolbar,
+    .product-shell-overlay { display: none !important; }
+    .product-shell-main,
+    body.product-shell-compact .product-shell-main { margin-left: 0 !important; }
+    .product-shell-page { padding: 0 !important; }
+    body.product-shell-enabled .product-shell-page > .header,
+    body.product-shell-enabled .product-shell-page .app-header { width: 100%; }
+}
+
+body.product-shell-offline-export .product-shell-main {
+    margin-left: 0 !important;
+    background: transparent;
+}
+
+body.product-shell-offline-export .product-shell-page {
+    padding: 0 !important;
+}

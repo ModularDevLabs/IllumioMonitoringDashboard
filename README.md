@@ -11,6 +11,16 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 ## Features
 
+- Integrated Blocked Traffic Extractor development preview:
+  - Available within the dashboard at `/blocked-traffic/`
+  - Uses one PCE-inspired application shell across monitoring and extractor pages, with grouped/collapsible left navigation and a responsive mobile drawer
+  - Shares a persistent light/dark preference and active-page context across both functions
+  - Includes extraction, multi-CSV analytics, configurable label dimensions, heatmaps, executive summaries, datasets, templates, scheduling, and artifact delivery
+  - Supports blocked-only or all-policy-decision extraction; all-traffic exports preserve active and draft policy decisions on every CSV row
+  - Uses independent PCE profiles and API credentials; dashboard collector credentials are never reused by the extractor
+  - Remains localhost-only even when the Monitoring Dashboard is configured for network hosting
+  - Namespaces extractor pages and APIs so existing dashboard routes remain unchanged
+
 - VEN health visibility:
   - Warning-state workloads
   - Error-state workloads
@@ -77,7 +87,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 - Operational confidence:
   - Dashboard pipeline strip includes an SLO confidence badge (`HIGH`/`MEDIUM`/`LOW`/`UNKNOWN`)
 - Theme:
-  - Light/dark mode toggle in dashboard, drilldown, and report views
+  - Unified light/dark mode toggle across dashboard, drilldown, report, extractor, analytics, heatmap, executive-summary, and automation views
   - Shared UI helpers embedded from `/static/ui-common.js`
 - Durable cross-version state:
   - State files are stored in a shared data directory so new fork/binary versions can reuse history.
@@ -102,6 +112,25 @@ Cross-platform binaries are produced in the project root:
 3. Save config when prompted.
 4. Open `http://localhost:18443`.
 5. Go to `/settings` to configure traffic targets, retention, and optional alerting.
+6. Open `/blocked-traffic/` to use the integrated Blocked Traffic Extractor with its own PCE profile and API credentials.
+
+## Blocked Traffic Extractor Integration
+
+This development build embeds the Blocked Traffic Extractor as an isolated module in the dashboard executable. The dashboard and extractor share the HTTP listener and navigation only; they do not share API credentials, profiles, request state, or saved analysis data. Extractor routes continue to require a localhost host name or loopback address.
+
+- Dashboard credentials remain in `config.json` and drive continuous monitoring collection.
+- Extractor credentials remain in the platform user configuration directory under `illumio-monitoring-dashboard-extractor/pce_profiles.json` and drive only extractor requests.
+- Extractor templates, delivery destinations, run history, and saved datasets remain in that same dedicated extractor directory.
+- The integration is based on Blocked Traffic Extractor `v1.5.0`.
+- PCE operations require a saved extractor profile, and non-loopback PCE origins require HTTPS.
+- Manual runs and automation templates can select **Blocked traffic only** (the backward-compatible default) or **All traffic**. All-traffic queries include allowed, potentially blocked, blocked, and unknown decisions.
+- Source, destination, and service exclusions are available for manual runs, saved profiles, and automation templates. Service exclusions accept discovered PCE service names or explicit values such as `TCP:22` and `UDP:5355`.
+- All-traffic CSVs add `Policy Decision`, `Draft Policy Decision`, and `Traffic Scope` columns. Imports use these fields to retain scope and keep different decision rows distinct while preserving the established endpoint/service-based unique-connection definition.
+- A query that reaches the PCE's 200,000-row result ceiling is rejected as incomplete with guidance to select a smaller chunk interval.
+- Dashboard collection and traffic extraction run concurrently in independent Go workers with separate HTTP clients, request contexts, credentials, progress state, and retry handling. Extraction status includes active-chunk and PCE heartbeat details so long-running queries remain visibly alive while dashboard collection continues.
+- Artifact reads and writes are root-confined to prevent path and symlink traversal.
+
+See [BLOCKED_TRAFFIC_INTEGRATION.md](BLOCKED_TRAFFIC_INTEGRATION.md) for route, storage, security, and maintenance details.
 
 ## Network Hosting Walkthrough
 

@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Illumio Traffic Heatmaps</title>
+    <link rel="stylesheet" href="/blocked-traffic/assets/tailwind.css">
+    <style>
+        :root {
+            --bg: #030712;
+            --panel: #111827;
+            --panel-soft: rgba(17, 24, 39, 0.82);
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #f3f4f6;
+            --muted: #9ca3af;
+            --title: #22d3ee;
+            --accent: #10b981;
+            --accent-strong: #059669;
+            --secondary: #d946ef;
+            --warning: #fbbf24;
+        }
+        body[data-theme="illumio"] {
+            --bg: #1a2c32;
+            --panel: #24393f;
+            --panel-soft: rgba(49, 54, 56, 0.9);
+            --border: #356069;
+            --text: #ffffff;
+            --muted: #d6d7d7;
+            --title: #ff5500;
+            --accent: #ff5500;
+            --accent-strong: #ff5500;
+            --secondary: #94cee5;
+            --warning: #ffa22f;
+        }
+        body[data-theme="illumio-light"] {
+            --bg: #f7f4ee;
+            --panel: rgba(255,255,255,0.98);
+            --panel-soft: rgba(242, 237, 226, 0.96);
+            --border: #d1bea0;
+            --text: #313638;
+            --muted: #6f7274;
+            --title: #ff5500;
+            --accent: #ff5500;
+            --accent-strong: #ff5500;
+            --secondary: #2d454c;
+            --warning: #f97607;
+        }
+        body {
+            font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+            background: linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg) 84%, black));
+            color: var(--text);
+        }
+        .panel { background: var(--panel) !important; border-color: var(--border) !important; color: var(--text); }
+        .panel-soft { background: var(--panel-soft) !important; border-color: var(--border) !important; color: var(--text); }
+        .theme-button, .mode-button {
+            border: 1px solid var(--border);
+            background: var(--panel-soft);
+            color: var(--muted);
+        }
+        .theme-button.active, .mode-button.active {
+            background: color-mix(in srgb, var(--accent) 14%, transparent);
+            color: var(--text);
+            border-color: var(--accent);
+        }
+        .muted { color: var(--muted) !important; }
+        .title { color: var(--title) !important; }
+        .secondary { color: var(--secondary) !important; }
+        .warning { color: var(--warning) !important; }
+        [class*="bg-gray-900"], [class*="bg-gray-800"] { background: var(--panel) !important; }
+        [class*="border-gray-800"] { border-color: var(--border) !important; }
+        [class*="text-gray-500"], [class*="text-gray-400"], [class*="text-gray-300"], [class*="text-gray-200"] { color: var(--muted) !important; }
+        [class*="text-cyan-400"], [class*="text-cyan-300"], [class*="text-sky-300"] { color: var(--title) !important; }
+        [class*="text-emerald-400"], [class*="text-emerald-300"] { color: var(--accent) !important; }
+        [class*="text-fuchsia-300"], [class*="text-violet-300"], [class*="text-violet-200"], [class*="text-fuchsia-200"] { color: var(--secondary) !important; }
+        [class*="text-amber-300"], [class*="text-amber-200"] { color: var(--warning) !important; }
+        a.panel-soft, button.panel-soft { color: var(--text) !important; }
+        .filter-trigger, .filter-search {
+            background: var(--panel);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .filter-dropdown {
+            position: relative;
+        }
+        .filter-menu {
+            position: absolute;
+            top: calc(100% + 0.5rem);
+            left: 0;
+            width: 100%;
+            min-width: 16rem;
+            z-index: 20;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 1rem;
+            box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28);
+        }
+        .filter-option {
+            color: var(--text);
+        }
+        .filter-option:hover {
+            background: color-mix(in srgb, var(--accent) 10%, transparent);
+        }
+        .heatmap-table {
+            border-collapse: separate;
+            border-spacing: 0.35rem;
+            min-width: max-content;
+        }
+        .heatmap-table th {
+            position: sticky;
+            top: 0;
+            background: var(--panel);
+            z-index: 5;
+        }
+        .heatmap-row-header {
+            position: sticky;
+            left: 0;
+            background: var(--panel);
+            z-index: 4;
+        }
+        .heatmap-cell {
+            min-width: 112px;
+            min-height: 78px;
+            border: 1px solid var(--border);
+            border-radius: 0.85rem;
+            text-align: left;
+            vertical-align: top;
+            transition: transform 0.14s ease, border-color 0.14s ease;
+        }
+        .heatmap-cell[data-clickable="true"] {
+            cursor: pointer;
+        }
+        .heatmap-cell[data-clickable="true"]:hover {
+            transform: translateY(-1px);
+            border-color: var(--accent);
+        }
+        .heatmap-cell.is-selected {
+            outline: 2px solid var(--accent);
+            outline-offset: 1px;
+        }
+        body[data-theme="illumio-light"] .heatmap-cell {
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25);
+        }
+    </style>
+    <link rel="stylesheet" href="/blocked-traffic/assets/app-shell.css">
+    <link rel="stylesheet" href="/static/product-shell.css">
+    <script src="/static/product-shell.js" defer></script>
+</head>
+<body data-theme="default" class="min-h-screen px-4 py-5 md:px-6 md:py-8 xl:px-8">
+    <script src="/blocked-traffic/assets/theme-init.js"></script>
+    <div class="mx-auto w-full max-w-[118rem]">
+        <header class="app-header mb-8 flex flex-col gap-4 2xl:flex-row 2xl:justify-between">
+            <div>
+                <p class="title mb-2 text-xs uppercase tracking-[0.35em]">Interactive Heatmaps</p>
+                <h1 class="text-3xl font-bold md:text-4xl">Heatmap Explorer</h1>
+                <p id="fileLabel" class="muted mt-2 text-sm">Loading latest analytics...</p>
+            </div>
+            <div class="app-header-actions">
+                <nav class="app-nav" aria-label="Primary navigation">
+                    <a href="/" class="app-nav-link">Monitoring Dashboard</a>
+                    <a href="/blocked-traffic/" class="app-nav-link">Extractor</a>
+                    <a href="/blocked-traffic/summary" class="app-nav-link">Analytics</a>
+                    <a href="/blocked-traffic/heatmaps" class="app-nav-link" aria-current="page">Heatmaps</a>
+                    <a href="/blocked-traffic/executive-summary" class="app-nav-link">Executive</a>
+                    <a href="/blocked-traffic/automation" class="app-nav-link">Automation</a>
+                </nav>
+                <div class="theme-switcher" role="group" aria-label="Color theme">
+                    <button id="defaultThemeBtn" data-theme-option="default" aria-pressed="false" type="button" class="theme-button">Dark</button>
+                    <button id="illumioThemeBtn" data-theme-option="illumio" aria-pressed="false" type="button" class="theme-button">Illumio Dark</button>
+                    <button id="illumioLightThemeBtn" data-theme-option="illumio-light" aria-pressed="false" type="button" class="theme-button">Illumio Light</button>
+                </div>
+                <button id="refreshHeatmapsBtn" class="app-header-action inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold text-white" style="background: var(--accent-strong);">Refresh</button>
+            </div>
+        </header>
+
+        <div id="emptyState" class="hidden rounded-2xl border panel-soft p-8 text-center">
+            <p class="text-lg font-semibold">No heatmap analytics are available yet.</p>
+            <p class="muted mt-2 text-sm">Run a fetch from the main page or import a CSV on the analytics page first.</p>
+        </div>
+
+        <div id="pageContent" class="hidden space-y-6">
+            <section class="rounded-2xl border panel p-5" data-auto-collapsible="heatmap-controls" data-collapse-title="Heatmap Controls">
+                <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div>
+                        <h2 class="text-xl font-bold text-cyan-300">Heatmap Controls</h2>
+                        <p class="muted mt-1 text-sm">Use filters to focus the matrix, then click a populated cell to drill down into the ports and protocols that make up that flow total.</p>
+                    </div>
+                    <div class="flex rounded-xl p-1 panel-soft">
+                        <button id="envModeBtn" type="button" class="mode-button active rounded-lg px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em]">Environment</button>
+                        <button id="appModeBtn" type="button" class="mode-button rounded-lg px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em]">Application</button>
+                        <button id="combinedModeBtn" type="button" class="mode-button rounded-lg px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em]">Environment + Application</button>
+                    </div>
+                </div>
+                <div class="mt-5 grid gap-4 xl:grid-cols-[300px_300px_minmax(0,1.35fr)] 2xl:grid-cols-[320px_320px_minmax(0,1.5fr)]">
+                    <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                        <label class="mb-3 block text-sm font-semibold text-gray-300">Source Filter</label>
+                        <div id="sourceFilterWrap"></div>
+                        <p class="mt-3 text-xs text-gray-500">Choose one or more source values. Leave all unchecked to include all sources.</p>
+                    </div>
+                    <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                        <label class="mb-3 block text-sm font-semibold text-gray-300">Destination Filter</label>
+                        <div id="destinationFilterWrap"></div>
+                        <p class="mt-3 text-xs text-gray-500">Choose one or more destination values. Leave all unchecked to include all destinations.</p>
+                    </div>
+                    <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                        <div class="grid gap-4 md:grid-cols-3">
+                            <div>
+                                <p class="text-xs uppercase tracking-widest text-gray-500">Visible Rows</p>
+                                <p id="visibleRowCount" class="mt-2 text-3xl font-bold text-cyan-400">0</p>
+                            </div>
+                            <div>
+                                <p class="text-xs uppercase tracking-widest text-gray-500">Visible Columns</p>
+                                <p id="visibleColCount" class="mt-2 text-3xl font-bold text-violet-300">0</p>
+                            </div>
+                            <div>
+                                <p class="text-xs uppercase tracking-widest text-gray-500">Visible Flows</p>
+                                <p id="visibleFlowCount" class="mt-2 text-3xl font-bold text-emerald-300">0</p>
+                            </div>
+                        </div>
+                        <div class="mt-5 flex flex-wrap gap-3">
+                            <button id="clearFiltersBtn" type="button" class="rounded-lg px-4 py-2 text-sm font-semibold panel-soft">Clear Filters</button>
+                            <label class="inline-flex items-center gap-2 rounded-lg panel-soft px-4 py-2 text-sm font-semibold">
+                                <input id="hideEmptyToggle" type="checkbox" checked>
+                                Hide Empty Rows/Cols
+                            </label>
+                        </div>
+                        <p class="muted mt-4 text-xs">The heatmap uses the full analytics dataset, not the reduced top-N subset from the detailed dashboard.</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="rounded-2xl border panel p-5" data-auto-collapsible="heatmap-matrix" data-collapse-title="Heatmap Matrix">
+                <div class="mb-4 flex items-center justify-between gap-4">
+                    <div>
+                        <h2 id="heatmapTitle" class="text-xl font-bold text-sky-300">Environment Heatmap</h2>
+                        <p id="heatmapSubtitle" class="text-xs uppercase tracking-widest text-gray-500">Source environment to destination environment</p>
+                    </div>
+                    <p class="muted text-xs">Cell shading and large numbers are based on total flows in the selected traffic scope.</p>
+                </div>
+                <div id="heatmapWrap" class="overflow-auto rounded-2xl border border-gray-800 bg-gray-900 p-3"></div>
+            </section>
+
+            <section class="rounded-2xl border panel p-5" data-auto-collapsible="heatmap-drilldown" data-collapse-title="Cell Drilldown">
+                <div class="mb-4 flex items-center justify-between gap-4">
+                    <div>
+                        <h2 class="text-xl font-bold text-amber-300">Cell Drilldown</h2>
+                        <p id="drilldownLabel" class="text-xs uppercase tracking-widest text-gray-500">Select a heatmap cell to inspect the protocol and port composition.</p>
+                    </div>
+                </div>
+                <div id="drilldownEmpty" class="rounded-2xl border border-dashed border-gray-800 bg-gray-900 p-8 text-center text-sm text-gray-500">
+                    Click a populated heatmap cell to show the contributing protocols and ports.
+                </div>
+                <div id="drilldownPanel" class="hidden space-y-4">
+                    <div class="grid gap-4 xl:grid-cols-[300px_300px_minmax(0,1.35fr)] 2xl:grid-cols-[320px_320px_minmax(0,1.5fr)]">
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                            <label class="mb-3 block text-sm font-semibold text-gray-300">Protocol Filter</label>
+                            <div id="drilldownProtocolFilterWrap"></div>
+                        </div>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                            <label class="mb-3 block text-sm font-semibold text-gray-300">Port Filter</label>
+                            <div id="drilldownPortFilterWrap"></div>
+                        </div>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                            <p class="text-xs uppercase tracking-widest text-gray-500">Drilldown Filters</p>
+                            <p class="mt-2 text-sm" style="color: var(--text);">Use pivot-style filters to narrow the selected cell by protocol and port.</p>
+                            <button id="clearDrilldownFiltersBtn" type="button" class="mt-4 rounded-lg px-4 py-2 text-sm font-semibold panel-soft">Clear Drilldown Filters</button>
+                        </div>
+                    </div>
+                    <div class="grid gap-4 md:grid-cols-3">
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                            <p class="text-xs uppercase tracking-widest text-gray-500">Selected Pair Flows</p>
+                            <p id="drilldownFlows" class="mt-2 text-3xl font-bold text-emerald-300">0</p>
+                        </div>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                            <p class="text-xs uppercase tracking-widest text-gray-500">Unique Connections</p>
+                            <p id="drilldownConnections" class="mt-2 text-3xl font-bold text-amber-300">0</p>
+                        </div>
+                        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+                            <p class="text-xs uppercase tracking-widest text-gray-500">Protocols / Ports</p>
+                            <p id="drilldownRows" class="mt-2 text-3xl font-bold text-cyan-400">0</p>
+                        </div>
+                    </div>
+                    <div class="overflow-hidden rounded-2xl border border-gray-800 bg-gray-900">
+                        <table class="min-w-full divide-y divide-gray-800">
+                            <thead class="bg-gray-900/80">
+                                <tr class="text-left text-xs uppercase tracking-widest text-gray-500">
+                                    <th class="px-5 py-4">Protocol</th>
+                                    <th class="px-5 py-4">Port</th>
+                                    <th class="px-5 py-4">Flows</th>
+                                    <th class="px-5 py-4">Unique Connections</th>
+                                </tr>
+                            </thead>
+                            <tbody id="drilldownBody" class="divide-y divide-gray-800 text-sm"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script src="/blocked-traffic/assets/app-version.js"></script>
+    <script src="/blocked-traffic/assets/collapsible.js"></script>
+    <script>
+        let latestInsights = {};
+        let currentMode = 'env';
+		let primaryDimensionName = 'Environment';
+		let secondaryDimensionName = 'Application';
+        let selectedCellKey = null;
+        let selectedDrilldownPair = null;
+        const filterState = {
+            source: new Set(),
+            destination: new Set(),
+            drillProtocol: new Set(),
+            drillPort: new Set()
+        };
+
+        function applyTheme(theme) {
+            document.body.dataset.theme = theme;
+            localStorage.setItem('ittTheme', theme);
+            document.getElementById('defaultThemeBtn').classList.toggle('active', theme === 'default');
+            document.getElementById('illumioThemeBtn').classList.toggle('active', theme === 'illumio');
+            document.getElementById('illumioLightThemeBtn').classList.toggle('active', theme === 'illumio-light');
+            document.querySelectorAll('[data-theme-option]').forEach((button) => {
+                button.setAttribute('aria-pressed', String(button.dataset.themeOption === theme));
+            });
+        }
+
+        function loadSavedTheme() {
+            applyTheme(localStorage.getItem('ittTheme') || 'default');
+        }
+
+        function formatNumber(value) {
+            return new Intl.NumberFormat().format(value || 0);
+        }
+
+        function escapeHtml(value) {
+            return String(value)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+		function dimensionName(key, fallback) {
+			const value = String(key || '').trim();
+			if (!value) return fallback;
+			if (value.toLowerCase() === 'env') return 'Environment';
+			if (value.toLowerCase() === 'app') return 'Application';
+			return value;
+		}
+
+		function applyDimensionMetadata(insights) {
+			primaryDimensionName = dimensionName(insights.primary_label_key, 'Environment');
+			secondaryDimensionName = dimensionName(insights.secondary_label_key, 'Application');
+			document.getElementById('envModeBtn').innerText = primaryDimensionName;
+			document.getElementById('appModeBtn').innerText = secondaryDimensionName;
+			document.getElementById('combinedModeBtn').innerText = `${primaryDimensionName} + ${secondaryDimensionName}`;
+		}
+
+        function renderCheckboxFilter(containerId, items, stateKey, placeholder, options = {}) {
+            const container = document.getElementById(containerId);
+            const selectedValues = filterState[stateKey] || new Set();
+            const countLabel = selectedValues.size === 0 ? placeholder : `${selectedValues.size} selected`;
+            container.innerHTML = `
+                <div class="filter-dropdown" data-filter-dropdown="${stateKey}">
+                    <button type="button" class="filter-trigger flex w-full items-center justify-between rounded-xl px-3 py-3 text-sm font-medium" data-filter-trigger>
+                        <span>${escapeHtml(countLabel)}</span>
+                        <span class="muted text-xs">▼</span>
+                    </button>
+                    <div class="filter-menu hidden p-3" data-filter-menu>
+                        <input type="text" class="filter-search mb-3 w-full rounded-lg px-3 py-2 text-sm" placeholder="Search..." data-filter-search>
+                        <div class="mb-3 flex gap-2">
+                            <button type="button" class="rounded-lg px-3 py-2 text-xs font-semibold panel-soft" data-filter-select-all>Select All</button>
+                            <button type="button" class="rounded-lg px-3 py-2 text-xs font-semibold panel-soft" data-filter-clear>Clear</button>
+                        </div>
+                        <div class="max-h-64 space-y-1 overflow-auto" data-filter-options></div>
+                    </div>
+                </div>
+            `;
+
+            const root = container.querySelector('[data-filter-dropdown]');
+            const trigger = root.querySelector('[data-filter-trigger]');
+            const menu = root.querySelector('[data-filter-menu]');
+            const search = root.querySelector('[data-filter-search]');
+            const optionsWrap = root.querySelector('[data-filter-options]');
+            const preservedSearch = options.searchTerm || '';
+
+            function renderOptions(searchTerm = '') {
+                const term = searchTerm.trim().toLowerCase();
+                optionsWrap.innerHTML = '';
+                items
+                    .filter((item) => item.toLowerCase().includes(term))
+                    .forEach((item) => {
+                        const checked = selectedValues.has(item);
+                        const label = document.createElement('label');
+                        label.className = 'filter-option flex items-center gap-2 rounded-lg px-2 py-2 text-sm';
+                        label.innerHTML = `
+                            <input type="checkbox" ${checked ? 'checked' : ''} data-value="${escapeHtml(item)}">
+                            <span>${escapeHtml(item)}</span>
+                        `;
+                        optionsWrap.appendChild(label);
+                    });
+
+                optionsWrap.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+                    checkbox.addEventListener('change', () => {
+                        const value = checkbox.dataset.value;
+                        if (checkbox.checked) selectedValues.add(value);
+                        else selectedValues.delete(value);
+                        filterState[stateKey] = selectedValues;
+                        renderCheckboxFilter(containerId, items, stateKey, placeholder, { keepOpen: true, searchTerm: search.value });
+                        runFiltersForState(stateKey);
+                    });
+                });
+            }
+
+            trigger.addEventListener('click', (event) => {
+                event.stopPropagation();
+                document.querySelectorAll('[data-filter-menu]').forEach((other) => {
+                    if (other !== menu) other.classList.add('hidden');
+                });
+                menu.classList.toggle('hidden');
+                if (!menu.classList.contains('hidden')) search.focus();
+            });
+
+            root.querySelector('[data-filter-select-all]').addEventListener('click', () => {
+                items.forEach((item) => selectedValues.add(item));
+                filterState[stateKey] = selectedValues;
+                renderCheckboxFilter(containerId, items, stateKey, placeholder, { keepOpen: true, searchTerm: search.value });
+                runFiltersForState(stateKey);
+            });
+
+            root.querySelector('[data-filter-clear]').addEventListener('click', () => {
+                selectedValues.clear();
+                filterState[stateKey] = selectedValues;
+                renderCheckboxFilter(containerId, items, stateKey, placeholder, { keepOpen: true, searchTerm: search.value });
+                runFiltersForState(stateKey);
+            });
+
+            search.addEventListener('input', () => renderOptions(search.value));
+            search.value = preservedSearch;
+            renderOptions(preservedSearch);
+            if (options.keepOpen) {
+                menu.classList.remove('hidden');
+                search.focus();
+                search.setSelectionRange(search.value.length, search.value.length);
+            }
+        }
+
+        document.addEventListener('click', (event) => {
+            if (!event.target.closest('[data-filter-dropdown]')) {
+                document.querySelectorAll('[data-filter-menu]').forEach((menu) => menu.classList.add('hidden'));
+            }
+        });
+
+        function applyMode(mode) {
+            currentMode = mode;
+            document.getElementById('envModeBtn').classList.toggle('active', mode === 'env');
+            document.getElementById('appModeBtn').classList.toggle('active', mode === 'app');
+            document.getElementById('combinedModeBtn').classList.toggle('active', mode === 'combined');
+            document.getElementById('heatmapTitle').innerText = mode === 'env'
+				? `${primaryDimensionName} Heatmap`
+                : mode === 'app'
+					? `${secondaryDimensionName} Heatmap`
+					: `${primaryDimensionName} + ${secondaryDimensionName} Heatmap`;
+            document.getElementById('heatmapSubtitle').innerText = mode === 'env'
+				? `Source ${primaryDimensionName} to destination ${primaryDimensionName}`
+                : mode === 'app'
+					? `Source ${secondaryDimensionName} to destination ${secondaryDimensionName}`
+					: `Source ${primaryDimensionName}/${secondaryDimensionName} to destination ${primaryDimensionName}/${secondaryDimensionName}`;
+            selectedCellKey = null;
+            populateFilterOptions();
+            renderHeatmap();
+            resetDrilldown();
+        }
+
+        function getCurrentPivotRows() {
+            if (currentMode === 'env') {
+                return (latestInsights.env_service_pivot || []).map((row) => ({
+                    source: row.source_env,
+                    destination: row.destination_env,
+                    protocol: row.protocol,
+                    port: row.port,
+                    flow_count: row.flow_count,
+                    unique_connections: row.unique_connections
+                }));
+            }
+            if (currentMode === 'app') {
+                return (latestInsights.app_service_pivot || []).map((row) => ({
+                    source: row.source_app,
+                    destination: row.destination_app,
+                    protocol: row.protocol,
+                    port: row.port,
+                    flow_count: row.flow_count,
+                    unique_connections: row.unique_connections
+                }));
+            }
+            return (latestInsights.combined_service_pivot || []).map((row) => ({
+                source: row.source_combined,
+                destination: row.destination_combined,
+                protocol: row.protocol,
+                port: row.port,
+                flow_count: row.flow_count,
+                unique_connections: row.unique_connections
+            }));
+        }
+
+        function populateFilterOptions() {
+            const rows = getCurrentPivotRows();
+            const sources = Array.from(new Set(rows.map((row) => row.source))).sort((a, b) => a.localeCompare(b));
+            const destinations = Array.from(new Set(rows.map((row) => row.destination))).sort((a, b) => a.localeCompare(b));
+            filterState.source = new Set(Array.from(filterState.source).filter((item) => sources.includes(item)));
+            filterState.destination = new Set(Array.from(filterState.destination).filter((item) => destinations.includes(item)));
+            renderCheckboxFilter('sourceFilterWrap', sources, 'source', 'All Sources');
+            renderCheckboxFilter('destinationFilterWrap', destinations, 'destination', 'All Destinations');
+        }
+
+        function filterPivotRows(rows) {
+            const selectedSources = filterState.source;
+            const selectedDestinations = filterState.destination;
+            return rows.filter((row) => {
+                if (selectedSources.size > 0 && !selectedSources.has(row.source)) return false;
+                if (selectedDestinations.size > 0 && !selectedDestinations.has(row.destination)) return false;
+                return true;
+            });
+        }
+
+        function getCurrentDrilldownRows() {
+            if (!selectedDrilldownPair) return [];
+            const { source, destination } = selectedDrilldownPair;
+            return filterPivotRows(getCurrentPivotRows())
+                .filter((row) => row.source === source && row.destination === destination);
+        }
+
+        function filterDrilldownRows(rows) {
+            return rows.filter((row) => {
+                if (filterState.drillProtocol.size > 0 && !filterState.drillProtocol.has(row.protocol)) return false;
+                if (filterState.drillPort.size > 0 && !filterState.drillPort.has(String(row.port))) return false;
+                return true;
+            });
+        }
+
+        function populateDrilldownFilters(rows) {
+            const protocols = Array.from(new Set(rows.map((row) => row.protocol))).sort((a, b) => a.localeCompare(b));
+            const ports = Array.from(new Set(rows.map((row) => String(row.port)))).sort((a, b) => Number(a) - Number(b));
+            filterState.drillProtocol = new Set(Array.from(filterState.drillProtocol).filter((item) => protocols.includes(item)));
+            filterState.drillPort = new Set(Array.from(filterState.drillPort).filter((item) => ports.includes(item)));
+            renderCheckboxFilter('drilldownProtocolFilterWrap', protocols, 'drillProtocol', 'All Protocols');
+            renderCheckboxFilter('drilldownPortFilterWrap', ports, 'drillPort', 'All Ports');
+        }
+
+        function runFiltersForState(stateKey) {
+            if (stateKey === 'source' || stateKey === 'destination') {
+                selectedCellKey = null;
+                selectedDrilldownPair = null;
+                filterState.drillProtocol.clear();
+                filterState.drillPort.clear();
+                renderHeatmap();
+                resetDrilldown();
+                return;
+            }
+            if (selectedDrilldownPair) {
+                renderDrilldown(selectedDrilldownPair.source, selectedDrilldownPair.destination);
+            }
+        }
+
+        function resetDrilldown() {
+            document.getElementById('drilldownEmpty').classList.remove('hidden');
+            document.getElementById('drilldownPanel').classList.add('hidden');
+            document.getElementById('drilldownLabel').innerText = 'Select a heatmap cell to inspect the protocol and port composition.';
+            document.getElementById('drilldownProtocolFilterWrap').innerHTML = '';
+            document.getElementById('drilldownPortFilterWrap').innerHTML = '';
+        }
+
+        function renderDrilldown(source, destination) {
+            selectedDrilldownPair = { source, destination };
+            const baseRows = getCurrentDrilldownRows();
+            populateDrilldownFilters(baseRows);
+            const rows = filterDrilldownRows(baseRows)
+                .sort((a, b) => {
+                    if (b.flow_count !== a.flow_count) return b.flow_count - a.flow_count;
+                    if (a.protocol !== b.protocol) return a.protocol.localeCompare(b.protocol);
+                    return a.port - b.port;
+                });
+
+            if (rows.length === 0) {
+                resetDrilldown();
+                return;
+            }
+
+            const totalFlows = rows.reduce((sum, row) => sum + (row.flow_count || 0), 0);
+            const totalConnections = rows.reduce((sum, row) => sum + (row.unique_connections || 0), 0);
+            document.getElementById('drilldownLabel').innerText = `${source} -> ${destination}`;
+            document.getElementById('drilldownFlows').innerText = formatNumber(totalFlows);
+            document.getElementById('drilldownConnections').innerText = formatNumber(totalConnections);
+            document.getElementById('drilldownRows').innerText = formatNumber(rows.length);
+
+            const body = document.getElementById('drilldownBody');
+            body.innerHTML = '';
+            rows.forEach((row) => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-800/60';
+                tr.innerHTML = `
+                    <td class="px-5 py-4 font-medium" style="color: var(--text);">${escapeHtml(row.protocol)}</td>
+                    <td class="px-5 py-4" style="color: var(--text);">${formatNumber(row.port)}</td>
+                    <td class="px-5 py-4 text-emerald-300">${formatNumber(row.flow_count)}</td>
+                    <td class="px-5 py-4 text-amber-200">${formatNumber(row.unique_connections)}</td>
+                `;
+                body.appendChild(tr);
+            });
+
+            document.getElementById('drilldownEmpty').classList.add('hidden');
+            document.getElementById('drilldownPanel').classList.remove('hidden');
+        }
+
+        function renderHeatmap() {
+            const allRows = filterPivotRows(getCurrentPivotRows());
+            const hideEmpty = document.getElementById('hideEmptyToggle').checked;
+            const sourceTotals = new Map();
+            const destinationTotals = new Map();
+            const pairMap = new Map();
+
+            allRows.forEach((row) => {
+                sourceTotals.set(row.source, (sourceTotals.get(row.source) || 0) + (row.flow_count || 0));
+                destinationTotals.set(row.destination, (destinationTotals.get(row.destination) || 0) + (row.flow_count || 0));
+                const key = `${row.source}|||${row.destination}`;
+                if (!pairMap.has(key)) {
+                    pairMap.set(key, { source: row.source, destination: row.destination, flow_count: 0, unique_connections: 0 });
+                }
+                const entry = pairMap.get(key);
+                entry.flow_count += row.flow_count || 0;
+                entry.unique_connections += row.unique_connections || 0;
+            });
+
+            const sourceList = Array.from(sourceTotals.entries())
+                .filter((entry) => !hideEmpty || entry[1] > 0)
+                .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                .map((entry) => entry[0]);
+            const destinationList = Array.from(destinationTotals.entries())
+                .filter((entry) => !hideEmpty || entry[1] > 0)
+                .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                .map((entry) => entry[0]);
+
+            document.getElementById('visibleRowCount').innerText = formatNumber(sourceList.length);
+            document.getElementById('visibleColCount').innerText = formatNumber(destinationList.length);
+            document.getElementById('visibleFlowCount').innerText = formatNumber(allRows.reduce((sum, row) => sum + (row.flow_count || 0), 0));
+
+            const wrap = document.getElementById('heatmapWrap');
+            if (sourceList.length === 0 || destinationList.length === 0) {
+                wrap.innerHTML = '<div class="p-8 text-center text-sm text-gray-500">No heatmap data matches the current filters.</div>';
+                resetDrilldown();
+                return;
+            }
+
+            const aggregatedPairs = Array.from(pairMap.values());
+            const maxFlow = aggregatedPairs.reduce((max, row) => Math.max(max, row.flow_count || 0), 0) || 1;
+            const selectedKey = selectedCellKey;
+
+            let html = '<table class="heatmap-table text-xs"><thead><tr>';
+            const headerLabel = currentMode === 'env'
+				? `Source ${primaryDimensionName} \\ Destination ${primaryDimensionName}`
+                : currentMode === 'app'
+					? `Source ${secondaryDimensionName} \\ Destination ${secondaryDimensionName}`
+					: `Source ${primaryDimensionName}/${secondaryDimensionName} \\ Destination ${primaryDimensionName}/${secondaryDimensionName}`;
+			html += `<th class="heatmap-row-header px-3 py-2 text-left text-gray-500">${escapeHtml(headerLabel)}</th>`;
+            destinationList.forEach((destination) => {
+                html += `<th class="px-3 py-2 text-left text-gray-500">${escapeHtml(destination)}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+
+            sourceList.forEach((source) => {
+                html += `<tr><th class="heatmap-row-header px-3 py-3 text-left font-semibold text-gray-300">${escapeHtml(source)}</th>`;
+                destinationList.forEach((destination) => {
+                    const key = `${source}|||${destination}`;
+                    const row = pairMap.get(key);
+                    const flowCount = row ? row.flow_count || 0 : 0;
+                    const uniqueConnections = row ? row.unique_connections || 0 : 0;
+                    const intensity = flowCount / maxFlow;
+                    const alpha = flowCount > 0 ? 0.1 + (intensity * 0.8) : 0.04;
+                    const background = flowCount > 0
+                        ? `rgba(34, 211, 238, ${alpha.toFixed(3)})`
+                        : 'rgba(31, 41, 55, 0.28)';
+                    const clickable = flowCount > 0;
+                    const selectedClass = selectedKey === key ? 'is-selected' : '';
+                    html += `
+                        <td class="heatmap-cell ${selectedClass}" data-clickable="${clickable ? 'true' : 'false'}" data-source="${escapeHtml(source)}" data-destination="${escapeHtml(destination)}" style="background:${background}; color: var(--text);">
+                            <div class="px-3 py-3">
+                                <div class="text-lg font-bold">${formatNumber(flowCount)}</div>
+                                <div class="mt-1 text-[11px] muted">${formatNumber(uniqueConnections)} uniq</div>
+                            </div>
+                        </td>
+                    `;
+                });
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+            wrap.innerHTML = html;
+
+            wrap.querySelectorAll('.heatmap-cell[data-clickable="true"]').forEach((cell) => {
+                cell.addEventListener('click', () => {
+                    selectedCellKey = `${cell.dataset.source}|||${cell.dataset.destination}`;
+                    filterState.drillProtocol.clear();
+                    filterState.drillPort.clear();
+                    renderHeatmap();
+                    renderDrilldown(cell.dataset.source, cell.dataset.destination);
+                });
+            });
+
+            if (selectedKey && pairMap.has(selectedKey)) {
+                const [source, destination] = selectedKey.split('|||');
+                renderDrilldown(source, destination);
+            } else if (selectedKey && !pairMap.has(selectedKey)) {
+                selectedCellKey = null;
+                resetDrilldown();
+            }
+        }
+
+        function renderPage(payload) {
+            latestInsights = payload.insights || {};
+			applyDimensionMetadata(latestInsights);
+			const scopeLabel = payload.traffic_scope === 'all' ? 'All policy decisions' : 'Blocked traffic only';
+            document.getElementById('fileLabel').innerText = `Latest CSV: ${payload.fileName} · ${scopeLabel}`;
+			applyMode(currentMode);
+        }
+
+        async function loadHeatmaps() {
+            const fileLabel = document.getElementById('fileLabel');
+            fileLabel.innerText = 'Loading latest analytics...';
+            try {
+                const res = await fetch(`/blocked-traffic/api/results/summary?ts=${Date.now()}`, { cache: 'no-store' });
+                const data = await res.json();
+                if (!data.summary || data.summary.length === 0) {
+                    document.getElementById('emptyState').classList.remove('hidden');
+                    document.getElementById('pageContent').classList.add('hidden');
+                    fileLabel.innerText = data.fileName ? `Latest run: ${data.fileName}` : 'No successful fetch or import is currently loaded.';
+                    return;
+                }
+
+                document.getElementById('emptyState').classList.add('hidden');
+                document.getElementById('pageContent').classList.remove('hidden');
+                renderPage(data);
+            } catch (error) {
+                document.getElementById('emptyState').classList.remove('hidden');
+                document.getElementById('pageContent').classList.add('hidden');
+                fileLabel.innerText = `Failed to load heatmaps: ${error.message}`;
+            }
+        }
+
+        window.onload = () => {
+            loadSavedTheme();
+            document.getElementById('defaultThemeBtn').addEventListener('click', () => applyTheme('default'));
+            document.getElementById('illumioThemeBtn').addEventListener('click', () => applyTheme('illumio'));
+            document.getElementById('illumioLightThemeBtn').addEventListener('click', () => applyTheme('illumio-light'));
+            document.getElementById('refreshHeatmapsBtn').addEventListener('click', loadHeatmaps);
+            document.getElementById('envModeBtn').addEventListener('click', () => applyMode('env'));
+            document.getElementById('appModeBtn').addEventListener('click', () => applyMode('app'));
+            document.getElementById('combinedModeBtn').addEventListener('click', () => applyMode('combined'));
+            document.getElementById('hideEmptyToggle').addEventListener('change', () => { selectedCellKey = null; renderHeatmap(); resetDrilldown(); });
+            document.getElementById('clearFiltersBtn').addEventListener('click', () => {
+                filterState.source.clear();
+                filterState.destination.clear();
+                filterState.drillProtocol.clear();
+                filterState.drillPort.clear();
+                populateFilterOptions();
+                selectedCellKey = null;
+                selectedDrilldownPair = null;
+                renderHeatmap();
+                resetDrilldown();
+            });
+            document.getElementById('clearDrilldownFiltersBtn').addEventListener('click', () => {
+                filterState.drillProtocol.clear();
+                filterState.drillPort.clear();
+                if (selectedDrilldownPair) renderDrilldown(selectedDrilldownPair.source, selectedDrilldownPair.destination);
+            });
+            loadHeatmaps();
+        };
+    </script>
+</body>
+</html>
