@@ -959,7 +959,11 @@ func backgroundCollector() {
 }
 
 func runCollectionCycle() {
-	isRefreshing.Store(true)
+	if !isRefreshing.CompareAndSwap(false, true) {
+		log.Println("[COLLECTOR] Refresh skipped because another dashboard refresh is already running.")
+		return
+	}
+	defer isRefreshing.Store(false)
 	log.Println("[COLLECTOR] Starting PCE data collection cycle...")
 	cycleStart := time.Now().UTC()
 	apiRateLimiter.beginCycle(cycleStart, cycleStart.Add(5*time.Minute))
@@ -973,7 +977,6 @@ func runCollectionCycle() {
 	processWebhookAlerts(newStats)
 	apiRateLimiter.endCycle(time.Now().UTC())
 
-	isRefreshing.Store(false)
 	log.Println("[COLLECTOR] Cycle complete.")
 }
 
@@ -1974,8 +1977,8 @@ func handleRefreshNow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	go runCollectionCycle()
 	w.Header().Set("Content-Type", "application/json")
+	go runCollectionCycle()
 	_ = json.NewEncoder(w).Encode(map[string]bool{"started": true})
 }
 

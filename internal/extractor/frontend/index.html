@@ -346,6 +346,11 @@
                 <input id="services" type="text" placeholder="MySQL, SSH, TCP:3389, UDP:5355" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-green-500 outline-none autocomplete-services">
                 <p class="mt-2 text-xs text-gray-400">Service names from the PCE and explicit filters like <span class="font-semibold text-gray-300">TCP:445</span> are both supported.</p>
             </div>
+			<div class="col-span-2 relative">
+				<label class="block text-sm font-semibold mb-2 text-red-400 uppercase tracking-tighter">Exclusions (Services)</label>
+				<input id="exclude_services" type="text" placeholder="DNS, TCP:22, UDP:5355" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-red-500 outline-none autocomplete-services">
+				<p class="mt-2 text-xs text-gray-400">Exclude PCE service names or explicit protocol and port filters from the extraction.</p>
+			</div>
             <div class="col-span-1 relative">
                 <label class="block text-sm font-semibold mb-2 text-red-400 uppercase tracking-tighter">Exclusions (Sources)</label>
                 <input id="exclude_src" type="text" placeholder="192.168.1.1, Role: Backup" class="w-full bg-gray-700 border border-gray-600 rounded p-2 focus:ring-2 focus:ring-red-500 outline-none autocomplete">
@@ -673,7 +678,8 @@
             ['src_labels', 'dst_labels', 'exclude_src', 'exclude_dst'].forEach(id => {
                 autocomplete(document.getElementById(id), combined);
             });
-            autocomplete(document.getElementById('services'), pceServices);
+			autocomplete(document.getElementById('services'), pceServices);
+			autocomplete(document.getElementById('exclude_services'), pceServices);
         }
 
 		function populateAnalysisLabelTypes(preferredPrimary, preferredSecondary) {
@@ -779,6 +785,7 @@
             document.getElementById('exclude_src').value = p.exclude_src || '';
             document.getElementById('exclude_dst').value = p.exclude_dst || '';
             document.getElementById('services').value = p.services || '';
+			document.getElementById('exclude_services').value = p.exclude_services || '';
             document.getElementById('save_path').value = p.save_path || '';
             document.getElementById('file_name').value = p.file_name || '';
             document.getElementById('days').value = p.days || 90;
@@ -994,10 +1001,22 @@
                 const completedChunks = data.completedChunks || 0;
                 const requestedDays = data.requestedDays || 90;
                 const chunkInterval = data.chunkInterval || '1 day';
+				const activeChunks = Number(data.activeChunks || 0);
+				const lastProgressMs = Date.parse(data.lastProgressAt || '');
+				const activityAgeSeconds = Number.isFinite(lastProgressMs) ? Math.max(0, Math.floor((Date.now() - lastProgressMs) / 1000)) : null;
+				let activityLabel = '';
+				if (activeChunks > 0) {
+					const ageLabel = activityAgeSeconds === null
+						? 'awaiting PCE activity'
+						: activityAgeSeconds < 60
+							? `PCE activity ${activityAgeSeconds}s ago`
+							: `PCE activity ${Math.floor(activityAgeSeconds / 60)}m ${activityAgeSeconds % 60}s ago`;
+					activityLabel = `; ${activeChunks} active ${activeChunks === 1 ? 'chunk' : 'chunks'}; ${ageLabel}`;
+				}
                 const percent = Math.round((completedChunks / requestedChunks) * 100);
                 document.getElementById('progressBar').style.width = `${percent}%`;
                 document.getElementById('percentLabel').innerText = `${percent}%`;
-                document.getElementById('statusLabel').innerText = `Processed ${completedChunks}/${requestedChunks} ${chunkInterval} chunks across ${requestedDays} days (${data.totalConnections} unique connections)`;
+				document.getElementById('statusLabel').innerText = `Processed ${completedChunks}/${requestedChunks} ${chunkInterval} chunks across ${requestedDays} days (${data.totalConnections} unique connections${activityLabel})`;
                 if (data.newLogs) data.newLogs.forEach(msg => log(msg));
                 if (data.done || data.cancelled) {
                     clearInterval(pollingInterval); resetButtons();
@@ -1052,6 +1071,7 @@
                 exclude_src: document.getElementById('exclude_src').value,
                 exclude_dst: document.getElementById('exclude_dst').value,
                 services: document.getElementById('services').value,
+				exclude_services: document.getElementById('exclude_services').value,
 				traffic_scope: document.getElementById('traffic_scope').value || 'blocked',
                 save_path: document.getElementById('save_path').value,
                 file_name: document.getElementById('file_name').value,

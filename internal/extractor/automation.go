@@ -35,6 +35,7 @@ type ReportTemplate struct {
 	ExcludeSrc            string      `json:"exclude_src"`
 	ExcludeDst            string      `json:"exclude_dst"`
 	Services              string      `json:"services"`
+	ExcludeServices       string      `json:"exclude_services"`
 	SavePath              string      `json:"save_path"`
 	FileNamePattern       string      `json:"file_name_pattern"`
 	Days                  int         `json:"days"`
@@ -392,7 +393,8 @@ func templateToConfig(template ReportTemplate, runID string, now time.Time) Conf
 	return Config{
 		ProfileName: template.ProfileName, SrcLabels: template.SrcLabels, DstLabels: template.DstLabels,
 		ExcludeSrc: template.ExcludeSrc, ExcludeDst: template.ExcludeDst, Services: template.Services,
-		SavePath: template.SavePath, FileName: expandFileNamePattern(template.FileNamePattern, template, now, runID),
+		ExcludeServices: template.ExcludeServices,
+		SavePath:        template.SavePath, FileName: expandFileNamePattern(template.FileNamePattern, template, now, runID),
 		Days: template.Days, ChunkIntvl: template.ChunkInterval,
 		AnalysisPrimary: template.AnalysisPrimary, AnalysisSecondary: template.AnalysisSecondary,
 		TrafficScope: normalizedTrafficScope(template.TrafficScope),

@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	maxResponseBodySize = 256 << 20
-	maxCreateAttempts   = 5
+	maxResponseBodySize       = 256 << 20
+	maxCreateAttempts         = 5
+	asyncQueryHeartbeatPeriod = time.Minute
 )
 
 func responseSnippet(data []byte) string {
@@ -40,13 +41,21 @@ type Client struct {
 
 func NewClient(pceUrl, orgId, apiKey, apiSecret string) *Client {
 	baseURL := strings.TrimSuffix(strings.TrimSpace(pceUrl), "/")
+	transport := http.DefaultTransport
+	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
+		isolatedTransport := defaultTransport.Clone()
+		isolatedTransport.MaxIdleConns = 32
+		isolatedTransport.MaxIdleConnsPerHost = 8
+		transport = isolatedTransport
+	}
 	return &Client{
 		PCEURL:    baseURL,
 		OrgID:     orgId,
 		APIKey:    apiKey,
 		APISecret: apiSecret,
 		HTTP: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout:   60 * time.Second,
+			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				if len(via) >= 10 {
 					return fmt.Errorf("too many redirects")
@@ -405,10 +414,16 @@ func (c *Client) FetchDayOfTraffic(ctx context.Context, req AsyncQueryRequest, l
 		}
 	}
 	defer c.deleteAsyncResource(fmt.Sprintf("traffic_flows/async_queries/%s", queryUUID))
+	if logFn != nil {
+		logFn("PCE async query accepted; waiting for completion.")
+	}
 
 	// 2. Poll
 	backoff := 5 * time.Second
 	completedStatus := AsyncQueryStatus{}
+	pollStarted := time.Now()
+	lastHeartbeat := time.Time{}
+	lastStatus := ""
 	for {
 		data, code, err := c.request(ctx, "GET", fmt.Sprintf("traffic_flows/async_queries/%s", queryUUID), nil)
 		if err == nil && code == 200 {
@@ -416,18 +431,41 @@ func (c *Client) FetchDayOfTraffic(ctx context.Context, req AsyncQueryRequest, l
 			if err := json.Unmarshal(data, &status); err != nil {
 				return nil, fmt.Errorf("decode PCE query status: %w", err)
 			}
-			if strings.EqualFold(status.Status, "completed") {
+			normalizedStatus := strings.ToLower(strings.TrimSpace(status.Status))
+			if normalizedStatus == "" {
+				normalizedStatus = "unknown"
+			}
+			if logFn != nil && (normalizedStatus != lastStatus || lastHeartbeat.IsZero() || time.Since(lastHeartbeat) >= asyncQueryHeartbeatPeriod) {
+				countDetails := ""
+				if status.MatchesCount > 0 || status.FlowsCount > 0 {
+					countDetails = fmt.Sprintf(" (matches=%d, available=%d)", status.MatchesCount, status.FlowsCount)
+				}
+				logFn(fmt.Sprintf("PCE async query status %s after %s%s.", normalizedStatus, time.Since(pollStarted).Round(time.Second), countDetails))
+				lastHeartbeat = time.Now()
+				lastStatus = normalizedStatus
+			}
+			if normalizedStatus == "completed" {
 				completedStatus = status
 				break
 			}
-			if strings.EqualFold(status.Status, "failed") {
+			if normalizedStatus == "failed" {
 				return nil, fmt.Errorf("PCE query failed")
 			}
+		} else if logFn != nil && (lastHeartbeat.IsZero() || time.Since(lastHeartbeat) >= asyncQueryHeartbeatPeriod) {
+			if err != nil {
+				logFn(fmt.Sprintf("PCE async query status check is retrying after %s: %v.", time.Since(pollStarted).Round(time.Second), err))
+			} else {
+				logFn(fmt.Sprintf("PCE async query status check is retrying after %s (HTTP %d).", time.Since(pollStarted).Round(time.Second), code))
+			}
+			lastHeartbeat = time.Now()
 		}
 		select {
 		case <-time.After(backoff):
 			if backoff < 30*time.Second {
 				backoff = time.Duration(float64(backoff) * 1.5)
+				if backoff > 30*time.Second {
+					backoff = 30 * time.Second
+				}
 			}
 		case <-ctx.Done():
 			return nil, ctx.Err()

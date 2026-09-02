@@ -45,6 +45,7 @@ type PCEProfile struct {
 	ExcludeSrc        string `json:"exclude_src"`
 	ExcludeDst        string `json:"exclude_dst"`
 	Services          string `json:"services"`
+	ExcludeServices   string `json:"exclude_services"`
 	SavePath          string `json:"save_path"`
 	FileName          string `json:"file_name"`
 	Days              int    `json:"days"`
@@ -65,6 +66,7 @@ type PublicPCEProfile struct {
 	ExcludeSrc        string `json:"exclude_src"`
 	ExcludeDst        string `json:"exclude_dst"`
 	Services          string `json:"services"`
+	ExcludeServices   string `json:"exclude_services"`
 	SavePath          string `json:"save_path"`
 	FileName          string `json:"file_name"`
 	Days              int    `json:"days"`
@@ -86,6 +88,7 @@ func (profile PCEProfile) public() PublicPCEProfile {
 		ExcludeSrc:        profile.ExcludeSrc,
 		ExcludeDst:        profile.ExcludeDst,
 		Services:          profile.Services,
+		ExcludeServices:   profile.ExcludeServices,
 		SavePath:          profile.SavePath,
 		FileName:          profile.FileName,
 		Days:              profile.Days,
@@ -104,6 +107,9 @@ type AppState struct {
 	RequestedDays    int
 	RequestedChunks  int
 	ChunkInterval    string
+	ActiveChunks     int
+	RunStartedAt     time.Time
+	LastProgressAt   time.Time
 	DiscoveryDone    int
 	DiscoveryTotal   int
 	DiscoveryActive  bool
@@ -289,6 +295,8 @@ func addLog(msg string) {
 func markRunFinished(fileName string, cancelled bool) {
 	state.Mu.Lock()
 	cancel := state.CancelFunc
+	state.ActiveChunks = 0
+	state.LastProgressAt = time.Now().UTC()
 	state.IsDone = true
 	state.IsCancelled = cancelled
 	state.FileName = fileName
@@ -1097,6 +1105,7 @@ type Config struct {
 	ExcludeSrc        string `json:"exclude_src"`
 	ExcludeDst        string `json:"exclude_dst"`
 	Services          string `json:"services"`
+	ExcludeServices   string `json:"exclude_services"`
 	SavePath          string `json:"save_path"`
 	FileName          string `json:"file_name"`
 	Days              int    `json:"days"`
@@ -1377,6 +1386,9 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		"requestedDays":    state.RequestedDays,
 		"requestedChunks":  state.RequestedChunks,
 		"chunkInterval":    state.ChunkInterval,
+		"activeChunks":     state.ActiveChunks,
+		"runStartedAt":     state.RunStartedAt,
+		"lastProgressAt":   state.LastProgressAt,
 		"totalConnections": state.TotalConnections,
 		"newLogs":          state.Logs,
 		"done":             state.IsDone,
@@ -2303,6 +2315,9 @@ func beginExtractionWithContext(parent context.Context, cfg Config) (Config, con
 	state.RequestedDays = requestedDays
 	state.RequestedChunks = requestedChunks
 	state.ChunkInterval = chunkLabel
+	state.ActiveChunks = 0
+	state.RunStartedAt = time.Now().UTC()
+	state.LastProgressAt = state.RunStartedAt
 	state.TotalConnections = 0
 	state.IsDone = false
 	state.IsCancelled = false
@@ -2599,6 +2614,15 @@ func buildServiceIncludeEntries(raw string, serviceMap map[string][]interface{})
 	}
 
 	return includes, warnings
+}
+
+func buildServiceFilter(includeRaw, excludeRaw string, serviceMap map[string][]interface{}) (illumio.ServiceFilter, []string, []string) {
+	includeEntries, includeWarnings := buildServiceIncludeEntries(includeRaw, serviceMap)
+	excludeEntries, excludeWarnings := buildServiceIncludeEntries(excludeRaw, serviceMap)
+	return illumio.ServiceFilter{
+		Include: append(make([]interface{}, 0, len(includeEntries)), includeEntries...),
+		Exclude: append(make([]interface{}, 0, len(excludeEntries)), excludeEntries...),
+	}, includeWarnings, excludeWarnings
 }
 
 func uniqueJoinedLabelValues(labels []illumio.FlowLabel, key string) string {
@@ -2946,6 +2970,7 @@ func buildInsightsForDimensions(records []AnalyticsRecord, primaryLabelKey, seco
 }
 
 func runExtraction(ctx context.Context, cfg Config) {
+	addLog("Dashboard monitoring refreshes continue independently while this extraction runs.")
 	client := illumio.NewClient(cfg.PCEURL, cfg.OrgID, cfg.APIKey, cfg.APISecret)
 	var discoveryData DiscoveryData
 	cacheKey := discoveryCacheKey(cfg)
@@ -3037,6 +3062,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 		vsvrMap[i.Name] = i.Href
 	}
 
+	serviceFilter, serviceWarnings, serviceExclusionWarnings := buildServiceFilter(cfg.Services, cfg.ExcludeServices, serviceMap)
 	req := illumio.AsyncQueryRequest{
 		Sources: illumio.IncludeExclude{
 			Include: [][]illumio.LabelRef{},
@@ -3046,11 +3072,14 @@ func runExtraction(ctx context.Context, cfg Config) {
 			Include: [][]illumio.LabelRef{},
 			Exclude: []illumio.LabelRef{},
 		},
-		Services: illumio.ServiceFilter{
-			Include: make([]interface{}, 0),
-			Exclude: make([]interface{}, 0),
-		},
+		Services:        serviceFilter,
 		PolicyDecisions: policyDecisionsForScope(cfg.TrafficScope),
+	}
+	for _, entry := range serviceWarnings {
+		addLog(fmt.Sprintf("Warning: skipped unknown service filter '%s'", entry))
+	}
+	for _, entry := range serviceExclusionWarnings {
+		addLog(fmt.Sprintf("Warning: skipped unknown service exclusion '%s'", entry))
 	}
 
 	var selectorWarnings []string
@@ -3069,14 +3098,6 @@ func runExtraction(ctx context.Context, cfg Config) {
 	req.Destinations.Exclude, selectorWarnings = buildExcludeRefs(cfg.ExcludeDst, labelMap, ipListMap, lgMap, ugMap, vsMap, vsvrMap)
 	for _, warning := range selectorWarnings {
 		addLog(fmt.Sprintf("Warning: skipped unknown destination exclusion '%s'", warning))
-	}
-
-	if cfg.Services != "" {
-		includeEntries, warnings := buildServiceIncludeEntries(cfg.Services, serviceMap)
-		req.Services.Include = append(req.Services.Include, includeEntries...)
-		for _, entry := range warnings {
-			addLog(fmt.Sprintf("Warning: skipped unknown service filter '%s'", entry))
-		}
 	}
 
 	type FlowKey struct {
@@ -3143,6 +3164,24 @@ func runExtraction(ctx context.Context, cfg Config) {
 				case <-runCtx.Done():
 					return
 				default:
+					state.Mu.Lock()
+					state.ActiveChunks++
+					state.LastProgressAt = time.Now().UTC()
+					state.Mu.Unlock()
+					finishChunk := func() {
+						state.Mu.Lock()
+						if state.ActiveChunks > 0 {
+							state.ActiveChunks--
+						}
+						state.LastProgressAt = time.Now().UTC()
+						state.Mu.Unlock()
+					}
+					chunkLog := func(message string) {
+						state.Mu.Lock()
+						state.LastProgressAt = time.Now().UTC()
+						state.Mu.Unlock()
+						addLog(fmt.Sprintf("Chunk %d/%d: %s", chunkIdx+1, len(chunks), message))
+					}
 					chunkReq := req
 					chunkReq.StartDate = chunks[chunkIdx].Start.Format(time.RFC3339)
 					chunkReq.EndDate = chunks[chunkIdx].End.Format(time.RFC3339)
@@ -3150,21 +3189,23 @@ func runExtraction(ctx context.Context, cfg Config) {
 					var err error
 					for attempt := 1; attempt <= maxChunkAttempts; attempt++ {
 						chunkCtx, chunkCancel := context.WithTimeout(runCtx, maxChunkQueryTime)
-						flows, err = client.FetchDayOfTraffic(chunkCtx, chunkReq, addLog)
+						flows, err = client.FetchDayOfTraffic(chunkCtx, chunkReq, chunkLog)
 						chunkCancel()
 						if err == nil || runCtx.Err() != nil {
 							break
 						}
 						if attempt < maxChunkAttempts {
-							addLog(fmt.Sprintf("Chunk %d/%d attempt %d/%d failed: %v; retrying...", chunkIdx+1, len(chunks), attempt, maxChunkAttempts, err))
+							chunkLog(fmt.Sprintf("attempt %d/%d failed: %v; retrying...", attempt, maxChunkAttempts, err))
 							delay := time.Duration(1<<uint(attempt-1)) * time.Second
 							select {
 							case <-time.After(delay):
 							case <-runCtx.Done():
+								finishChunk()
 								return
 							}
 						}
 					}
+					finishChunk()
 					if err == nil {
 						aggMu.Lock()
 						for _, f := range flows {

@@ -27,6 +27,21 @@ func TestExpandFileNamePattern(t *testing.T) {
 	}
 }
 
+func TestTemplateToConfigPreservesServiceExclusions(t *testing.T) {
+	t.Parallel()
+	template := ReportTemplate{
+		Name: "All Traffic", ProfileName: "prod", Services: "HTTPS, TCP:8443",
+		ExcludeServices: "DNS, UDP:5355", TrafficScope: trafficScopeAll,
+	}
+	cfg := templateToConfig(template, "run-123", time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC))
+	if cfg.Services != template.Services || cfg.ExcludeServices != template.ExcludeServices {
+		t.Fatalf("service filters = include %q exclude %q", cfg.Services, cfg.ExcludeServices)
+	}
+	if cfg.TrafficScope != trafficScopeAll {
+		t.Fatalf("traffic scope = %q, want %q", cfg.TrafficScope, trafficScopeAll)
+	}
+}
+
 func TestScheduleExpressionsAndNextRun(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

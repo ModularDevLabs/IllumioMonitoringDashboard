@@ -124,8 +124,10 @@ This development build embeds the Blocked Traffic Extractor as an isolated modul
 - The integration is based on Blocked Traffic Extractor `v1.5.0`.
 - PCE operations require a saved extractor profile, and non-loopback PCE origins require HTTPS.
 - Manual runs and automation templates can select **Blocked traffic only** (the backward-compatible default) or **All traffic**. All-traffic queries include allowed, potentially blocked, blocked, and unknown decisions.
+- Source, destination, and service exclusions are available for manual runs, saved profiles, and automation templates. Service exclusions accept discovered PCE service names or explicit values such as `TCP:22` and `UDP:5355`.
 - All-traffic CSVs add `Policy Decision`, `Draft Policy Decision`, and `Traffic Scope` columns. Imports use these fields to retain scope and keep different decision rows distinct while preserving the established endpoint/service-based unique-connection definition.
 - A query that reaches the PCE's 200,000-row result ceiling is rejected as incomplete with guidance to select a smaller chunk interval.
+- Dashboard collection and traffic extraction run concurrently in independent Go workers with separate HTTP clients, request contexts, credentials, progress state, and retry handling. Extraction status includes active-chunk and PCE heartbeat details so long-running queries remain visibly alive while dashboard collection continues.
 - Artifact reads and writes are root-confined to prevent path and symlink traversal.
 
 See [BLOCKED_TRAFFIC_INTEGRATION.md](BLOCKED_TRAFFIC_INTEGRATION.md) for route, storage, security, and maintenance details.

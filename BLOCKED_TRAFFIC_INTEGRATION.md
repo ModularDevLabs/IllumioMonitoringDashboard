@@ -16,11 +16,15 @@ The Monitoring Dashboard remains at `/`. The integrated extractor is available a
 - Saved datasets
 - Report templates, schedules, run history, and delivery destinations
 
-Navigation links connect the dashboard, settings, drilldowns, reports, executive view, and extractor workspaces.
+Navigation links connect the dashboard, settings, drilldowns, reports, executive view, and extractor workspaces. The shared left-navigation group is labeled **Traffic** because the extractor supports both blocked-only and all-policy-decision scopes; the `/blocked-traffic/...` route prefix remains unchanged for backward compatibility.
 
 The traffic-scope selector defaults to `blocked` for backward compatibility. Selecting `all` sends an empty `policy_decisions` filter to the PCE, which returns allowed, potentially blocked, blocked, and unknown flows. The CSV records the active policy decision, draft policy decision, and selected scope. Profiles and automation templates retain the selection independently. Analytics continue to use the established endpoint/service identity for unique connections, so the same connection appearing under multiple policy decisions contributes its flows without being counted as multiple unique connections.
 
 All-traffic queries can be substantially larger. If a query reports more matches than the PCE's 200,000-row response ceiling, the extractor aborts without writing a partial CSV and instructs the user to choose a smaller chunk interval.
+
+Manual profiles and automation templates can exclude services independently of their service inclusion filter. Exclusions accept discovered PCE service names and explicit protocol/port values such as `TCP:22`, `TCP:1024-2048`, or `UDP:5355`.
+
+Dashboard collection and traffic extraction run concurrently in independent Go workers. They use separate credentials, HTTP clients, contexts, retry state, and progress state, so a dashboard refresh never cancels or replaces an extraction request. Because both functions ultimately reach the same PCE, the extractor also emits periodic per-chunk PCE heartbeats and retains its chunk timeout/retry safeguards to make server-side queueing or throttling visible without pausing dashboard collection.
 
 ## Credential boundary
 

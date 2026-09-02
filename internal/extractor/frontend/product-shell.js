@@ -24,11 +24,11 @@
             { href: '/executive', label: 'Executive View', title: 'Executive View', icon: 'executive', match: function (path) { return path === '/executive'; } },
             { href: '/trends', label: 'Trends & Reports', title: 'Trends & Reports', icon: 'trends', match: function (path) { return path === '/trends' || path === '/report'; } }
         ]},
-        { id: 'blocked-traffic', label: 'Blocked Traffic', items: [
-            { href: '/blocked-traffic/', label: 'Extract & Import', title: 'Blocked Traffic Extractor', icon: 'extract', match: function (path) { return path === '/blocked-traffic' || path === '/blocked-traffic/'; } },
+		{ id: 'blocked-traffic', label: 'Traffic', items: [
+			{ href: '/blocked-traffic/', label: 'Extract & Import', title: 'Traffic Extractor', icon: 'extract', match: function (path) { return path === '/blocked-traffic' || path === '/blocked-traffic/'; } },
             { href: '/blocked-traffic/summary', label: 'Analytics', title: 'Traffic Analytics', icon: 'analytics', match: function (path) { return path === '/blocked-traffic/summary'; } },
             { href: '/blocked-traffic/heatmaps', label: 'Heatmap Explorer', title: 'Heatmap Explorer', icon: 'heatmaps', match: function (path) { return path === '/blocked-traffic/heatmaps'; } },
-            { href: '/blocked-traffic/executive-summary', label: 'Executive Summary', title: 'Blocked Traffic Executive Summary', icon: 'trafficExecutive', match: function (path) { return path === '/blocked-traffic/executive-summary'; } }
+			{ href: '/blocked-traffic/executive-summary', label: 'Executive Summary', title: 'Traffic Executive Summary', icon: 'trafficExecutive', match: function (path) { return path === '/blocked-traffic/executive-summary'; } }
         ]},
         { id: 'automation', label: 'Automation', items: [
             { href: '/blocked-traffic/automation', label: 'Templates & Delivery', title: 'Templates & Delivery', icon: 'automation', match: function (path) { return path === '/blocked-traffic/automation'; } }
@@ -54,7 +54,7 @@
                 if (groups[g].items[i].match(path)) return { group: groups[g], item: groups[g].items[i] };
             }
         }
-        return { group: { label: isExtractor ? 'Blocked Traffic' : 'Monitoring' }, item: { title: document.title || 'Illumio Operations Hub' } };
+		return { group: { label: isExtractor ? 'Traffic' : 'Monitoring' }, item: { title: document.title || 'Illumio Operations Hub' } };
     }
 
     function savedTheme() {

@@ -16,6 +16,23 @@ func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
 }
 
+func TestNewClientUsesIndependentConnectionPools(t *testing.T) {
+	t.Parallel()
+	first := NewClient("https://pce.example.com", "1", "key-one", "secret-one")
+	second := NewClient("https://pce.example.com", "1", "key-two", "secret-two")
+	firstTransport, firstOK := first.HTTP.Transport.(*http.Transport)
+	secondTransport, secondOK := second.HTTP.Transport.(*http.Transport)
+	if !firstOK || !secondOK {
+		t.Fatalf("extractor transports = %T and %T", first.HTTP.Transport, second.HTTP.Transport)
+	}
+	if firstTransport == secondTransport || firstTransport == http.DefaultTransport || secondTransport == http.DefaultTransport {
+		t.Fatal("extractor clients should not share an HTTP connection pool")
+	}
+	if firstTransport.MaxIdleConnsPerHost < 3 || secondTransport.MaxIdleConnsPerHost < 3 {
+		t.Fatal("extractor connection pools do not support all three chunk workers")
+	}
+}
+
 func TestFetchDayOfTrafficParsesTimestampRangeAndCleansUp(t *testing.T) {
 	t.Parallel()
 
@@ -59,7 +76,10 @@ func TestFetchDayOfTrafficParsesTimestampRangeAndCleansUp(t *testing.T) {
 	})
 
 	request := AsyncQueryRequest{StartDate: "2026-03-01T00:00:00Z", EndDate: "2026-03-02T00:00:00Z"}
-	flows, err := client.FetchDayOfTraffic(context.Background(), request, nil)
+	queryLogs := []string{}
+	flows, err := client.FetchDayOfTraffic(context.Background(), request, func(message string) {
+		queryLogs = append(queryLogs, message)
+	})
 	if err != nil {
 		t.Fatalf("FetchDayOfTraffic returned error: %v", err)
 	}
@@ -77,6 +97,12 @@ func TestFetchDayOfTrafficParsesTimestampRangeAndCleansUp(t *testing.T) {
 	}
 	if !deleted {
 		t.Fatal("FetchDayOfTraffic did not delete the asynchronous query")
+	}
+	joinedLogs := strings.Join(queryLogs, "\n")
+	for _, expected := range []string{"PCE async query accepted", "PCE async query status completed"} {
+		if !strings.Contains(joinedLogs, expected) {
+			t.Fatalf("query logs are missing %q: %s", expected, joinedLogs)
+		}
 	}
 }
 

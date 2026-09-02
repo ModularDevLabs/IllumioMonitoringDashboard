@@ -116,6 +116,38 @@ func TestBuildServiceIncludeEntries(t *testing.T) {
 	}
 }
 
+func TestBuildServiceFilterIncludesAndExcludes(t *testing.T) {
+	t.Parallel()
+	serviceMap := map[string][]interface{}{
+		"SSH": {illumio.PortProtoService{Port: 22, Proto: 6}},
+		"DNS": {
+			illumio.PortProtoService{Port: 53, Proto: 6},
+			illumio.PortProtoService{Port: 53, Proto: 17},
+		},
+	}
+
+	filter, includeWarnings, excludeWarnings := buildServiceFilter(
+		"SSH, TCP:443, Missing Include",
+		"DNS, UDP:5355, Missing Exclusion",
+		serviceMap,
+	)
+	if !reflect.DeepEqual(includeWarnings, []string{"Missing Include"}) {
+		t.Fatalf("include warnings = %#v", includeWarnings)
+	}
+	if !reflect.DeepEqual(excludeWarnings, []string{"Missing Exclusion"}) {
+		t.Fatalf("exclude warnings = %#v", excludeWarnings)
+	}
+	if len(filter.Include) != 2 {
+		t.Fatalf("service includes = %#v", filter.Include)
+	}
+	if len(filter.Exclude) != 3 {
+		t.Fatalf("service exclusions = %#v", filter.Exclude)
+	}
+	if got, ok := filter.Exclude[2].(illumio.PortProtoService); !ok || got != (illumio.PortProtoService{Port: 5355, Proto: 17}) {
+		t.Fatalf("explicit exclusion = %#v", filter.Exclude[2])
+	}
+}
+
 func TestServiceEntriesFromService(t *testing.T) {
 	t.Parallel()
 
@@ -474,7 +506,7 @@ func TestPublicProfileRedactsCredentials(t *testing.T) {
 
 	profile := PCEProfile{
 		Name: "prod", APIKey: "key", APISecret: "secret", PCEURL: "https://pce.example.com", OrgID: "1",
-		AnalysisPrimary: "BU", AnalysisSecondary: "app",
+		AnalysisPrimary: "BU", AnalysisSecondary: "app", ExcludeServices: "DNS, TCP:22",
 	}
 	public := profile.public()
 	encoded, err := json.Marshal(public)
@@ -486,6 +518,9 @@ func TestPublicProfileRedactsCredentials(t *testing.T) {
 	}
 	if public.AnalysisPrimary != "BU" || public.AnalysisSecondary != "app" {
 		t.Fatalf("public profile analysis labels = %q/%q", public.AnalysisPrimary, public.AnalysisSecondary)
+	}
+	if public.ExcludeServices != profile.ExcludeServices {
+		t.Fatalf("public profile service exclusions = %q, want %q", public.ExcludeServices, profile.ExcludeServices)
 	}
 }
 
@@ -899,7 +934,7 @@ func TestApplicationHeadersUseConsistentNavigationAndThemeControls(t *testing.T)
 		t.Fatal(err)
 	}
 	productShellSource := string(productShell)
-	for _, expected := range []string{"Monitoring", "Blocked Traffic", "Automation", "Administration", "product-shell-compact", "product-shell-menu-open", "illumio_product_theme", "product-shell-sidebar-tools", "product-shell-page-toolbar"} {
+	for _, expected := range []string{"Monitoring", "Traffic", "Automation", "Administration", "product-shell-compact", "product-shell-menu-open", "illumio_product_theme", "product-shell-sidebar-tools", "product-shell-page-toolbar"} {
 		if !strings.Contains(productShellSource, expected) {
 			t.Fatalf("unified product shell is missing %q", expected)
 		}
@@ -1180,6 +1215,28 @@ func TestTrafficScopeSelectorsAreAvailableForManualAndAutomatedRuns(t *testing.T
 			if !strings.Contains(html, expected) {
 				t.Fatalf("%s is missing %q", fileName, expected)
 			}
+		}
+	}
+}
+
+func TestServiceExclusionsAndProgressHeartbeatAreExposedInUI(t *testing.T) {
+	t.Parallel()
+	manual, err := staticFiles.ReadFile("frontend/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`id="exclude_services"`, "exclude_services:", "activeChunks", "lastProgressAt", "PCE activity"} {
+		if !strings.Contains(string(manual), expected) {
+			t.Fatalf("manual extractor UI is missing %q", expected)
+		}
+	}
+	automationPage, err := staticFiles.ReadFile("frontend/automation.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`id="templateExcludeServices"`, "exclude_services:"} {
+		if !strings.Contains(string(automationPage), expected) {
+			t.Fatalf("automation UI is missing %q", expected)
 		}
 	}
 }
