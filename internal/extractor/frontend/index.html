@@ -400,7 +400,8 @@
                 </div>
                 <div>
                     <label class="block text-xs themed-muted mb-1 italic">Target Folder (Absolute path)</label>
-                    <input id="save_path" type="text" placeholder="/home/user/Desktop" class="w-full bg-gray-800 border border-gray-700 rounded p-2 outline-none text-sm">
+					<input id="save_path" type="text" required placeholder="/home/user/Desktop" class="w-full bg-gray-800 border border-gray-700 rounded p-2 outline-none text-sm">
+					<p class="mt-2 text-xs text-gray-400">Required. Use a complete local path, such as <span class="font-semibold text-gray-300">C:\Users\you\Downloads</span> on Windows or <span class="font-semibold text-gray-300">/home/you/Downloads</span> on Linux/macOS.</p>
                 </div>
             </div>
         </div>
@@ -963,6 +964,12 @@
         }
 
         async function startFetch() {
+			const outputError = validateOutputSettings();
+			if (outputError) {
+				log(`Start failed: ${outputError}`);
+				document.getElementById('save_path').focus();
+				return;
+			}
             document.getElementById('startBtn').classList.add('hidden');
             document.getElementById('cancelBtn').classList.remove('hidden');
             document.getElementById('progressArea').classList.remove('hidden');
@@ -1024,7 +1031,7 @@
                         log(`COMPLETED: ${data.fileName}`);
                         document.getElementById('summaryLinkWrap').classList.remove('hidden');
                     }
-                    if (data.done && !data.fileName && !data.cancelled) log('RUN FINISHED WITHOUT OUTPUT. Check logs for errors.');
+					if (data.done && !data.fileName && !data.cancelled) log(`RUN FAILED: ${data.error || 'No output artifact was produced. Check logs for details.'}`);
                     if (data.cancelled) log('CANCELLED BY USER');
                 }
             }, 1000);
@@ -1040,6 +1047,22 @@
             if (Number.isNaN(raw) || raw < 1) return 90;
             return Math.min(raw, 365);
         }
+
+		function validateOutputSettings() {
+			const folder = document.getElementById('save_path').value.trim();
+			const fileName = document.getElementById('file_name').value.trim();
+			if (!folder) return 'Target Folder is required and must be an absolute path.';
+			const isUnixAbsolute = folder.startsWith('/');
+			const isWindowsDriveAbsolute = /^[A-Za-z]:[\\/]/.test(folder);
+			const isWindowsUNC = /^\\\\[^\\/]+[\\/][^\\/]+/.test(folder);
+			if (!isUnixAbsolute && !isWindowsDriveAbsolute && !isWindowsUNC) {
+				return 'Target Folder must be an absolute path, such as C:\\Users\\you\\Downloads or /home/you/Downloads.';
+			}
+				if (fileName && (fileName.includes('/') || fileName.includes('\\'))) {
+				return 'Target Filename must contain only a filename; put the directory in Target Folder.';
+			}
+			return '';
+		}
 
         function getRequestedDateRange() {
             const start = document.getElementById('start_date').value;

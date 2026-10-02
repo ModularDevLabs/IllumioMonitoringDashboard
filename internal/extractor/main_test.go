@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -456,6 +457,32 @@ func TestOutputCSVPathValidation(t *testing.T) {
 	}
 	if _, err := outputCSVPath("relative", "report.csv"); err == nil {
 		t.Fatal("outputCSVPath should reject relative output directories")
+	}
+	if _, err := outputCSVPath("", "report.csv"); err == nil {
+		t.Fatal("outputCSVPath should reject a missing output directory")
+	}
+}
+
+func TestValidateOutputDestinationRejectsLateWriteFailuresBeforeExtraction(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	gotDirectory, gotName, err := validateOutputDestination(directory, "report")
+	if err != nil {
+		t.Fatalf("validateOutputDestination returned error: %v", err)
+	}
+	if gotDirectory != directory || gotName != "report.csv" {
+		t.Fatalf("normalized output = %q/%q", gotDirectory, gotName)
+	}
+	if _, _, err := validateOutputDestination(filepath.Join(directory, "missing"), "report.csv"); err == nil {
+		t.Fatal("validateOutputDestination should reject a missing directory")
+	}
+	existing := filepath.Join(directory, "existing.csv")
+	if err := os.WriteFile(existing, []byte("existing"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := validateOutputDestination(directory, "existing.csv"); err == nil {
+		t.Fatal("validateOutputDestination should reject an existing artifact")
 	}
 }
 

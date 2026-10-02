@@ -125,6 +125,7 @@ This development build embeds the Blocked Traffic Extractor as an isolated modul
 - PCE operations require a saved extractor profile, and non-loopback PCE origins require HTTPS.
 - Manual runs and automation templates can select **Blocked traffic only** (the backward-compatible default) or **All traffic**. All-traffic queries include allowed, potentially blocked, blocked, and unknown decisions.
 - Source, destination, and service exclusions are available for manual runs, saved profiles, and automation templates. Service exclusions accept discovered PCE service names or explicit values such as `TCP:22` and `UDP:5355`.
+- Extractor runs require an existing absolute target folder. The folder and filename are validated before any PCE query begins so output failures are reported immediately.
 - All-traffic CSVs add `Policy Decision`, `Draft Policy Decision`, and `Traffic Scope` columns. Imports use these fields to retain scope and keep different decision rows distinct while preserving the established endpoint/service-based unique-connection definition.
 - A query that reaches the PCE's 200,000-row result ceiling is rejected as incomplete with guidance to select a smaller chunk interval.
 - Dashboard collection and traffic extraction run concurrently in independent Go workers with separate HTTP clients, request contexts, credentials, progress state, and retry handling. Extraction status includes active-chunk and PCE heartbeat details so long-running queries remain visibly alive while dashboard collection continues.
@@ -290,8 +291,9 @@ Runtime state is stored in a shared data directory:
 | `tampering_anomaly_days` | Tampering daily baseline lookback days (when baseline=`daily`) | blocked days fallback | Range `1..3650` |
 | `tampering_anomaly_min_coverage_pct` | Tampering minimum daily baseline coverage before anomaly checks | blocked min coverage fallback | Range `1..100` |
 | `tampering_daily_anomaly_pct` | Tampering threshold when baseline=`daily` | tampering anomaly fallback | Range `1..10000` |
-| `traffic_targets[]` | Blocked traffic targets | built-in defaults | Each item has `name`, `kind`, optional per-target MA/anomaly overrides, and blocked alert controls |
+| `traffic_targets[]` | Blocked traffic targets | built-in defaults | Each item has `name`, `kind`, optional `service_exclusions`, per-target MA/anomaly overrides, and blocked alert controls |
 | `traffic_source_exclusions[]` | Source exclusions for blocked queries | empty | Each item has `name`, `kind`; field can be cleared to disable exclusions |
+| `traffic_service_exclusions[]` | Global service exclusions for blocked queries | empty | Direct `PROTO:port`/range selectors or exact active PCE service object names; omitted from reporting, baselines, anomaly detection, and alerts |
 | `webhook_enabled` | Enable webhook alert sends | `false` | Requires valid `webhook_url` |
 | `webhook_url` | Webhook endpoint | empty | Used for alert transitions + test webhook |
 | `webhook_provider` | Payload format | `generic` | `generic`, `slack`, `teams` |
@@ -343,13 +345,30 @@ Guidance:
 ```json
 {
   "traffic_targets": [
-    { "name": "LG-E-PROD-ENVS", "kind": "label_group", "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_alert_enabled": true, "blocked_alert_min_latest": 0 },
+    { "name": "LG-E-PROD-ENVS", "kind": "label_group", "service_exclusions": ["TCP:9300"], "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_alert_enabled": true, "blocked_alert_min_latest": 0 },
     { "name": "LG-E-NONPROD-ENVS", "kind": "label_group" },
     { "name": "E-WEB", "kind": "label" },
     { "name": "SOME-NAME", "kind": "auto" }
   ]
 }
 ```
+
+Optional service exclusions can be global, per target, or both. Per-target entries are added to the global list:
+
+```json
+{
+  "traffic_service_exclusions": ["Approved Backup Service", "UDP:53"],
+  "traffic_targets": [
+    { "name": "LG-E-PROD-ENVS", "kind": "label_group", "service_exclusions": ["TCP:9300", "TCP:8000-8100"] }
+  ]
+}
+```
+
+- Direct selectors accept `TCP:9300`, `UDP:53`, `TCP:8000-8100`, numeric protocols, `9300/TCP`, or `9300 TCP`.
+- A named selector is matched case-insensitively against active PCE policy service objects. Service names must be unique; duplicate matches are rejected so an exclusion cannot silently become broader than intended.
+- Unknown or ambiguous named services, catalog retrieval failures, and malformed direct selectors are rejected before settings are saved rather than running an unfiltered query.
+- Exclusions are sent in the PCE Explorer query itself, so excluded traffic never enters reports, rolling state, baselines, anomaly calculations, or webhooks.
+- Changing an effective exclusion resets the affected target's rolling state and starts an authoritative retained-history reconciliation. Existing daily totals remain preserved but hidden until that reconciliation succeeds. Historical hostname detail for that target restarts from the change because it cannot be reconstructed from count-only history.
 
 Optional source exclusions (leave empty to disable exclusions):
 
@@ -374,6 +393,7 @@ Optional per-target blocked anomaly overrides:
 - `blocked_anomaly_pct`: anomaly threshold percent for this target only (1-10000)
 - `blocked_alert_enabled`: set `false` to disable blocked anomaly alerts for this target
 - `blocked_alert_min_latest`: per-target minimum latest 5m blocked value required to alert (`0` inherits global `blocked_alert_min_latest`)
+- `service_exclusions`: services excluded only for this target, in addition to global `traffic_service_exclusions`
 - If omitted, global blocked anomaly settings are used.
 
 If `traffic_targets` is omitted, defaults are used:
@@ -505,13 +525,14 @@ Use `/settings` to manage webhook alerting:
 - `GET /api/config/targets`:
   - Current configured traffic targets
   - Current configured traffic source exclusions
+  - Current global and per-target traffic service exclusions
   - Current `history_days`
   - Current blocked moving-average and anomaly settings
   - Current `timezone`
   - Current `bind_address` and `public_base_url`
 - `PUT /api/config/targets`:
   - Save traffic/data settings
-  - body: `{ "traffic_targets": [{"name":"...","kind":"...","blocked_alert_enabled":true,"blocked_alert_min_latest":0}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "blocked_host_metrics_enabled": false, "blocked_host_retention_mode": "rolling_24h_plus_daily", "rules_metrics_enabled": false, "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_alert_min_latest": 0, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
+  - body: `{ "traffic_targets": [{"name":"...","kind":"...","service_exclusions":["TCP:9300"],"blocked_alert_enabled":true,"blocked_alert_min_latest":0}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "traffic_service_exclusions": ["Approved Backup Service"], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "blocked_host_metrics_enabled": false, "blocked_host_retention_mode": "rolling_24h_plus_daily", "rules_metrics_enabled": false, "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_alert_min_latest": 0, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
 - `POST /api/refresh`:
   - Trigger immediate collection cycle
 - `POST /api/refresh/policy-metrics`:

@@ -1,5 +1,19 @@
 # Release Notes
 
+## v1.3.0-rc.5 - 2026-10-02
+
+### Added
+- Global and per-target monitoring service exclusions for direct protocol/port selectors and active PCE policy service object names.
+- Exclusions apply at query time across live totals, port/host detail, retained history, baselines, anomalies, and alerting.
+- Effective filter changes reset affected rolling state and trigger retained-history reconciliation while preserving and hiding prior daily data until the rebuild succeeds.
+- Named exclusions are validated against the complete active-service catalog (including the PCE asynchronous collection path beyond 500 objects) before settings are saved; missing or ambiguous service names fail safely.
+
+### Fixed
+- Extractor runs now validate the required absolute target folder and filename before querying the PCE, and the UI reports the actual output error instead of ending with a generic no-output message.
+- Failed blocked-traffic target queries no longer resolve an active anomaly alert as if traffic had recovered.
+- Service-exclusion changes, PCE credential updates, collector commits, retained-history writes, and alert transitions are serialized so superseded traffic cannot re-enter baselines or trigger stale notifications.
+- Direct config-file reloads reject duplicate case-insensitive traffic target names that would otherwise collide in history and alert state.
+
 ## v1.2.11 - 2026-04-17
 
 ### Fixed

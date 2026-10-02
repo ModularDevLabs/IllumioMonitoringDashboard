@@ -1394,6 +1394,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		"done":             state.IsDone,
 		"cancelled":        state.IsCancelled,
 		"fileName":         state.FileName,
+		"error":            state.RunError,
 		"discoveryDone":    state.DiscoveryDone,
 		"discoveryTotal":   state.DiscoveryTotal,
 		"discoveryActive":  state.DiscoveryActive,
@@ -2305,6 +2306,12 @@ func beginExtractionWithContext(parent context.Context, cfg Config) (Config, con
 	if requestedChunks > maxExtractionChunks {
 		return Config{}, nil, fmt.Errorf("the requested extraction would create %d chunks; the limit is %d", requestedChunks, maxExtractionChunks)
 	}
+	outputDirectory, outputName, err := validateOutputDestination(resolved.SavePath, resolved.FileName)
+	if err != nil {
+		return Config{}, nil, err
+	}
+	resolved.SavePath = outputDirectory
+	resolved.FileName = outputName
 
 	state.Mu.Lock()
 	if state.CancelFunc != nil {
@@ -2386,12 +2393,32 @@ func outputCSVPath(savePath, fileName string) (string, error) {
 	}
 	dir := strings.TrimSpace(savePath)
 	if dir == "" {
-		return name, nil
+		return "", fmt.Errorf("target folder is required and must be an absolute path")
 	}
 	if !filepath.IsAbs(dir) {
 		return "", fmt.Errorf("target folder must be an absolute path")
 	}
 	return filepath.Join(filepath.Clean(dir), name), nil
+}
+
+func validateOutputDestination(savePath, fileName string) (string, string, error) {
+	finalPath, err := outputCSVPath(savePath, fileName)
+	if err != nil {
+		return "", "", err
+	}
+	directory := filepath.Dir(finalPath)
+	name := filepath.Base(finalPath)
+	root, err := openExistingRoot(directory)
+	if err != nil {
+		return "", "", fmt.Errorf("target folder %q is unavailable: %w", directory, err)
+	}
+	defer root.Close()
+	if _, err := root.Lstat(name); err == nil {
+		return "", "", fmt.Errorf("target file already exists: %s; choose a different filename", finalPath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", "", fmt.Errorf("cannot validate target file %q: %w", finalPath, err)
+	}
+	return directory, name, nil
 }
 
 func looksLikeIPAddress(value string) bool {

@@ -32,11 +32,14 @@
   "tampering_anomaly_min_coverage_pct": 70,
   "tampering_daily_anomaly_pct": 50,
   "traffic_targets": [
-    { "name": "LG-E-PROD-ENVS", "kind": "auto" },
+    { "name": "LG-E-PROD-ENVS", "kind": "auto", "service_exclusions": ["TCP:9300"] },
     { "name": "LG-E-NONPROD-ENVS", "kind": "auto" }
   ],
   "traffic_source_exclusions": [
     { "name": "LG-SCANNERS", "kind": "auto" }
+  ],
+  "traffic_service_exclusions": [
+    "Approved Backup Service"
   ],
   "webhook_enabled": false,
   "webhook_provider": "generic",
