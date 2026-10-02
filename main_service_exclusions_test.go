@@ -13,6 +13,22 @@ import (
 	"time"
 )
 
+func useTestPCEOrigin(t *testing.T, pceURL string) {
+	t.Helper()
+	configMutex.Lock()
+	original := config
+	config.PCEURL = pceURL
+	config.OrgID = "1"
+	config.APIKey = "test-key"
+	config.APISecret = "test-secret"
+	configMutex.Unlock()
+	t.Cleanup(func() {
+		configMutex.Lock()
+		config = original
+		configMutex.Unlock()
+	})
+}
+
 func serviceFilterTestMap(t *testing.T, filter trafficServiceFilter) map[string]interface{} {
 	t.Helper()
 	b, err := json.Marshal(filter)
@@ -163,6 +179,7 @@ func TestResolveTrafficServiceExclusionsExpandsNamedServices(t *testing.T) {
 		]`))
 	}))
 	defer server.Close()
+	useTestPCEOrigin(t, server.URL)
 
 	originalClient := httpClient
 	originalLimiter := apiRateLimiter
@@ -207,6 +224,7 @@ func TestResolveTrafficServiceExclusionsRejectsAmbiguousNamedService(t *testing.
 		]`))
 	}))
 	defer server.Close()
+	useTestPCEOrigin(t, server.URL)
 
 	originalClient := httpClient
 	originalLimiter := apiRateLimiter
@@ -229,6 +247,7 @@ func TestResolveTrafficServiceExclusionsRejectsUnknownNamedService(t *testing.T)
 		_, _ = w.Write([]byte(`[{"name":"Known Service","service_ports":[{"port":443,"proto":6}]}]`))
 	}))
 	defer server.Close()
+	useTestPCEOrigin(t, server.URL)
 
 	originalClient := httpClient
 	originalLimiter := apiRateLimiter
@@ -289,6 +308,7 @@ func TestResolveTrafficServiceExclusionsLoadsAsyncCatalogBeyondSyncLimit(t *test
 		}
 	}))
 	defer server.Close()
+	useTestPCEOrigin(t, server.URL)
 
 	originalClient := httpClient
 	originalLimiter := apiRateLimiter
@@ -342,6 +362,7 @@ func TestAsyncTrafficQueryPayloadsIncludeServiceExclusions(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	defer server.Close()
+	useTestPCEOrigin(t, server.URL)
 
 	originalClient := httpClient
 	originalLimiter := apiRateLimiter
@@ -590,6 +611,7 @@ func TestResolvedServiceFingerprintChangesWhenNamedPolicyObjectChanges(t *testin
 		}})
 	}))
 	defer server.Close()
+	useTestPCEOrigin(t, server.URL)
 
 	originalClient := httpClient
 	originalLimiter := apiRateLimiter

@@ -208,11 +208,23 @@ Runtime state is stored in a shared data directory:
 - override: `ILLUMIO_DASH_DATA_DIR`
 - optional config override: `data_dir` in `config.json`
 
+### Outbound Destination Trust
+
+Outbound PCE and webhook destinations are constrained by two trust lists that can be changed only by editing `config.json` directly:
+
+- `pce_allowed_origins` lists additional exact PCE origins that may be selected through the web settings. The origin already configured in `pce_url` remains trusted, so it does not have to be repeated in the list. PCE origins must use HTTPS; plain HTTP is accepted only for a literal loopback development endpoint such as `http://127.0.0.1:8443` or `http://localhost:8443`.
+- `webhook_private_allowed_origins` lists exact private or loopback webhook origins that are intentionally permitted. Public webhook destinations must use HTTPS. A private or loopback webhook, including a local HTTP receiver, is rejected unless its exact origin appears in this list.
+
+An origin consists only of its scheme, host, and effective port—for example `https://pce.internal:8443` or `http://127.0.0.1:9000`. Do not include a path, query string, credentials, or fragment. The Settings page can select or update destinations within these boundaries, but it cannot add trusted origins or expand either list. Edit `config.json` when a new origin must be trusted.
+
+Webhook delivery does not follow redirects or use environment-configured HTTP proxies. PCE redirects are limited to the same exact trusted origin. Link-local and cloud-metadata webhook destinations are always blocked, including when supplied through a trust list.
+
 ### Required fields
 
 ```json
 {
   "pce_url": "https://your-pce:8443",
+  "pce_allowed_origins": [],
   "api_key": "api_key_id",
   "api_secret": "api_secret",
   "org_id": "1",
@@ -247,6 +259,7 @@ Runtime state is stored in a shared data directory:
   "webhook_enabled": false,
   "webhook_provider": "generic",
   "webhook_url": "https://hooks.example.com/...",
+  "webhook_private_allowed_origins": [],
   "daily_summary_webhook_enabled": false,
   "daily_summary_webhook_provider": "generic",
   "daily_summary_webhook_url": "https://hooks.example.com/..."
@@ -257,7 +270,8 @@ Runtime state is stored in a shared data directory:
 
 | Key | Purpose | Default | Notes |
 |---|---|---|---|
-| `pce_url` | Illumio PCE base URL | none | Required |
+| `pce_url` | Illumio PCE base URL | none | Required; configured origin remains trusted; HTTPS required except literal loopback HTTP |
+| `pce_allowed_origins[]` | Additional PCE origins permitted through web settings | empty | Config-file-only exact-origin trust list; web settings cannot expand it |
 | `api_key` | PCE API key ID | none | Required |
 | `api_secret` | PCE API secret | none | Required |
 | `org_id` | PCE org ID | `1` | String in config |
@@ -295,7 +309,8 @@ Runtime state is stored in a shared data directory:
 | `traffic_source_exclusions[]` | Source exclusions for blocked queries | empty | Each item has `name`, `kind`; field can be cleared to disable exclusions |
 | `traffic_service_exclusions[]` | Global service exclusions for blocked queries | empty | Direct `PROTO:port`/range selectors or exact active PCE service object names; omitted from reporting, baselines, anomaly detection, and alerts |
 | `webhook_enabled` | Enable webhook alert sends | `false` | Requires valid `webhook_url` |
-| `webhook_url` | Webhook endpoint | empty | Used for alert transitions + test webhook |
+| `webhook_url` | Webhook endpoint | empty | Used for alert transitions + test webhook; public destinations require HTTPS |
+| `webhook_private_allowed_origins[]` | Private/loopback webhook origins permitted for anomaly and daily-summary delivery | empty | Config-file-only exact-origin trust list; web settings cannot expand it; link-local/metadata destinations remain blocked |
 | `webhook_provider` | Payload format | `generic` | `generic`, `slack`, `teams` |
 | `webhook_slack_channel` | Optional Slack channel override | empty | Some endpoints ignore override |
 | `webhook_slack_username` | Optional Slack username override | empty | Some endpoints ignore override |
@@ -485,6 +500,8 @@ Use `/settings` to manage network exposure controls:
 
 Use `/settings` to rotate API credentials without app downtime:
 - Update `PCE URL`, `Org ID`, `API Key`, and optionally `API Secret`
+- The configured PCE origin remains trusted; selecting a different origin requires it to be present in `pce_allowed_origins` in `config.json`
+- The Settings page cannot add or modify trusted PCE origins
 - Save credentials to apply on the next outbound API request (no restart required)
 - Secret is write-only in UI; UI only indicates whether a secret is currently set
 - Direct `config.json` edits are also detected and reloaded automatically before outbound API calls
@@ -495,6 +512,8 @@ Use `/settings` to manage webhook alerting:
 - Enable/disable webhook
 - Choose provider (`generic`, `slack`, `teams`)
 - Set webhook URL
+- Public webhook destinations require HTTPS; private and loopback destinations require an exact-origin entry in `webhook_private_allowed_origins` in `config.json`
+- The Settings page cannot add private webhook origins to the trust list
 - Optional Slack fields: channel, username, icon emoji
 - Optional Teams field: title prefix
 - Send test webhooks (tests every enabled webhook configuration)
@@ -556,10 +575,12 @@ Use `/settings` to manage webhook alerting:
   - Read alerting/webhook settings (anomaly webhook + daily reconcile summary webhook)
 - `PUT /api/config/alerts`:
   - Save alerting/webhook settings (anomaly webhook + daily reconcile summary webhook)
+  - Cannot expand `webhook_private_allowed_origins`; private/loopback URLs must already be trusted in `config.json`
 - `GET /api/config/credentials`:
   - Read current PCE/API credentials (`api_secret_set` is returned, secret value is never returned)
 - `PUT /api/config/credentials`:
   - Rotate PCE/API credentials at runtime (applies on next outbound API call)
+  - A changed PCE origin must match the configured origin or an entry in `pce_allowed_origins`; this API cannot expand the trust list
   - body: `{ "pce_url": "...", "org_id": "1", "api_key": "...", "api_secret": "..." }`
 - `POST /api/webhook/test`:
   - Sends test webhook events for all enabled webhook configs (anomaly webhook and/or daily reconcile summary webhook)

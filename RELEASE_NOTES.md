@@ -14,6 +14,9 @@
 - Service-exclusion changes, PCE credential updates, collector commits, retained-history writes, and alert transitions are serialized so superseded traffic cannot re-enter baselines or trigger stale notifications.
 - Direct config-file reloads reject duplicate case-insensitive traffic target names that would otherwise collide in history and alert state.
 
+### Security Hardening
+- Added config-file-only `pce_allowed_origins` and `webhook_private_allowed_origins` trust lists. Web settings cannot expand them; PCE traffic is restricted to trusted HTTPS origins (with loopback HTTP for development), PCE redirects cannot leave their trusted origin, and private webhooks require exact-origin authorization with redirects, proxy use, link-local addresses, and cloud-metadata destinations blocked.
+
 ## v1.2.11 - 2026-04-17
 
 ### Fixed

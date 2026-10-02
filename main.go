@@ -88,6 +88,7 @@ const trafficServiceCatalogCacheTTL = 5 * time.Minute
 
 type Config struct {
 	PCEURL                       string          `json:"pce_url"`
+	PCEAllowedOrigins            []string        `json:"pce_allowed_origins,omitempty"`
 	APIKey                       string          `json:"api_key"`
 	APISecret                    string          `json:"api_secret"`
 	OrgID                        string          `json:"org_id"`
@@ -119,6 +120,7 @@ type Config struct {
 	TamperingAnomalyMinPct       float64         `json:"tampering_anomaly_min_coverage_pct,omitempty"`
 	TamperingDailyAnomalyPct     float64         `json:"tampering_daily_anomaly_pct,omitempty"`
 	WebhookURL                   string          `json:"webhook_url,omitempty"`
+	WebhookPrivateAllowedOrigins []string        `json:"webhook_private_allowed_origins,omitempty"`
 	WebhookEnabled               bool            `json:"webhook_enabled,omitempty"`
 	WebhookProvider              string          `json:"webhook_provider,omitempty"`
 	WebhookSlackChannel          string          `json:"webhook_slack_channel,omitempty"`
@@ -1618,7 +1620,28 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		oldServiceExclusions := sanitizeServiceExclusions(config.TrafficServiceExclusions)
 		pceURL := strings.TrimSpace(config.PCEURL)
 		orgID := strings.TrimSpace(config.OrgID)
+		currentWebhookURL := strings.TrimSpace(config.WebhookURL)
+		currentDailySummaryWebhookURL := strings.TrimSpace(config.DailySummaryWebhookURL)
+		privateWebhookOrigins := append([]string(nil), config.WebhookPrivateAllowedOrigins...)
 		configMutex.RUnlock()
+		validatedWebhookURL := currentWebhookURL
+		if req.WebhookURL != nil {
+			var err error
+			validatedWebhookURL, err = validateWebhookSettingURL(r.Context(), *req.WebhookURL, privateWebhookOrigins)
+			if err != nil {
+				http.Error(w, "invalid webhook_url: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		validatedDailySummaryWebhookURL := currentDailySummaryWebhookURL
+		if req.DailySummaryWebhookURL != nil {
+			var err error
+			validatedDailySummaryWebhookURL, err = validateWebhookSettingURL(r.Context(), *req.DailySummaryWebhookURL, privateWebhookOrigins)
+			if err != nil {
+				http.Error(w, "invalid daily_summary_webhook_url: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
 		affectedServiceTargets := trafficTargetsWithChangedServiceExclusions(oldTargets, cleaned, oldServiceExclusions, newServiceExclusions)
 		if len(affectedServiceTargets) > 0 {
 			baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), orgID)
@@ -1733,7 +1756,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			config.DiagnosticsEnabled = *req.DiagnosticsEnabled
 		}
 		if req.WebhookURL != nil {
-			config.WebhookURL = strings.TrimSpace(*req.WebhookURL)
+			config.WebhookURL = validatedWebhookURL
 		}
 		if req.WebhookEnabled != nil {
 			config.WebhookEnabled = *req.WebhookEnabled && strings.TrimSpace(config.WebhookURL) != ""
@@ -1754,7 +1777,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			config.WebhookTeamsTitlePrefix = strings.TrimSpace(*req.WebhookTeamsTitlePrefix)
 		}
 		if req.DailySummaryWebhookURL != nil {
-			config.DailySummaryWebhookURL = strings.TrimSpace(*req.DailySummaryWebhookURL)
+			config.DailySummaryWebhookURL = validatedDailySummaryWebhookURL
 		}
 		if req.DailySummaryWebhookEnabled != nil {
 			config.DailySummaryWebhookEnabled = *req.DailySummaryWebhookEnabled && strings.TrimSpace(config.DailySummaryWebhookURL) != ""
@@ -1928,18 +1951,38 @@ func handleConfigCredentials(w http.ResponseWriter, r *http.Request) {
 
 		configUpdateMu.Lock()
 		defer configUpdateMu.Unlock()
+		configMutex.RLock()
+		currentPCEURL := strings.TrimSpace(config.PCEURL)
+		allowedPCEOrigins := append([]string(nil), config.PCEAllowedOrigins...)
+		currentOrgID := strings.TrimSpace(config.OrgID)
+		configMutex.RUnlock()
+
+		candidatePCEURL := currentPCEURL
+		if req.PCEURL != nil {
+			candidatePCEURL = strings.TrimSpace(*req.PCEURL)
+		}
+		normalizedPCEURL, err := validateAuthorizedPCEOrigin(candidatePCEURL, currentPCEURL, allowedPCEOrigins)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		candidateOrgID := currentOrgID
+		if req.OrgID != nil {
+			candidateOrgID = strings.TrimSpace(*req.OrgID)
+			if candidateOrgID == "" {
+				candidateOrgID = "1"
+			}
+		}
+		orgIDValue, err := strconv.ParseUint(candidateOrgID, 10, 64)
+		if err != nil || orgIDValue == 0 {
+			http.Error(w, "org_id must be a positive integer", http.StatusBadRequest)
+			return
+		}
+
 		configMutex.Lock()
 		oldBaseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(strings.TrimSpace(config.PCEURL), "/"), strings.TrimSpace(config.OrgID))
-		if req.PCEURL != nil {
-			config.PCEURL = strings.TrimSpace(*req.PCEURL)
-		}
-		if req.OrgID != nil {
-			clean := strings.TrimSpace(*req.OrgID)
-			if clean == "" {
-				clean = "1"
-			}
-			config.OrgID = clean
-		}
+		config.PCEURL = normalizedPCEURL
+		config.OrgID = candidateOrgID
 		if req.APIKey != nil {
 			config.APIKey = strings.TrimSpace(*req.APIKey)
 		}
@@ -2028,15 +2071,30 @@ func handleConfigAlerts(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid json body", http.StatusBadRequest)
 			return
 		}
+		configUpdateMu.Lock()
+		defer configUpdateMu.Unlock()
+		configMutex.RLock()
+		privateWebhookOrigins := append([]string(nil), config.WebhookPrivateAllowedOrigins...)
+		configMutex.RUnlock()
+		webhookURL, err := validateWebhookSettingURL(r.Context(), req.WebhookURL, privateWebhookOrigins)
+		if err != nil {
+			http.Error(w, "invalid webhook_url: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		dailySummaryWebhookURL, err := validateWebhookSettingURL(r.Context(), req.DailySummaryWebhookURL, privateWebhookOrigins)
+		if err != nil {
+			http.Error(w, "invalid daily_summary_webhook_url: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 		configMutex.Lock()
-		config.WebhookURL = strings.TrimSpace(req.WebhookURL)
+		config.WebhookURL = webhookURL
 		config.WebhookEnabled = req.WebhookEnabled && config.WebhookURL != ""
 		config.WebhookProvider = normalizeWebhookProvider(req.WebhookProvider)
 		config.WebhookSlackChannel = strings.TrimSpace(req.WebhookSlackChannel)
 		config.WebhookSlackUsername = strings.TrimSpace(req.WebhookSlackUsername)
 		config.WebhookSlackIconEmoji = strings.TrimSpace(req.WebhookSlackIconEmoji)
 		config.WebhookTeamsTitlePrefix = strings.TrimSpace(req.WebhookTeamsTitlePrefix)
-		config.DailySummaryWebhookURL = strings.TrimSpace(req.DailySummaryWebhookURL)
+		config.DailySummaryWebhookURL = dailySummaryWebhookURL
 		config.DailySummaryWebhookEnabled = req.DailySummaryWebhookEnabled && config.DailySummaryWebhookURL != ""
 		config.DailySummaryWebhookProvider = normalizeWebhookProvider(req.DailySummaryWebhookProvider)
 		config.DailySummarySlackChannel = strings.TrimSpace(req.DailySummaryWebhookSlackChannel)
@@ -2044,14 +2102,14 @@ func handleConfigAlerts(w http.ResponseWriter, r *http.Request) {
 		config.DailySummarySlackIconEmoji = strings.TrimSpace(req.DailySummaryWebhookSlackIconEmoji)
 		config.DailySummaryTeamsTitlePrefix = strings.TrimSpace(req.DailySummaryWebhookTeamsTitlePrefix)
 		saveConfigLocked()
-		webhookURL := strings.TrimSpace(config.WebhookURL)
+		webhookURL = strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := configuredWebhookEnabledLocked()
 		webhookProvider := configuredWebhookProviderLocked()
 		slackChannel := strings.TrimSpace(config.WebhookSlackChannel)
 		slackUsername := strings.TrimSpace(config.WebhookSlackUsername)
 		slackIconEmoji := strings.TrimSpace(config.WebhookSlackIconEmoji)
 		teamsTitlePrefix := strings.TrimSpace(config.WebhookTeamsTitlePrefix)
-		dailySummaryWebhookURL := strings.TrimSpace(config.DailySummaryWebhookURL)
+		dailySummaryWebhookURL = strings.TrimSpace(config.DailySummaryWebhookURL)
 		dailySummaryWebhookEnabled := configuredDailySummaryWebhookEnabledLocked()
 		dailySummaryWebhookProvider := configuredDailySummaryWebhookProviderLocked()
 		dailySummarySlackChannel := strings.TrimSpace(config.DailySummarySlackChannel)
@@ -3614,12 +3672,26 @@ func sendWebhookEventWith(webhookURL string, opts webhookFormatOptions, payload 
 	if err != nil {
 		return fmt.Errorf("encode webhook payload: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(b))
+	configMutex.RLock()
+	privateWebhookOrigins := append([]string(nil), config.WebhookPrivateAllowedOrigins...)
+	configMutex.RUnlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+	client, parsedURL, err := newPinnedWebhookClient(ctx, webhookURL, privateWebhookOrigins, 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("validate webhook destination: %w", err)
+	}
+	candidateURL := parsedURL.String()
+	trustedOrigin := parsedURL.Scheme + "://" + parsedURL.Host
+	if !isValidRedirectURL(candidateURL, trustedOrigin) {
+		return errors.New("invalid webhook destination")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, candidateURL, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -3629,6 +3701,20 @@ func sendWebhookEventWith(webhookURL string, opts webhookFormatOptions, payload 
 		return fmt.Errorf("webhook HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+func validateWebhookSettingURL(ctx context.Context, rawURL string, privateAllowedOrigins []string) (string, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return "", nil
+	}
+	validationCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	parsedURL, _, err := validateWebhookURL(validationCtx, rawURL, privateAllowedOrigins)
+	if err != nil {
+		return "", err
+	}
+	return parsedURL.String(), nil
 }
 
 func formatWebhookPayload(opts webhookFormatOptions, payload map[string]interface{}) interface{} {
@@ -8680,13 +8766,19 @@ func fetchAllTrafficServices(baseURL string) ([]map[string]interface{}, error) {
 	if orgID == "" {
 		return nil, fmt.Errorf("invalid PCE organization URL %q", baseURL)
 	}
-	pceURL := parsed.Scheme + "://" + parsed.Host + strings.TrimSuffix(parsed.Path[:markerIndex], "/")
 	configMutex.RLock()
+	configuredPCEURL := strings.TrimSpace(config.PCEURL)
 	apiKey := config.APIKey
 	apiSecret := config.APISecret
 	configMutex.RUnlock()
-	client := extractorillumio.NewClient(pceURL, orgID, apiKey, apiSecret)
-	client.HTTP = httpClient
+	trustedOrigin, err := normalizePCEOrigin(configuredPCEURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid configured PCE origin: %w", err)
+	}
+	if !isValidRedirectURL(strings.TrimSpace(baseURL), trustedOrigin) {
+		return nil, errors.New("service catalog URL is outside the configured PCE origin")
+	}
+	client := extractorillumio.NewClient(trustedOrigin, orgID, apiKey, apiSecret)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	services, err := client.GetServices(ctx)
@@ -10707,7 +10799,7 @@ func apiCallRaw(url, method string, payload interface{}) ([]byte, error) {
 	return apiCallRawWithClient(httpClient, url, method, payload)
 }
 
-func apiCallRawWithClient(client *http.Client, url, method string, payload interface{}) ([]byte, error) {
+func apiCallRawWithClient(client *http.Client, rawURL, method string, payload interface{}) ([]byte, error) {
 	reloadConfigIfFileChanged()
 	var payloadBytes []byte
 	if payload != nil {
@@ -10719,12 +10811,25 @@ func apiCallRawWithClient(client *http.Client, url, method string, payload inter
 	}
 
 	configMutex.RLock()
+	pceURL := strings.TrimSpace(config.PCEURL)
 	apiKey := config.APIKey
 	apiSecret := config.APISecret
 	configMutex.RUnlock()
+	trustedOrigin, err := normalizePCEOrigin(pceURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid configured PCE origin: %w", err)
+	}
+	requestURL := strings.TrimSpace(rawURL)
+	if !isValidRedirectURL(requestURL, trustedOrigin) {
+		return nil, fmt.Errorf("PCE request URL is outside the configured origin")
+	}
 
 	if client == nil {
 		client = httpClient
+	}
+	client, err = cloneHTTPClientWithExactOrigin(client, trustedOrigin)
+	if err != nil {
+		return nil, fmt.Errorf("secure PCE HTTP client: %w", err)
 	}
 	const maxAttempts = 5
 	var lastErr error
@@ -10734,8 +10839,8 @@ func apiCallRawWithClient(client *http.Client, url, method string, payload inter
 		if payloadBytes != nil {
 			body = bytes.NewReader(payloadBytes)
 		}
-		log.Printf("[API] %s %s", method, url)
-		req, err := http.NewRequest(method, url, body)
+		log.Printf("[API] %s %s", method, requestURL)
+		req, err := http.NewRequest(method, requestURL, body)
 		if err != nil {
 			return nil, fmt.Errorf("build request: %w", err)
 		}
@@ -10849,6 +10954,28 @@ func loadConfigFile() (Config, time.Time, bool) {
 	if strings.TrimSpace(cfg.OrgID) == "" {
 		cfg.OrgID = "1"
 	}
+	orgIDValue, err := strconv.ParseUint(strings.TrimSpace(cfg.OrgID), 10, 64)
+	if err != nil || orgIDValue == 0 {
+		log.Printf("[CONFIG] org_id must be a positive integer")
+		return Config{}, time.Time{}, false
+	}
+	cfg.OrgID = strings.TrimSpace(cfg.OrgID)
+	normalizedPCEURL, err := normalizePCEOrigin(cfg.PCEURL)
+	if err != nil {
+		log.Printf("[CONFIG] invalid pce_url: %v", err)
+		return Config{}, time.Time{}, false
+	}
+	cfg.PCEURL = normalizedPCEURL
+	cfg.PCEAllowedOrigins, err = normalizeConfiguredPCEOrigins(cfg.PCEAllowedOrigins)
+	if err != nil {
+		log.Printf("[CONFIG] invalid pce_allowed_origins: %v", err)
+		return Config{}, time.Time{}, false
+	}
+	cfg.WebhookPrivateAllowedOrigins, err = normalizeWebhookPrivateAllowedOrigins(cfg.WebhookPrivateAllowedOrigins)
+	if err != nil {
+		log.Printf("[CONFIG] invalid webhook_private_allowed_origins: %v", err)
+		return Config{}, time.Time{}, false
+	}
 	cfg.Timezone = normalizeTimezone(cfg.Timezone)
 	cfg.BindAddress = normalizeBindAddress(cfg.BindAddress)
 	cfg.PublicBaseURL = normalizePublicBaseURL(cfg.PublicBaseURL)
@@ -10875,6 +11002,27 @@ func loadConfigFile() (Config, time.Time, bool) {
 		modTime = st.ModTime().UTC()
 	}
 	return cfg, modTime, true
+}
+
+func normalizeConfiguredPCEOrigins(values []string) ([]string, error) {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		normalized, err := normalizePCEOrigin(value)
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", value, err)
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out, nil
 }
 
 func normalizeHistoryDays(days int) int {
@@ -12766,16 +12914,31 @@ func updateVENDailyHistory(
 func promptConfig() {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("--- Illumio Go Dashboard Setup ---")
-	fmt.Print("PCE URL (e.g., https://pce.example.com:8443): ")
-	config.PCEURL = strings.TrimSpace(readInput(reader))
+	for {
+		fmt.Print("PCE URL (e.g., https://pce.example.com:8443): ")
+		normalized, err := normalizePCEOrigin(readInput(reader))
+		if err != nil {
+			fmt.Printf("Invalid PCE URL: %v\n", err)
+			continue
+		}
+		config.PCEURL = normalized
+		break
+	}
 	fmt.Print("API Key ID: ")
 	config.APIKey = strings.TrimSpace(readInput(reader))
 	fmt.Print("API Secret: ")
 	config.APISecret = strings.TrimSpace(readInput(reader))
-	fmt.Print("Org ID [1]: ")
-	config.OrgID = strings.TrimSpace(readInput(reader))
-	if config.OrgID == "" {
-		config.OrgID = "1"
+	for {
+		fmt.Print("Org ID [1]: ")
+		config.OrgID = strings.TrimSpace(readInput(reader))
+		if config.OrgID == "" {
+			config.OrgID = "1"
+		}
+		value, err := strconv.ParseUint(config.OrgID, 10, 64)
+		if err == nil && value > 0 {
+			break
+		}
+		fmt.Println("Org ID must be a positive integer.")
 	}
 	config.Timezone = normalizeTimezone(config.Timezone)
 	config.BindAddress = normalizeBindAddress(config.BindAddress)

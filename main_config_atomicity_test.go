@@ -79,10 +79,11 @@ func runCredentialUpdateAtomicityHelper(t *testing.T) {
 
 	configMutex.Lock()
 	config = Config{
-		PCEURL:    oldPCE,
-		OrgID:     "1",
-		APIKey:    "old-key",
-		APISecret: "old-secret",
+		PCEURL:            oldPCE,
+		PCEAllowedOrigins: []string{newPCE},
+		OrgID:             "1",
+		APIKey:            "old-key",
+		APISecret:         "old-secret",
 	}
 	configMutex.Unlock()
 

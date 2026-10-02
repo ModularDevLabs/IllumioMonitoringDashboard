@@ -1,5 +1,6 @@
 {
   "pce_url": "https://your-pce.example.com:8443",
+  "pce_allowed_origins": [],
   "api_key": "your_api_key",
   "api_secret": "your_api_secret",
   "org_id": "1",
@@ -43,5 +44,6 @@
   ],
   "webhook_enabled": false,
   "webhook_provider": "generic",
-  "webhook_url": ""
+  "webhook_url": "",
+  "webhook_private_allowed_origins": []
 }
