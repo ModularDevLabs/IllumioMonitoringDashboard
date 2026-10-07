@@ -13,6 +13,7 @@ Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. D
 
 ### Security and Reliability
 - Updated the Go build toolchain and SSH/SFTP dependency to include the security fixes used in the standalone extractor build.
+- Added regression checks proving streaming downloads and cleanup retain saved-origin restrictions and reject cross-origin redirects before sending credentials.
 - Failed coverage-file writes are cleaned up without discarding an already saved CSV.
 - Executive report fallback labels no longer describe all-traffic data as blocked-only traffic.
 
