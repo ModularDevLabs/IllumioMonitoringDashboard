@@ -213,6 +213,7 @@ type automationStoreData struct {
 type AutomationManager struct {
 	mu           sync.Mutex
 	data         automationStoreData
+	storePath    string
 	queue        chan string
 	wakeSchedule chan struct{}
 	stop         chan struct{}
@@ -233,6 +234,13 @@ func automationStorePath() (string, error) {
 		return "", fmt.Errorf("locate user config directory: %w", err)
 	}
 	return filepath.Join(configRoot, appConfigDirName, "automation.json"), nil
+}
+
+func (manager *AutomationManager) storeFilePath() (string, error) {
+	if strings.TrimSpace(manager.storePath) != "" {
+		return manager.storePath, nil
+	}
+	return automationStorePath()
 }
 
 func writePrivateJSON(path string, value any) error {
@@ -282,7 +290,7 @@ func writePrivateJSON(path string, value any) error {
 }
 
 func (manager *AutomationManager) saveLocked() error {
-	path, err := automationStorePath()
+	path, err := manager.storeFilePath()
 	if err != nil {
 		return err
 	}
@@ -290,7 +298,7 @@ func (manager *AutomationManager) saveLocked() error {
 }
 
 func (manager *AutomationManager) load() error {
-	path, err := automationStorePath()
+	path, err := manager.storeFilePath()
 	if err != nil {
 		return err
 	}
@@ -928,6 +936,8 @@ func (manager *AutomationManager) executeRun(parent context.Context, runID strin
 	state.Mu.Lock()
 	artifactPath := state.FileName
 	cancelled := state.IsCancelled
+	partial := state.IsPartial
+	failedChunks := state.FailedChunks
 	summary := append([]PortProtocolSummary(nil), state.LastSummary...)
 	insights := state.LastInsights
 	coverage := state.DatasetCoverage
@@ -944,20 +954,27 @@ func (manager *AutomationManager) executeRun(parent context.Context, runID strin
 		manager.finishFailedRun(parent, runID, errors.New(runError))
 		return
 	}
+	if partial || cancelled || failedChunks > 0 || strings.TrimSpace(runError) != "" {
+		manager.finishPartialRun(parent, runID, artifactPath, partialRunError(cancelled, failedChunks, runError))
+		return
+	}
 
 	metrics := manager.calculateMetrics(template.ID, runID, summary, insights)
 	additionalArtifacts, reportErr := generateScheduledExecutiveArtifacts(artifactPath, template, summary, insights, coverage)
 	if reportErr != nil {
-		manager.finishFailedRun(parent, runID, reportErr)
+		manager.finishFailedRunWithArtifact(parent, runID, artifactPath, reportErr)
 		return
 	}
+	// Track coverage for local download and retention without changing the
+	// user's configured set of reports sent to delivery destinations.
+	trackedArtifacts := appendExtractionManifestArtifact(artifactPath, append([]string(nil), additionalArtifacts...))
 	manager.mu.Lock()
 	index = manager.runIndexLocked(runID)
 	if index >= 0 {
 		manager.data.Runs[index].Status = "completed"
 		manager.data.Runs[index].CompletedAt = time.Now().UTC()
 		manager.data.Runs[index].ArtifactPath = artifactPath
-		manager.data.Runs[index].AdditionalArtifactPaths = additionalArtifacts
+		manager.data.Runs[index].AdditionalArtifactPaths = trackedArtifacts
 		manager.data.Runs[index].Metrics = metrics
 		_ = manager.saveLocked()
 	}
@@ -965,6 +982,78 @@ func (manager *AutomationManager) executeRun(parent context.Context, runID strin
 
 	manager.deliverCompletedRun(parent, runID, template, artifactPath, additionalArtifacts, metrics)
 	manager.applyRetention(template)
+}
+
+func partialRunError(cancelled bool, failedChunks int, runError string) error {
+	reason := strings.TrimSpace(runError)
+	if reason == "" {
+		switch {
+		case cancelled:
+			reason = "extraction was cancelled after saving a partial artifact"
+		case failedChunks > 0:
+			reason = fmt.Sprintf("extraction saved a partial artifact with %d failed chunk(s)", failedChunks)
+		default:
+			reason = "extraction saved an incomplete artifact"
+		}
+	}
+	if failedChunks > 0 && !strings.Contains(strings.ToLower(reason), "chunk") {
+		reason = fmt.Sprintf("%s (%d failed chunk(s))", strings.TrimSuffix(reason, "."), failedChunks)
+	}
+	return errors.New(reason)
+}
+
+func (manager *AutomationManager) finishPartialRun(ctx context.Context, runID, artifactPath string, runErr error) {
+	manager.finishRunWithArtifactError(ctx, runID, "partial", artifactPath, "successful delivery skipped because extraction output is partial", runErr)
+}
+
+func (manager *AutomationManager) finishFailedRunWithArtifact(ctx context.Context, runID, artifactPath string, runErr error) {
+	manager.finishRunWithArtifactError(ctx, runID, "failed", artifactPath, "successful delivery skipped because report generation failed", runErr)
+}
+
+func (manager *AutomationManager) finishRunWithArtifactError(ctx context.Context, runID, status, artifactPath, deliverySkipped string, runErr error) {
+	if runErr == nil {
+		runErr = errors.New("run did not complete")
+	}
+	manager.mu.Lock()
+	index := manager.runIndexLocked(runID)
+	var template ReportTemplate
+	if index >= 0 {
+		run := &manager.data.Runs[index]
+		run.Status = status
+		run.CompletedAt = time.Now().UTC()
+		run.ArtifactPath = artifactPath
+		run.AdditionalArtifactPaths = appendExtractionManifestArtifact(artifactPath, nil)
+		run.Error = runErr.Error()
+		run.Metrics = RunMetrics{}
+		run.DeliverySkipped = deliverySkipped
+		template = manager.data.Templates[run.TemplateID]
+		_ = manager.saveLocked()
+	}
+	manager.mu.Unlock()
+	if index >= 0 && template.AlertPolicy.DeliverOnFailure {
+		manager.deliverFailedRun(ctx, runID, template, runErr)
+	}
+	if index >= 0 {
+		manager.applyRetention(template)
+	}
+}
+
+func appendExtractionManifestArtifact(artifactPath string, artifacts []string) []string {
+	if strings.TrimSpace(artifactPath) == "" {
+		return artifacts
+	}
+	manifestPath := extractionManifestPath(artifactPath)
+	info, err := lstatRootedFile(manifestPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return artifacts
+	}
+	cleanManifest := filepath.Clean(manifestPath)
+	for _, artifact := range artifacts {
+		if filepath.Clean(artifact) == cleanManifest {
+			return artifacts
+		}
+	}
+	return append(artifacts, manifestPath)
 }
 
 func (manager *AutomationManager) finishCancelledRun(runID string) {
@@ -1093,10 +1182,11 @@ func absFloat(value float64) float64 {
 
 func (manager *AutomationManager) applyRetention(template ReportTemplate) {
 	manager.mu.Lock()
-	completed := []AutomationRun{}
+	retainedRuns := []AutomationRun{}
 	for _, run := range manager.data.Runs {
-		if run.TemplateID == template.ID && run.Status == "completed" && run.ArtifactPath != "" {
-			completed = append(completed, run)
+		retainsArtifact := run.Status == "completed" || run.Status == "partial" || run.Status == "failed"
+		if run.TemplateID == template.ID && retainsArtifact && run.ArtifactPath != "" {
+			retainedRuns = append(retainedRuns, run)
 		}
 	}
 	manager.mu.Unlock()
@@ -1104,10 +1194,10 @@ func (manager *AutomationManager) applyRetention(template ReportTemplate) {
 	if retention <= 0 {
 		retention = defaultRetentionCount
 	}
-	if len(completed) <= retention {
+	if len(retainedRuns) <= retention {
 		return
 	}
-	for _, run := range completed[retention:] {
+	for _, run := range retainedRuns[retention:] {
 		artifactPaths := append([]string{run.ArtifactPath}, run.AdditionalArtifactPaths...)
 		for _, artifactPath := range artifactPaths {
 			cleaned := filepath.Clean(artifactPath)

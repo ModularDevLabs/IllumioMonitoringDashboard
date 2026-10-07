@@ -51,6 +51,8 @@ type DatasetOverlap struct {
 }
 
 type DatasetCoverage struct {
+	Partial             bool                  `json:"partial,omitempty"`
+	MissingWindows      []ExtractionWindow    `json:"missing_windows,omitempty"`
 	Source              string                `json:"source"`
 	TrafficScope        string                `json:"traffic_scope"`
 	Files               []DatasetFileCoverage `json:"files"`
@@ -203,7 +205,7 @@ func validateReportMetadata(metadata ReportMetadata) (ReportMetadata, error) {
 		}
 	}
 	if metadata.Title == "" {
-		metadata.Title = "Blocked Traffic Executive Summary"
+		metadata.Title = "Traffic Executive Summary"
 	}
 	return metadata, nil
 }

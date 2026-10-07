@@ -76,7 +76,7 @@
         .theme-button { border:1px solid var(--border); background:var(--panel-soft); color:var(--muted); }
         .theme-button.active { background:color-mix(in srgb,var(--accent) 14%,transparent); color:var(--text); border-color:var(--accent); }
         #messageBar { background:var(--panel-soft); color:var(--text); }
-        .status-completed { color:var(--accent); } .status-failed { color:var(--danger); } .status-running { color:var(--title); } .status-queued { color:var(--warn); }
+		.status-completed { color:var(--accent); } .status-partial { color:var(--warn); } .status-failed { color:var(--danger); } .status-running { color:var(--title); } .status-queued { color:var(--warn); }
         summary { cursor:pointer; }
     </style>
     <link rel="stylesheet" href="/blocked-traffic/assets/app-shell.css">
@@ -147,7 +147,7 @@
                 <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                     <label class="text-sm xl:col-span-2">Output Folder<input id="templateSavePath" required class="mt-1 w-full rounded-lg px-3 py-2" placeholder="/absolute/report/path"></label>
                     <label class="text-sm xl:col-span-2">Filename Pattern<input id="templateFilePattern" class="mt-1 w-full rounded-lg px-3 py-2" value="blocked-{template}-{date}-{time}.csv"><span class="muted mt-1 block text-xs">Tokens: {template}, {date}, {time}, {timestamp}, {run_id}</span></label>
-                    <label class="text-sm">Keep Artifacts<input id="templateRetention" type="number" min="1" max="1000" value="20" class="mt-1 w-full rounded-lg px-3 py-2"></label>
+                    <label class="text-sm">Keep Recent Run Artifacts<input id="templateRetention" type="number" min="1" max="1000" value="20" class="mt-1 w-full rounded-lg px-3 py-2"><span class="muted mt-1 block text-xs">Counts completed, partial, and failed runs that retain a CSV.</span></label>
                     <label class="text-sm">Trailing Days<input id="templateDays" type="number" min="1" value="90" class="mt-1 w-full rounded-lg px-3 py-2"></label>
                     <label class="text-sm">Chunk Interval<select id="templateChunk" class="mt-1 w-full rounded-lg px-3 py-2"><option value="24h">1 day</option><option value="12h">12 hours</option><option value="6h">6 hours</option><option value="3h">3 hours</option><option value="1h">1 hour</option><option value="30m">30 minutes</option><option value="10m">10 minutes</option><option value="5m">5 minutes</option></select></label>
                 </div>
@@ -394,14 +394,17 @@
 			automationState.runs.forEach(run => {
 				const row = document.createElement('tr'); row.className = 'border-b';
 				const delivery = (run.delivery_results || []).map(result => `${result.destination_name}: ${result.success ? 'sent' : 'failed'}`).join(', ') || run.delivery_skipped || '—';
-				const changes = `${(run.metrics?.new_relationships || []).length} relationships / ${(run.metrics?.new_services || []).length} services`;
+				const completed = run.status === 'completed';
+				const changes = completed ? `${(run.metrics?.new_relationships || []).length} relationships / ${(run.metrics?.new_services || []).length} services` : '—';
 				row.innerHTML = `<td class="px-3 py-3"></td><td class="px-3 py-3"></td><td class="px-3 py-3 font-semibold"></td><td class="px-3 py-3"></td><td class="px-3 py-3"></td><td class="px-3 py-3"></td><td class="px-3 py-3"></td><td class="px-3 py-3"></td>`;
-				const cells = row.querySelectorAll('td'); cells[0].textContent = run.template_name; cells[1].textContent = run.trigger; cells[2].textContent = run.status + (run.error ? `: ${run.error}` : ''); cells[2].classList.add(`status-${run.status}`); cells[3].textContent = new Date(run.queued_at).toLocaleString(); cells[4].textContent = Number(run.metrics?.total_flows || 0).toLocaleString(); cells[5].textContent = changes; cells[6].textContent = delivery;
+				const cells = row.querySelectorAll('td'); cells[0].textContent = run.template_name; cells[1].textContent = run.trigger; cells[2].textContent = run.status + (run.error ? `: ${run.error}` : ''); cells[2].classList.add(`status-${run.status}`); cells[3].textContent = new Date(run.queued_at).toLocaleString(); cells[4].textContent = completed ? Number(run.metrics?.total_flows || 0).toLocaleString() : '—'; cells[5].textContent = changes; cells[6].textContent = delivery;
 				if (run.artifact_path) {
 					cells[7].classList.add('space-y-1');
 					const addLink = (kind, label) => { const link = document.createElement('a'); link.className = 'block underline'; link.href = `/blocked-traffic/api/automation/runs/artifact?id=${encodeURIComponent(run.id)}&kind=${kind}`; link.textContent = label; cells[7].appendChild(link); };
-					addLink('csv', 'Download CSV');
+					const csvLabel = run.status === 'partial' ? 'Download partial CSV' : run.status === 'failed' ? 'Download retained CSV' : 'Download CSV';
+					addLink('csv', csvLabel);
 					const extensions = new Set((run.additional_artifact_paths || []).map(path => path.split('.').pop().toLowerCase()));
+					if ((run.additional_artifact_paths || []).some(path => path.toLowerCase().endsWith('.extraction.json'))) addLink('coverage', 'Download coverage manifest');
 					if (extensions.has('html')) addLink('html', 'Download HTML');
 					if (extensions.has('pdf')) addLink('pdf', 'Download PDF');
 				}

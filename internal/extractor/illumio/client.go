@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,10 +16,27 @@ import (
 )
 
 const (
-	maxResponseBodySize       = 256 << 20
-	maxCreateAttempts         = 5
-	asyncQueryHeartbeatPeriod = time.Minute
+	maxResponseBodySize                  = 256 << 20
+	maxCreateAttempts                    = 5
+	asyncQueryHeartbeatPeriod            = time.Minute
+	trafficDownloadHeartbeatBytes  int64 = 64 << 20
+	trafficDownloadHeartbeatPeriod       = 10 * time.Second
 )
+
+var (
+	// ErrResponseTooLarge identifies a bounded PCE control or metadata response
+	// that exceeded the client's per-response safety limit. Traffic result bodies
+	// are streamed without this limit, so this error does not indicate that a
+	// smaller traffic query window should be attempted.
+	ErrResponseTooLarge = errors.New("PCE response too large")
+	// ErrQueryResultTruncated identifies a completed async query whose result was
+	// capped by the PCE's maximum-row limit.
+	ErrQueryResultTruncated = errors.New("PCE query result truncated")
+)
+
+func responseTooLargeError() error {
+	return fmt.Errorf("PCE response exceeded %d MiB limit: %w", maxResponseBodySize>>20, ErrResponseTooLarge)
+}
 
 func responseSnippet(data []byte) string {
 	const maxSnippet = 4096
@@ -114,40 +132,42 @@ func (c *Client) buildURL(path string) (string, error) {
 	return target.String(), nil
 }
 
-func (c *Client) requestWithHeaders(ctx context.Context, method, path string, body interface{}, extraHeaders map[string]string) ([]byte, int, http.Header, error) {
-	// Global Rate Limit Cool-down
-	c.Mu.Lock()
-	cooldownUntil := c.CooldownUntil
-	c.Mu.Unlock()
-	if !cooldownUntil.IsZero() {
-		wait := time.Until(cooldownUntil)
-		if wait > 0 {
-			timer := time.NewTimer(wait)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				return nil, 0, nil, ctx.Err()
+func (c *Client) openResponseWithClient(ctx context.Context, httpClient *http.Client, respectCooldown bool, method, path string, body interface{}, extraHeaders map[string]string) (*http.Response, error) {
+	if respectCooldown {
+		// Global Rate Limit Cool-down
+		c.Mu.Lock()
+		cooldownUntil := c.CooldownUntil
+		c.Mu.Unlock()
+		if !cooldownUntil.IsZero() {
+			wait := time.Until(cooldownUntil)
+			if wait > 0 {
+				timer := time.NewTimer(wait)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
 			}
 		}
 	}
 
 	requestURL, err := c.buildURL(path)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, err
 	}
 	var bodyReader io.Reader
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, err
 		}
 		bodyReader = bytes.NewBuffer(jsonBody)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, requestURL, bodyReader)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, err
 	}
 	req.SetBasicAuth(c.APIKey, c.APISecret)
 	req.Header.Set("Content-Type", "application/json")
@@ -160,18 +180,33 @@ func (c *Client) requestWithHeaders(ctx context.Context, method, path string, bo
 	// requestURL is derived from a server-side saved PCE profile and is checked
 	// against that exact origin. Async Location URLs and redirects are rejected
 	// unless they retain the same scheme and authority.
-	resp, err := c.HTTP.Do(req)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (c *Client) openResponseWithHeaders(ctx context.Context, method, path string, body interface{}, extraHeaders map[string]string) (*http.Response, error) {
+	return c.openResponseWithClient(ctx, c.HTTP, true, method, path, body, extraHeaders)
+}
+
+func (c *Client) requestWithHeaders(ctx context.Context, method, path string, body interface{}, extraHeaders map[string]string) ([]byte, int, http.Header, error) {
+	resp, err := c.openResponseWithHeaders(ctx, method, path, body, extraHeaders)
 	if err != nil {
 		return nil, 0, nil, err
 	}
 	defer resp.Body.Close()
+	if resp.ContentLength > maxResponseBodySize {
+		return nil, resp.StatusCode, resp.Header.Clone(), responseTooLargeError()
+	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize+1))
 	if err != nil {
 		return nil, resp.StatusCode, resp.Header.Clone(), fmt.Errorf("read PCE response: %w", err)
 	}
 	if len(data) > maxResponseBodySize {
-		return nil, resp.StatusCode, resp.Header.Clone(), fmt.Errorf("PCE response exceeded %d MiB limit", maxResponseBodySize>>20)
+		return nil, resp.StatusCode, resp.Header.Clone(), responseTooLargeError()
 	}
 
 	if resp.StatusCode == 429 {
@@ -187,7 +222,14 @@ func (c *Client) requestWithHeaders(ctx context.Context, method, path string, bo
 func (c *Client) deleteAsyncResource(path string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	_, _, _, _ = c.requestWithHeaders(ctx, http.MethodDelete, path, nil, nil)
+	// Cleanup must not wait behind a query's rate-limit cooldown; doing so can
+	// consume the entire cleanup deadline without ever sending DELETE.
+	resp, err := c.openResponseWithClient(ctx, c.HTTP, false, http.MethodDelete, path, nil, nil)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body interface{}) ([]byte, int, error) {
@@ -286,6 +328,220 @@ func parseFlowLabels(raw interface{}) []FlowLabel {
 	}
 
 	return labels
+}
+
+func parseTrafficFlowRow(row map[string]interface{}, rowIndex int, blockedOnly bool) (TrafficFlow, error) {
+	flow := TrafficFlow{}
+	if src, ok := row["src"].(map[string]interface{}); ok {
+		if value, ok := src["ip"].(string); ok {
+			flow.SrcIP = value
+		}
+		if workload, ok := src["workload"].(map[string]interface{}); ok {
+			if value, ok := workload["href"].(string); ok {
+				flow.SrcWorkloadHref = value
+			}
+			flow.SrcLabels = append(flow.SrcLabels, parseFlowLabels(workload["labels"])...)
+		}
+	}
+	if dst, ok := row["dst"].(map[string]interface{}); ok {
+		if value, ok := dst["ip"].(string); ok {
+			flow.DstIP = value
+		}
+		if value, ok := dst["fqdn"].(string); ok {
+			flow.DstFQDN = value
+		}
+		if workload, ok := dst["workload"].(map[string]interface{}); ok {
+			if value, ok := workload["href"].(string); ok {
+				flow.DstWorkloadHref = value
+			}
+			flow.DstLabels = append(flow.DstLabels, parseFlowLabels(workload["labels"])...)
+		}
+	}
+	if service, ok := row["service"].(map[string]interface{}); ok {
+		if value, ok := service["port"].(float64); ok {
+			flow.DstPort = int(value)
+		}
+		if value, ok := service["proto"].(float64); ok {
+			flow.Proto = int(value)
+		}
+		if value, ok := service["process_name"].(string); ok {
+			flow.ProcessName = value
+		}
+	}
+	if value, ok := row["num_connections"].(float64); ok {
+		flow.NumConnections = int(value)
+	}
+	if value, ok := row["policy_decision"].(string); ok {
+		flow.PolicyDecision = strings.ToLower(strings.TrimSpace(value))
+	}
+	if value, ok := row["draft_policy_decision"].(string); ok {
+		flow.DraftDecision = strings.ToLower(strings.TrimSpace(value))
+	}
+	if timestampRange, ok := row["timestamp_range"].(map[string]interface{}); ok {
+		if value, ok := timestampRange["first_detected"].(string); ok {
+			parsed, err := time.Parse(time.RFC3339, value)
+			if err != nil {
+				return TrafficFlow{}, fmt.Errorf("decode PCE result row %d first_detected: %w", rowIndex, err)
+			}
+			flow.FirstDetected = parsed
+		}
+		if value, ok := timestampRange["last_detected"].(string); ok {
+			parsed, err := time.Parse(time.RFC3339, value)
+			if err != nil {
+				return TrafficFlow{}, fmt.Errorf("decode PCE result row %d last_detected: %w", rowIndex, err)
+			}
+			flow.LastDetected = parsed
+		}
+	}
+	if flow.FirstDetected.IsZero() {
+		return TrafficFlow{}, fmt.Errorf("PCE result row %d is missing first_detected", rowIndex)
+	}
+	if flow.LastDetected.IsZero() {
+		flow.LastDetected = flow.FirstDetected
+	}
+	if flow.PolicyDecision == "" {
+		flow.PolicyDecision = "unknown"
+		if blockedOnly {
+			flow.PolicyDecision = "blocked"
+		}
+	}
+	return flow, nil
+}
+
+type trafficDownloadTracker struct {
+	reader          io.Reader
+	logFn           func(string)
+	bytesRead       int64
+	rowsDecoded     int
+	lastLoggedBytes int64
+	lastLoggedAt    time.Time
+}
+
+func newTrafficDownloadTracker(reader io.Reader, logFn func(string)) *trafficDownloadTracker {
+	tracker := &trafficDownloadTracker{reader: reader, logFn: logFn, lastLoggedAt: time.Now()}
+	if logFn != nil {
+		logFn("PCE query result download started; byte counts reflect response-body bytes after HTTP decompression, when applicable.")
+	}
+	return tracker
+}
+
+func formatTrafficDownloadCounts(bytesRead int64, rowsDecoded int) string {
+	return fmt.Sprintf("bytes=%d (%.1f MiB) rows=%d", bytesRead, float64(bytesRead)/(1<<20), rowsDecoded)
+}
+
+func (t *trafficDownloadTracker) Read(buffer []byte) (int, error) {
+	read, err := t.reader.Read(buffer)
+	t.bytesRead += int64(read)
+	if t.logFn != nil && (t.bytesRead-t.lastLoggedBytes >= trafficDownloadHeartbeatBytes || time.Since(t.lastLoggedAt) >= trafficDownloadHeartbeatPeriod) {
+		t.logFn(fmt.Sprintf("PCE query result download progress: %s.", formatTrafficDownloadCounts(t.bytesRead, t.rowsDecoded)))
+		t.lastLoggedBytes = t.bytesRead
+		t.lastLoggedAt = time.Now()
+	}
+	return read, err
+}
+
+func (t *trafficDownloadTracker) rowDecoded() {
+	t.rowsDecoded++
+}
+
+func (t *trafficDownloadTracker) finish(err error) {
+	if t.logFn == nil {
+		return
+	}
+	if err != nil {
+		t.logFn(fmt.Sprintf("PCE query result download failed: %s error=%v.", formatTrafficDownloadCounts(t.bytesRead, t.rowsDecoded), err))
+		return
+	}
+	t.logFn(fmt.Sprintf("PCE query result download complete: %s.", formatTrafficDownloadCounts(t.bytesRead, t.rowsDecoded)))
+}
+
+func decodeTrafficFlowResponse(body *trafficDownloadTracker, blockedOnly bool) ([]TrafficFlow, error) {
+	decoder := json.NewDecoder(body)
+	decodeError := func(err error) error {
+		return fmt.Errorf("decode PCE query result: %w", err)
+	}
+
+	opening, err := decoder.Token()
+	if err != nil {
+		return nil, decodeError(err)
+	}
+	openingDelimiter, ok := opening.(json.Delim)
+	if !ok || openingDelimiter != '[' {
+		return nil, fmt.Errorf("decode PCE query result: expected a JSON array")
+	}
+
+	flows := make([]TrafficFlow, 0)
+	for rowIndex := 1; decoder.More(); rowIndex++ {
+		var row map[string]interface{}
+		if err := decoder.Decode(&row); err != nil {
+			return nil, decodeError(err)
+		}
+		flow, err := parseTrafficFlowRow(row, rowIndex, blockedOnly)
+		if err != nil {
+			return nil, err
+		}
+		flows = append(flows, flow)
+		body.rowDecoded()
+	}
+
+	closing, err := decoder.Token()
+	if err != nil {
+		return nil, decodeError(err)
+	}
+	closingDelimiter, ok := closing.(json.Delim)
+	if !ok || closingDelimiter != ']' {
+		return nil, fmt.Errorf("decode PCE query result: expected the JSON array to end")
+	}
+
+	var trailing interface{}
+	err = decoder.Decode(&trailing)
+	if err == nil {
+		return nil, fmt.Errorf("decode PCE query result: unexpected trailing JSON value")
+	}
+	if !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("decode PCE query result trailing data: %w", err)
+	}
+	return flows, nil
+}
+
+func (c *Client) downloadTrafficFlows(ctx context.Context, path string, blockedOnly bool, logFn func(string)) ([]TrafficFlow, int, error) {
+	// Traffic downloads intentionally do not use maxResponseBodySize. They can
+	// legitimately exceed the control-response limit and are decoded one row at
+	// a time so the raw response and a second full row collection are never held.
+	// The normal client's short timeout is appropriate for control responses but
+	// includes body reads. Use a value-copy with that aggregate timeout disabled
+	// so the caller's chunk context remains the download deadline. The transport
+	// and same-origin redirect policy are retained and the shared client is not
+	// mutated while other chunk workers use it.
+	downloadHTTPClient := *c.HTTP
+	downloadHTTPClient.Timeout = 0
+	resp, err := c.openResponseWithClient(ctx, &downloadHTTPClient, true, http.MethodGet, path, nil, nil)
+	if err != nil {
+		if logFn != nil {
+			logFn(fmt.Sprintf("PCE query result download failed before response: %s error=%v.", formatTrafficDownloadCounts(0, 0), err))
+		}
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		c.Mu.Lock()
+		c.CooldownUntil = time.Now().Add(60 * time.Second)
+		c.Mu.Unlock()
+		if logFn != nil {
+			logFn(fmt.Sprintf("PCE query result download failed: %s error=rate limit hit.", formatTrafficDownloadCounts(0, 0)))
+		}
+		return nil, resp.StatusCode, fmt.Errorf("rate limit hit")
+	}
+	if resp.StatusCode != http.StatusOK {
+		if logFn != nil {
+			logFn(fmt.Sprintf("PCE query result download failed: %s error=HTTP %d.", formatTrafficDownloadCounts(0, 0), resp.StatusCode))
+		}
+		return nil, resp.StatusCode, nil
+	}
+	tracker := newTrafficDownloadTracker(resp.Body, logFn)
+	flows, err := decodeTrafficFlowResponse(tracker, blockedOnly)
+	tracker.finish(err)
+	return flows, resp.StatusCode, err
 }
 
 func (c *Client) GetLabels(ctx context.Context) ([]Label, error) {
@@ -471,100 +727,18 @@ func (c *Client) FetchDayOfTraffic(ctx context.Context, req AsyncQueryRequest, l
 			return nil, ctx.Err()
 		}
 	}
-	if completedStatus.MatchesCount > completedStatus.FlowsCount && completedStatus.FlowsCount >= req.MaxResults {
-		return nil, fmt.Errorf("PCE query matched %d rows but returned the %d-row maximum; use a smaller chunk interval to avoid an incomplete export", completedStatus.MatchesCount, req.MaxResults)
+	if completedStatus.MatchesCount > req.MaxResults {
+		return nil, fmt.Errorf("PCE query matched %d rows, exceeding the %d-row maximum (PCE reported %d available); use a smaller chunk interval to avoid an incomplete export: %w", completedStatus.MatchesCount, req.MaxResults, completedStatus.FlowsCount, ErrQueryResultTruncated)
 	}
 
 	// 3. Download
-	data, code, err := c.request(ctx, "GET", fmt.Sprintf("traffic_flows/async_queries/%s/download", queryUUID), nil)
+	blockedOnly := len(req.PolicyDecisions) == 1 && strings.EqualFold(req.PolicyDecisions[0], "blocked")
+	flows, code, err := c.downloadTrafficFlows(ctx, fmt.Sprintf("traffic_flows/async_queries/%s/download", queryUUID), blockedOnly, logFn)
 	if err != nil {
 		return nil, fmt.Errorf("download PCE query result: %w", err)
 	}
 	if code != 200 {
 		return nil, fmt.Errorf("download failed (HTTP %d)", code)
 	}
-
-	var raw []map[string]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("decode PCE query result: %w", err)
-	}
-
-	flows := make([]TrafficFlow, 0, len(raw))
-	for rowIndex, r := range raw {
-		f := TrafficFlow{}
-		if src, ok := r["src"].(map[string]interface{}); ok {
-			if v, ok := src["ip"].(string); ok {
-				f.SrcIP = v
-			}
-			if wkld, ok := src["workload"].(map[string]interface{}); ok {
-				if v, ok := wkld["href"].(string); ok {
-					f.SrcWorkloadHref = v
-				}
-				f.SrcLabels = append(f.SrcLabels, parseFlowLabels(wkld["labels"])...)
-			}
-		}
-		if dst, ok := r["dst"].(map[string]interface{}); ok {
-			if v, ok := dst["ip"].(string); ok {
-				f.DstIP = v
-			}
-			if v, ok := dst["fqdn"].(string); ok {
-				f.DstFQDN = v
-			}
-			if wkld, ok := dst["workload"].(map[string]interface{}); ok {
-				if v, ok := wkld["href"].(string); ok {
-					f.DstWorkloadHref = v
-				}
-				f.DstLabels = append(f.DstLabels, parseFlowLabels(wkld["labels"])...)
-			}
-		}
-		if svc, ok := r["service"].(map[string]interface{}); ok {
-			if v, ok := svc["port"].(float64); ok {
-				f.DstPort = int(v)
-			}
-			if v, ok := svc["proto"].(float64); ok {
-				f.Proto = int(v)
-			}
-			if v, ok := svc["process_name"].(string); ok {
-				f.ProcessName = v
-			}
-		}
-		if v, ok := r["num_connections"].(float64); ok {
-			f.NumConnections = int(v)
-		}
-		if v, ok := r["policy_decision"].(string); ok {
-			f.PolicyDecision = strings.ToLower(strings.TrimSpace(v))
-		}
-		if v, ok := r["draft_policy_decision"].(string); ok {
-			f.DraftDecision = strings.ToLower(strings.TrimSpace(v))
-		}
-		if ts, ok := r["timestamp_range"].(map[string]interface{}); ok {
-			if v, ok := ts["first_detected"].(string); ok {
-				f.FirstDetected, err = time.Parse(time.RFC3339, v)
-				if err != nil {
-					return nil, fmt.Errorf("decode PCE result row %d first_detected: %w", rowIndex+1, err)
-				}
-			}
-			if v, ok := ts["last_detected"].(string); ok {
-				f.LastDetected, err = time.Parse(time.RFC3339, v)
-				if err != nil {
-					return nil, fmt.Errorf("decode PCE result row %d last_detected: %w", rowIndex+1, err)
-				}
-			}
-		}
-		if f.FirstDetected.IsZero() {
-			return nil, fmt.Errorf("PCE result row %d is missing first_detected", rowIndex+1)
-		}
-		if f.LastDetected.IsZero() {
-			f.LastDetected = f.FirstDetected
-		}
-		if f.PolicyDecision == "" {
-			f.PolicyDecision = "unknown"
-			if len(req.PolicyDecisions) == 1 && strings.EqualFold(req.PolicyDecisions[0], "blocked") {
-				f.PolicyDecision = "blocked"
-			}
-		}
-		flows = append(flows, f)
-	}
-
 	return flows, nil
 }

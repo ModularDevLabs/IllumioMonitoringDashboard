@@ -191,9 +191,17 @@ func handleAutomationRunArtifact(w http.ResponseWriter, r *http.Request) {
 	automation.mu.Lock()
 	var artifactPath string
 	for _, run := range automation.data.Runs {
-		if run.ID == runID && run.Status == "completed" {
+		if run.ID == runID && run.ArtifactPath != "" {
 			if kind == "csv" {
 				artifactPath = run.ArtifactPath
+			} else if kind == "coverage" {
+				expected := filepath.Clean(extractionManifestPath(run.ArtifactPath))
+				for _, candidate := range run.AdditionalArtifactPaths {
+					if filepath.Clean(candidate) == expected {
+						artifactPath = candidate
+						break
+					}
+				}
 			} else {
 				for _, candidate := range run.AdditionalArtifactPaths {
 					if strings.EqualFold(strings.TrimPrefix(filepath.Ext(candidate), "."), kind) {
@@ -231,6 +239,9 @@ func handleAutomationRunArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	if kind == "pdf" {
 		contentType = "application/pdf"
+	}
+	if kind == "coverage" {
+		contentType = "application/json; charset=utf-8"
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(artifactPath)}))
@@ -305,7 +316,7 @@ func waitForAutomationRun(ctx context.Context, runID string) (AutomationRun, err
 			switch run.Status {
 			case "completed":
 				return run, nil
-			case "failed", "cancelled":
+			case "partial", "failed", "cancelled":
 				return run, fmt.Errorf("automation run %s: %s", run.Status, run.Error)
 			}
 		} else {

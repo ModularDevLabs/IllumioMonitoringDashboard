@@ -107,6 +107,9 @@ func TestValidateReportMetadataCanonicalizesIncludedSections(t *testing.T) {
 	if got, want := strings.Join(metadata.IncludedSections, ","), "coverage,risky-services"; got != want {
 		t.Fatalf("included sections = %q, want %q", got, want)
 	}
+	if metadata.Title != "Traffic Executive Summary" {
+		t.Fatalf("default report title = %q, want neutral traffic title", metadata.Title)
+	}
 	if _, err := validateReportMetadata(ReportMetadata{IncludedSections: []string{"unknown-section"}}); err == nil {
 		t.Fatal("validateReportMetadata accepted an unknown report section")
 	}

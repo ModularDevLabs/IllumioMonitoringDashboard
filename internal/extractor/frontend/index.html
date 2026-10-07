@@ -177,6 +177,11 @@
         }
         .autocomplete-items div:hover { background-color: color-mix(in srgb, var(--field) 78%, white); }
         .autocomplete-active { background-color: color-mix(in srgb, var(--secondary) 72%, white) !important; }
+        .partial-output-warning {
+            background: color-mix(in srgb, var(--warn) 14%, var(--panel-soft));
+            border-color: var(--warn) !important;
+            color: var(--text);
+        }
     </style>
     <link rel="stylesheet" href="/blocked-traffic/assets/app-shell.css">
     <link rel="stylesheet" href="/static/product-shell.css">
@@ -326,7 +331,7 @@
                     <option value="blocked" selected>Blocked traffic only</option>
                     <option value="all">All traffic (all policy decisions)</option>
                 </select>
-                <p class="mt-2 text-xs text-gray-400">All traffic includes allowed, potentially blocked, blocked, and unknown decisions. Large environments may require a smaller chunk interval to remain below the PCE's 200,000-row query limit.</p>
+                <p class="mt-2 text-xs text-gray-400">All traffic includes allowed, potentially blocked, blocked, and unknown decisions. Traffic downloads are streamed without a fixed response-size cutoff. Queries truncated by the PCE's result-row limit are automatically split into smaller time windows.</p>
             </div>
             <div class="col-span-2 relative">
                 <label class="block text-sm font-semibold mb-2 text-blue-300 uppercase tracking-tighter">Sources (Labels or IP)</label>
@@ -451,6 +456,12 @@
             </div>
         </div>
 
+        <div id="partialOutputWarning" class="partial-output-warning mb-8 hidden rounded-lg border-2 p-4 shadow-lg" role="alert" aria-live="assertive">
+            <h2 class="text-base font-bold uppercase tracking-wide">Partial extraction saved</h2>
+            <p id="partialOutputMessage" class="mt-2 text-sm"></p>
+            <p id="partialOutputPath" class="mt-2 break-all text-xs font-mono"></p>
+        </div>
+
         <div class="rounded-lg p-4 h-64 overflow-y-auto text-xs font-mono border themed-panel" id="logBox" data-auto-collapsible="activity-log" data-collapse-title="Extraction Activity Log">
             <div class="themed-muted italic">Logs will appear here...</div>
         </div>
@@ -556,6 +567,7 @@
             document.getElementById('testBtn').addEventListener('click', testConnection);
             document.getElementById('uploadCSVBtn').addEventListener('click', uploadCSVAndOpenSummary);
             fetchProfiles();
+            restoreLatestExtractionStatus();
         };
 
         async function fetchProfiles() {
@@ -960,7 +972,17 @@
 
         async function cancelFetch() {
             log('Sending cancel signal...');
-            await fetch('/blocked-traffic/api/cancel', { method: 'POST', headers: {'Content-Type': 'application/json'} });
+            const cancelButton = document.getElementById('cancelBtn');
+            cancelButton.disabled = true;
+            document.getElementById('statusLabel').innerText = 'Cancellation requested; stopping queries and saving completed data...';
+            document.getElementById('statusLabel').style.color = 'var(--warn)';
+            try {
+                const response = await fetch('/blocked-traffic/api/cancel', { method: 'POST', headers: {'Content-Type': 'application/json'} });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            } catch (error) {
+                cancelButton.disabled = false;
+                log(`Cancel request failed: ${error.message}`);
+            }
         }
 
         async function startFetch() {
@@ -972,8 +994,17 @@
 			}
             document.getElementById('startBtn').classList.add('hidden');
             document.getElementById('cancelBtn').classList.remove('hidden');
+            document.getElementById('cancelBtn').disabled = false;
             document.getElementById('progressArea').classList.remove('hidden');
             document.getElementById('summaryLinkWrap').classList.add('hidden');
+            const partialWarning = document.getElementById('partialOutputWarning');
+            partialWarning.classList.add('hidden');
+            document.getElementById('partialOutputMessage').innerText = '';
+            document.getElementById('partialOutputPath').innerText = '';
+            document.getElementById('statusLabel').style.color = '';
+            document.getElementById('summaryLink').innerText = 'Open Analytics Dashboard for the latest successful fetch';
+            document.getElementById('heatmapLink').innerText = 'Open Full Heatmap Explorer with filters and drilldowns';
+            document.getElementById('executiveSummaryLink').innerText = 'Open Executive Summary for presentation-ready highlights';
             const dateRange = getRequestedDateRange();
             if (dateRange.error) {
                 log(`Start failed: ${dateRange.error}`);
@@ -999,42 +1030,130 @@
             } catch (e) { log(`Fatal: ${e.message}`); resetButtons(); }
         }
 
+        function renderExtractionStatus(data) {
+            const requestedChunkCount = Math.max(0, Number(data.requestedChunks || 0));
+            const requestedChunks = Math.max(1, requestedChunkCount);
+            const completedChunks = Math.max(0, Number(data.completedChunks || 0));
+            const requestedDays = data.requestedDays || 90;
+            const chunkInterval = data.chunkInterval || '1 day';
+            const activeChunks = Number(data.activeChunks || 0);
+            const lastProgressMs = Date.parse(data.lastProgressAt || '');
+            const activityAgeSeconds = Number.isFinite(lastProgressMs) ? Math.max(0, Math.floor((Date.now() - lastProgressMs) / 1000)) : null;
+            let activityLabel = '';
+            if (activeChunks > 0) {
+                const ageLabel = activityAgeSeconds === null
+                    ? 'awaiting PCE activity'
+                    : activityAgeSeconds < 60
+                        ? `PCE activity ${activityAgeSeconds}s ago`
+                        : `PCE activity ${Math.floor(activityAgeSeconds / 60)}m ${activityAgeSeconds % 60}s ago`;
+                activityLabel = `; ${activeChunks} active ${activeChunks === 1 ? 'chunk' : 'chunks'}; ${ageLabel}`;
+            }
+            const percent = Math.min(100, Math.round((completedChunks / requestedChunks) * 100));
+            document.getElementById('progressArea').classList.remove('hidden');
+            document.getElementById('progressBar').style.width = `${percent}%`;
+            document.getElementById('percentLabel').innerText = `${percent}%`;
+            document.getElementById('statusLabel').innerText = `Processed ${completedChunks}/${requestedChunks} ${chunkInterval} chunks across ${requestedDays} days (${data.totalConnections} unique connections${activityLabel})`;
+            if (data.newLogs) data.newLogs.forEach(msg => log(msg));
+
+            // A cancellation request is not terminal. The backend sets done only
+            // after any salvage CSV and its coverage sidecar are durably closed.
+            const terminal = Boolean(data.done);
+            if (data.cancelled && !terminal) {
+                document.getElementById('cancelBtn').disabled = true;
+                document.getElementById('statusLabel').innerText = 'Cancellation requested; stopping queries and saving completed data...';
+                document.getElementById('statusLabel').style.color = 'var(--warn)';
+                return false;
+            }
+            if (!terminal) return false;
+
+            resetButtons();
+            const failedChunks = Math.max(0, Number(data.failedChunks || 0));
+            const hasArtifact = Boolean(data.fileName);
+            const importedDataset = String(data.fileName || '').startsWith('Imported CSV');
+            const partial = hasArtifact && Boolean(data.partial || data.cancelled || failedChunks > 0 || data.error);
+            if (hasArtifact) {
+                document.getElementById('summaryLinkWrap').classList.remove('hidden');
+                if (partial) {
+                    const reason = data.error || (data.cancelled
+                        ? 'The extraction was cancelled after some query windows completed.'
+                        : 'One or more query windows did not complete.');
+                    const failedChunkText = failedChunks > 0
+                        ? ` ${failedChunks} original ${failedChunks === 1 ? 'chunk did' : 'chunks did'} not complete in full.`
+                        : '';
+                    document.getElementById('partialOutputMessage').innerText = `${reason}${failedChunkText} Analytics remain available, but totals and trends are incomplete and must not be treated as a complete baseline.`;
+                    document.getElementById('partialOutputPath').innerText = `Saved CSV: ${data.fileName}`;
+                    document.getElementById('partialOutputWarning').classList.remove('hidden');
+                    document.getElementById('statusLabel').innerText = importedDataset
+                        ? 'Partial imported dataset loaded.'
+                        : `Partial extraction saved (${completedChunks}/${requestedChunks} chunks${failedChunks > 0 ? `; ${failedChunks} failed` : ''})`;
+                    document.getElementById('statusLabel').style.color = 'var(--warn)';
+                    document.getElementById('percentLabel').innerText = importedDataset ? 'Partial' : `${percent}% partial`;
+                    document.getElementById('summaryLink').innerText = 'View Analytics for the saved partial extraction';
+                    document.getElementById('heatmapLink').innerText = 'View Heatmaps for the saved partial extraction';
+                    document.getElementById('executiveSummaryLink').innerText = 'View Executive Summary with partial-coverage warnings';
+                    log(`PARTIAL OUTPUT SAVED: ${data.fileName}`);
+                    const logReason = /^INCOMPLETE EXTRACTION:/i.test(reason)
+                        ? `${reason}${failedChunkText}`
+                        : `INCOMPLETE EXTRACTION: ${reason}${failedChunkText}`;
+                    log(logReason);
+                } else {
+                    document.getElementById('statusLabel').innerText = 'Extraction completed successfully.';
+                    document.getElementById('statusLabel').style.color = 'var(--accent)';
+                    log(`COMPLETED: ${data.fileName}`);
+                }
+            }
+            if (data.done && !hasArtifact && !data.cancelled) {
+                const reason = data.error || 'No output artifact was produced. Check logs for details.';
+                document.getElementById('statusLabel').innerText = 'Extraction failed without output.';
+                document.getElementById('statusLabel').style.color = 'var(--danger)';
+                log(`RUN FAILED — NO OUTPUT SAVED: ${reason}`);
+            }
+            if (data.cancelled && !hasArtifact) {
+                document.getElementById('statusLabel').innerText = 'Extraction cancelled; no output was saved.';
+                document.getElementById('statusLabel').style.color = 'var(--danger)';
+                log('CANCELLED BY USER — NO OUTPUT SAVED');
+            }
+            return true;
+        }
+
+        async function refreshExtractionStatus() {
+            const res = await fetch('/blocked-traffic/api/status', { cache: 'no-store' });
+            const data = await res.json();
+            return renderExtractionStatus(data);
+        }
+
         function pollStatus() {
             if (pollingInterval) clearInterval(pollingInterval);
-            pollingInterval = setInterval(async () => {
-                const res = await fetch('/blocked-traffic/api/status');
-                const data = await res.json();
-                const requestedChunks = data.requestedChunks || 1;
-                const completedChunks = data.completedChunks || 0;
-                const requestedDays = data.requestedDays || 90;
-                const chunkInterval = data.chunkInterval || '1 day';
-				const activeChunks = Number(data.activeChunks || 0);
-				const lastProgressMs = Date.parse(data.lastProgressAt || '');
-				const activityAgeSeconds = Number.isFinite(lastProgressMs) ? Math.max(0, Math.floor((Date.now() - lastProgressMs) / 1000)) : null;
-				let activityLabel = '';
-				if (activeChunks > 0) {
-					const ageLabel = activityAgeSeconds === null
-						? 'awaiting PCE activity'
-						: activityAgeSeconds < 60
-							? `PCE activity ${activityAgeSeconds}s ago`
-							: `PCE activity ${Math.floor(activityAgeSeconds / 60)}m ${activityAgeSeconds % 60}s ago`;
-					activityLabel = `; ${activeChunks} active ${activeChunks === 1 ? 'chunk' : 'chunks'}; ${ageLabel}`;
-				}
-                const percent = Math.round((completedChunks / requestedChunks) * 100);
-                document.getElementById('progressBar').style.width = `${percent}%`;
-                document.getElementById('percentLabel').innerText = `${percent}%`;
-				document.getElementById('statusLabel').innerText = `Processed ${completedChunks}/${requestedChunks} ${chunkInterval} chunks across ${requestedDays} days (${data.totalConnections} unique connections${activityLabel})`;
-                if (data.newLogs) data.newLogs.forEach(msg => log(msg));
-                if (data.done || data.cancelled) {
-                    clearInterval(pollingInterval); resetButtons();
-                    if (data.done && data.fileName) {
-                        log(`COMPLETED: ${data.fileName}`);
-                        document.getElementById('summaryLinkWrap').classList.remove('hidden');
+            const refresh = async () => {
+                try {
+                    if (await refreshExtractionStatus()) {
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
                     }
-					if (data.done && !data.fileName && !data.cancelled) log(`RUN FAILED: ${data.error || 'No output artifact was produced. Check logs for details.'}`);
-                    if (data.cancelled) log('CANCELLED BY USER');
+                } catch (error) {
+                    log(`Status update failed: ${error.message}`);
                 }
-            }, 1000);
+            };
+            refresh();
+            pollingInterval = setInterval(refresh, 1000);
+        }
+
+        async function restoreLatestExtractionStatus() {
+            try {
+                const res = await fetch('/blocked-traffic/api/status', { cache: 'no-store' });
+                const data = await res.json();
+                const hasExtractionState = Number(data.requestedChunks || 0) > 0 || Boolean(data.fileName) || Boolean(data.done) || Boolean(data.cancelled);
+                if (!hasExtractionState) return;
+                const terminal = renderExtractionStatus(data);
+                if (!terminal) {
+                    document.getElementById('startBtn').classList.add('hidden');
+                    document.getElementById('cancelBtn').classList.remove('hidden');
+                    document.getElementById('cancelBtn').disabled = Boolean(data.cancelled);
+                    pollStatus();
+                }
+            } catch (error) {
+                log(`Could not restore the latest extraction status: ${error.message}`);
+            }
         }
 
         function resetButtons() {

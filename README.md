@@ -98,7 +98,9 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 ## Binaries
 
-Cross-platform binaries are produced in the project root:
+The `v1.3.0-rc.6` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for the extraction recovery and reconciliation-status fixes.
+
+For source builds, use Go 1.26 or newer; the module pins Go 1.26.8. The rebuild script creates the following compatibility filenames in its selected build directory:
 
 - `illumio-dashboard-linux-amd64`
 - `illumio-dashboard.exe`
@@ -127,7 +129,11 @@ This development build embeds the Blocked Traffic Extractor as an isolated modul
 - Source, destination, and service exclusions are available for manual runs, saved profiles, and automation templates. Service exclusions accept discovered PCE service names or explicit values such as `TCP:22` and `UDP:5355`.
 - Extractor runs require an existing absolute target folder. The folder and filename are validated before any PCE query begins so output failures are reported immediately.
 - All-traffic CSVs add `Policy Decision`, `Draft Policy Decision`, and `Traffic Scope` columns. Imports use these fields to retain scope and keep different decision rows distinct while preserving the established endpoint/service-based unique-connection definition.
-- A query that reaches the PCE's 200,000-row result ceiling is rejected as incomplete with guidance to select a smaller chunk interval.
+- Traffic result downloads are decoded one row at a time, with no fixed total response-byte limit. Logs show downloaded response-body bytes and decoded rows; these measure the PCE JSON response, not the CSV size. Bounded metadata/control requests keep their separate safety limit.
+- Queries reported as truncated at the requested 200,000-row maximum are automatically divided into smaller time windows. Subdivision keeps the original filters and scope, stops below one minute or after ten levels, and never combines a truncated parent result with its children.
+- A failed query window no longer discards successful windows or stops other chunks. Failures, cancellation, and overall timeouts save the completed data as an explicitly marked `_PARTIAL.csv` (including a header-only file when completed windows contain no traffic). If no query window completes, there is no data to export. Disk-write failures are still reported separately.
+- Each saved CSV has a companion `.extraction.json` file recording requested, completed, and missing time windows (exclusive end times). Partial analytics show incomplete-coverage warnings; the partial CSV includes an `Extraction Status` column so the warning survives re-import after a rename. Missing windows are unknown activity, not zero.
+- Scheduled partial runs retain their CSV for download and use failure notifications when enabled; they are not delivered as successful reports or used as completed-run comparison baselines.
 - Dashboard collection and traffic extraction run concurrently in independent Go workers with separate HTTP clients, request contexts, credentials, progress state, and retry handling. Extraction status includes active-chunk and PCE heartbeat details so long-running queries remain visibly alive while dashboard collection continues.
 - Artifact reads and writes are root-confined to prevent path and symlink traversal.
 
@@ -566,11 +572,13 @@ Use `/settings` to manage webhook alerting:
     - start/finish timestamps
     - day/update/failure counts
     - startup-skip reason and completion marker metadata
+  - Unset timestamps are omitted. Start/finish details describe a run in this app session; the separate saved completion checkpoint can come from an earlier session.
 - `POST /api/reconcile/tampering-history`:
   - Trigger asynchronous full tampering-history reconciliation over stored prior day keys
   - If a reconcile run is already in progress, request is ignored and response indicates current state
 - `GET /api/reconcile/tampering-history/status`:
   - Returns current tampering reconcile state and last run summary (days/updated/failed, startup-skip reason, completion marker timestamp)
+  - Uses the same timestamp and session semantics as blocked-history status. Settings shows whether a run was automatic at startup or manually requested.
 - `GET /api/config/alerts`:
   - Read alerting/webhook settings (anomaly webhook + daily reconcile summary webhook)
 - `PUT /api/config/alerts`:
@@ -691,6 +699,8 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
     - startup auto-check reconciles stored prior-day tampering snapshots missing completion marker
     - previously reconciled tampering day keys are skipped using persisted day markers
     - manual reconcile is available from Settings and `POST /api/reconcile/tampering-history`
+    - traffic targets and source/service exclusions do not trigger tampering reconciliation or filter tampering history
+    - the Settings page groups tampering history controls and live status under **Tampering Settings & History**, separately from blocked traffic history
 - HTTP basic auth is used for PCE API calls
 - `config.json` is written with file mode `0600`
 - For async traffic queries, result count is read from job status and falls back to results download endpoints if needed

@@ -1,10 +1,14 @@
 package illumio
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +18,37 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
+}
+
+type trackingReadCloser struct {
+	io.Reader
+	closed bool
+}
+
+func (r *trackingReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
+
+type repeatedChunkReader struct {
+	chunk     []byte
+	remaining int64
+}
+
+func (r *repeatedChunkReader) Read(buffer []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, io.EOF
+	}
+	limit := len(buffer)
+	if int64(limit) > r.remaining {
+		limit = int(r.remaining)
+	}
+	written := 0
+	for written < limit {
+		written += copy(buffer[written:limit], r.chunk)
+	}
+	r.remaining -= int64(written)
+	return written, nil
 }
 
 func TestNewClientUsesIndependentConnectionPools(t *testing.T) {
@@ -95,6 +130,12 @@ func TestFetchDayOfTrafficParsesTimestampRangeAndCleansUp(t *testing.T) {
 	if flows[0].PolicyDecision != "blocked" {
 		t.Fatalf("PolicyDecision = %q, want blocked", flows[0].PolicyDecision)
 	}
+	if flows[0].SrcWorkloadHref != "/workloads/1" || len(flows[0].SrcLabels) != 1 || flows[0].SrcLabels[0].Key != "env" || flows[0].SrcLabels[0].Value != "Prod" {
+		t.Fatalf("source workload/labels were not preserved: %#v", flows[0])
+	}
+	if flows[0].DstWorkloadHref != "/workloads/2" || len(flows[0].DstLabels) != 1 || flows[0].DstLabels[0].Key != "app" || flows[0].DstLabels[0].Value != "API" {
+		t.Fatalf("destination workload/labels were not preserved: %#v", flows[0])
+	}
 	if !deleted {
 		t.Fatal("FetchDayOfTraffic did not delete the asynchronous query")
 	}
@@ -171,6 +212,270 @@ func TestFetchDayOfTrafficRejectsTruncatedResult(t *testing.T) {
 	_, err := client.FetchDayOfTraffic(context.Background(), AsyncQueryRequest{StartDate: "2026-03-01T00:00:00Z", PolicyDecisions: []string{}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "200000-row maximum") {
 		t.Fatalf("error = %v, want explicit truncation error", err)
+	}
+	if !errors.Is(err, ErrQueryResultTruncated) {
+		t.Fatalf("error = %v, want errors.Is(..., ErrQueryResultTruncated)", err)
+	}
+}
+
+func TestFetchDayOfTrafficDetectsTruncationWhenFlowsCountIsMissingOrUnderreported(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		matchesCount int
+		flowsCount   int
+	}{
+		{matchesCount: 200001, flowsCount: 0},
+		{matchesCount: 200001, flowsCount: 199999},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(strconv.Itoa(test.matchesCount)+"-"+strconv.Itoa(test.flowsCount), func(t *testing.T) {
+			client := NewClient("https://pce.example.com", "1", "key", "secret")
+			client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				status := http.StatusOK
+				body := `{}`
+				switch {
+				case req.Method == http.MethodPost:
+					status = http.StatusCreated
+					body = `{"href":"/api/v2/orgs/1/traffic_flows/async_queries/query-truncated"}`
+				case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/query-truncated"):
+					body = fmt.Sprintf(`{"status":"completed","matches_count":%d,"flows_count":%d}`, test.matchesCount, test.flowsCount)
+				case req.Method == http.MethodDelete && strings.HasSuffix(req.URL.Path, "/query-truncated"):
+					status = http.StatusNoContent
+				default:
+					t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+				}
+				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+
+			_, err := client.FetchDayOfTraffic(context.Background(), AsyncQueryRequest{StartDate: "2026-03-01T00:00:00Z"}, nil)
+			if !errors.Is(err, ErrQueryResultTruncated) {
+				t.Fatalf("matches_count=%d flows_count=%d error=%v, want ErrQueryResultTruncated", test.matchesCount, test.flowsCount, err)
+			}
+		})
+	}
+}
+
+func TestFetchDayOfTrafficAcceptsExactMaximumWithoutProofOfTruncation(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient("https://pce.example.com", "1", "key", "secret")
+	deleted := false
+	client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		status := http.StatusOK
+		body := `{}`
+		switch {
+		case req.Method == http.MethodPost:
+			status = http.StatusCreated
+			body = `{"href":"/api/v2/orgs/1/traffic_flows/async_queries/query-exact-max"}`
+		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/query-exact-max/download"):
+			body = `[{"src":{"ip":"10.0.0.1"},"dst":{"ip":"10.0.0.2"},"service":{"port":443,"proto":6},"num_connections":1,"policy_decision":"blocked","timestamp_range":{"first_detected":"2026-03-01T01:02:03Z"}}]`
+		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/query-exact-max"):
+			body = `{"status":"completed","matches_count":200000,"flows_count":200000}`
+		case req.Method == http.MethodDelete && strings.HasSuffix(req.URL.Path, "/query-exact-max"):
+			status = http.StatusNoContent
+			deleted = true
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+
+	flows, err := client.FetchDayOfTraffic(context.Background(), AsyncQueryRequest{StartDate: "2026-03-01T00:00:00Z"}, nil)
+	if err != nil {
+		t.Fatalf("exact-maximum result was rejected without proof of truncation: %v", err)
+	}
+	if len(flows) != 1 || flows[0].SrcIP != "10.0.0.1" {
+		t.Fatalf("exact-maximum valid download was not decoded: %#v", flows)
+	}
+	if !deleted {
+		t.Fatal("exact-maximum async query was not cleaned up")
+	}
+}
+
+func TestRequestWithHeadersResponseTooLargeIsTyped(t *testing.T) {
+	t.Parallel()
+
+	body := &trackingReadCloser{Reader: strings.NewReader(`[]`)}
+	client := NewClient("https://pce.example.com", "1", "key", "secret")
+	client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        make(http.Header),
+			Body:          body,
+			ContentLength: maxResponseBodySize + 1,
+		}, nil
+	})
+
+	_, _, _, err := client.requestWithHeaders(context.Background(), http.MethodGet, "labels", nil, nil)
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("error=%v, want errors.Is(..., ErrResponseTooLarge)", err)
+	}
+	if !body.closed {
+		t.Fatal("oversized control response body was not closed")
+	}
+}
+
+func TestDownloadTrafficFlowsStreamsPastControlResponseLimit(t *testing.T) {
+	t.Parallel()
+
+	const row = `{"src":{"ip":"10.0.0.1","workload":{"href":"/workloads/1","labels":[{"key":"env","value":"Prod"}]}},"dst":{"ip":"10.0.0.2"},"service":{"port":443,"proto":6},"num_connections":2,"policy_decision":"allowed","timestamp_range":{"first_detected":"2026-03-01T01:02:03Z"}}`
+	prefix := "[" + row + ","
+	suffix := row + "]"
+	paddingBytes := int64(maxResponseBodySize) + 1
+	payloadBytes := int64(len(prefix)+len(suffix)) + paddingBytes
+	t.Logf("streaming synthetic traffic response: %d bytes (%.3f MiB)", payloadBytes, float64(payloadBytes)/(1<<20))
+	padding := &repeatedChunkReader{chunk: bytes.Repeat([]byte{' '}, 32<<10), remaining: paddingBytes}
+	body := &trackingReadCloser{Reader: io.MultiReader(strings.NewReader(prefix), padding, strings.NewReader(suffix))}
+
+	client := NewClient("https://pce.example.com", "1", "key", "secret")
+	client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        make(http.Header),
+			Body:          body,
+			ContentLength: payloadBytes,
+		}, nil
+	})
+	logs := make([]string, 0)
+	flows, code, err := client.downloadTrafficFlows(context.Background(), "traffic_flows/async_queries/query-large/download", false, func(message string) {
+		logs = append(logs, message)
+	})
+	if err != nil {
+		t.Fatalf("downloadTrafficFlows error=%v", err)
+	}
+	if code != http.StatusOK || len(flows) != 2 {
+		t.Fatalf("download result code=%d flows=%d, want 200 and 2", code, len(flows))
+	}
+	if flows[0].PolicyDecision != "allowed" || flows[0].LastDetected != flows[0].FirstDetected || len(flows[0].SrcLabels) != 1 {
+		t.Fatalf("streamed flow fields/labels were not preserved: %#v", flows[0])
+	}
+	if !body.closed {
+		t.Fatal("streamed traffic response body was not closed")
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "download progress") || !strings.Contains(joined, "download complete") || !strings.Contains(joined, "rows=2") {
+		t.Fatalf("download byte/row progress was not logged: %s", joined)
+	}
+}
+
+func TestDecodeTrafficFlowResponseRejectsMalformedTailWithoutPartialRows(t *testing.T) {
+	t.Parallel()
+
+	const row = `{"src":{"ip":"10.0.0.1"},"dst":{"ip":"10.0.0.2"},"timestamp_range":{"first_detected":"2026-03-01T01:02:03Z"}}`
+	tests := map[string]string{
+		"trailing garbage":    "[" + row + "]garbage",
+		"trailing JSON value": "[" + row + `]{"unexpected":true}`,
+		"missing array close": "[" + row,
+		"invalid second row":  "[" + row + `,{"timestamp_range":{"first_detected":"not-a-time"}}]`,
+	}
+	for name, payload := range tests {
+		name, payload := name, payload
+		t.Run(name, func(t *testing.T) {
+			tracker := newTrafficDownloadTracker(strings.NewReader(payload), nil)
+			flows, err := decodeTrafficFlowResponse(tracker, false)
+			if err == nil {
+				t.Fatal("malformed response unexpectedly decoded")
+			}
+			if flows != nil {
+				t.Fatalf("malformed response returned partial flows: %#v", flows)
+			}
+			if tracker.rowsDecoded != 1 {
+				t.Fatalf("rows decoded before failure=%d, want 1", tracker.rowsDecoded)
+			}
+		})
+	}
+}
+
+func TestDownloadTrafficFlowsLogsByteAndRowCountsOnDecodeFailure(t *testing.T) {
+	t.Parallel()
+
+	const payload = `[{"timestamp_range":{"first_detected":"2026-03-01T01:02:03Z"}}]garbage`
+	body := &trackingReadCloser{Reader: strings.NewReader(payload)}
+	client := NewClient("https://pce.example.com", "1", "key", "secret")
+	client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body}, nil
+	})
+	logs := make([]string, 0)
+	flows, _, err := client.downloadTrafficFlows(context.Background(), "traffic_flows/async_queries/query-malformed/download", false, func(message string) {
+		logs = append(logs, message)
+	})
+	if err == nil {
+		t.Fatal("malformed download unexpectedly succeeded")
+	}
+	if flows != nil {
+		t.Fatalf("malformed download returned partial flows: %#v", flows)
+	}
+	if !body.closed {
+		t.Fatal("malformed download response body was not closed")
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "download failed") || !strings.Contains(joined, fmt.Sprintf("bytes=%d", len(payload))) || !strings.Contains(joined, "rows=1") {
+		t.Fatalf("failed download byte/row counts were not logged: %s", joined)
+	}
+}
+
+func TestDownloadTrafficFlowsUsesCallerDeadlineInsteadOfSharedClientTimeout(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient("https://pce.example.com", "1", "key", "secret")
+	client.HTTP.Timeout = time.Nanosecond
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	wantDeadline, _ := ctx.Deadline()
+	client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotDeadline, ok := req.Context().Deadline()
+		if !ok || gotDeadline.Sub(wantDeadline) > time.Millisecond || wantDeadline.Sub(gotDeadline) > time.Millisecond {
+			t.Fatalf("download request deadline=%v present=%v, want caller deadline %v", gotDeadline, ok, wantDeadline)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`[]`)),
+		}, nil
+	})
+
+	flows, _, err := client.downloadTrafficFlows(ctx, "traffic_flows/async_queries/query-timeout/download", false, nil)
+	if err != nil || len(flows) != 0 {
+		t.Fatalf("download error=%v flows=%#v", err, flows)
+	}
+	if client.HTTP.Timeout != time.Nanosecond {
+		t.Fatalf("shared client timeout mutated to %v", client.HTTP.Timeout)
+	}
+}
+
+func TestFetchDayOfTrafficCleansUpAfterDownloadRateLimit(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient("https://pce.example.com", "1", "key", "secret")
+	deleted := false
+	client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		status := http.StatusOK
+		body := `{}`
+		switch {
+		case req.Method == http.MethodPost:
+			status = http.StatusCreated
+			body = `{"href":"/api/v2/orgs/1/traffic_flows/async_queries/query-rate-limited"}`
+		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/query-rate-limited/download"):
+			status = http.StatusTooManyRequests
+		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/query-rate-limited"):
+			body = `{"status":"completed","matches_count":1,"flows_count":1}`
+		case req.Method == http.MethodDelete && strings.HasSuffix(req.URL.Path, "/query-rate-limited"):
+			status = http.StatusNoContent
+			deleted = true
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+
+	_, err := client.FetchDayOfTraffic(context.Background(), AsyncQueryRequest{StartDate: "2026-03-01T00:00:00Z"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "rate limit") {
+		t.Fatalf("error=%v, want download rate-limit error", err)
+	}
+	if !deleted {
+		t.Fatal("async query DELETE was not sent after download rate limit")
 	}
 }
 

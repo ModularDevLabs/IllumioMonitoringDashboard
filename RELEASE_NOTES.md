@@ -1,5 +1,21 @@
 # Release Notes
 
+## v1.3.0-rc.6 - 2026-10-07
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; extractor access remains localhost-only.
+
+### Fixed
+- Traffic-result downloads now stream without the previous 256 MiB total-size cutoff and log downloaded bytes and parsed rows. PCE-truncated queries automatically split into smaller windows while preserving their filters.
+- Failed, cancelled, or timed-out extractions preserve successfully completed windows in marked partial CSVs and record missing windows in a companion coverage file. Remaining chunks continue after an individual failure; incomplete data is clearly identified in analytics and scheduled-run history rather than reported as success.
+- Reconciliation status omits unset timestamps instead of displaying year 0001, and identifies automatic startup runs, manual requests, and traffic service exclusion changes.
+- Saved history completion checkpoints are distinguished from run details in the current session; a new run no longer inherits the preceding run's finish time or counters.
+- Tampering history controls and status now appear in Tampering Settings & History, separate from traffic targets and exclusions. Status refreshes while Settings is open and after saving traffic changes.
+
+### Security and Reliability
+- Updated the Go build toolchain and SSH/SFTP dependency to include the security fixes used in the standalone extractor build.
+- Failed coverage-file writes are cleaned up without discarding an already saved CSV.
+- Executive report fallback labels no longer describe all-traffic data as blocked-only traffic.
+
 ## v1.3.0-rc.5 - 2026-10-02
 
 ### Added

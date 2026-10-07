@@ -469,30 +469,30 @@ type tamperingHistoryReconcileMarker struct {
 type blockedHistoryReconcileStatus struct {
 	Running             bool      `json:"running"`
 	LastTriggerReason   string    `json:"last_trigger_reason,omitempty"`
-	LastStartedAt       time.Time `json:"last_started_at,omitempty"`
-	LastFinishedAt      time.Time `json:"last_finished_at,omitempty"`
+	LastStartedAt       time.Time `json:"last_started_at,omitempty,omitzero"`
+	LastFinishedAt      time.Time `json:"last_finished_at,omitempty,omitzero"`
 	LastDays            int       `json:"last_days,omitempty"`
 	LastUpdated         int       `json:"last_updated,omitempty"`
 	LastFailed          int       `json:"last_failed,omitempty"`
 	LastMessage         string    `json:"last_message,omitempty"`
 	StartupSkipped      bool      `json:"startup_skipped,omitempty"`
 	StartupSkipReason   string    `json:"startup_skip_reason,omitempty"`
-	LastCompletedAt     time.Time `json:"last_completed_at,omitempty"`
+	LastCompletedAt     time.Time `json:"last_completed_at,omitempty,omitzero"`
 	LastTargetSignature string    `json:"last_target_signature,omitempty"`
 }
 
 type tamperingHistoryReconcileStatus struct {
 	Running           bool      `json:"running"`
 	LastTriggerReason string    `json:"last_trigger_reason,omitempty"`
-	LastStartedAt     time.Time `json:"last_started_at,omitempty"`
-	LastFinishedAt    time.Time `json:"last_finished_at,omitempty"`
+	LastStartedAt     time.Time `json:"last_started_at,omitempty,omitzero"`
+	LastFinishedAt    time.Time `json:"last_finished_at,omitempty,omitzero"`
 	LastDays          int       `json:"last_days,omitempty"`
 	LastUpdated       int       `json:"last_updated,omitempty"`
 	LastFailed        int       `json:"last_failed,omitempty"`
 	LastMessage       string    `json:"last_message,omitempty"`
 	StartupSkipped    bool      `json:"startup_skipped,omitempty"`
 	StartupSkipReason string    `json:"startup_skip_reason,omitempty"`
-	LastCompletedAt   time.Time `json:"last_completed_at,omitempty"`
+	LastCompletedAt   time.Time `json:"last_completed_at,omitempty,omitzero"`
 	LastDaySignature  string    `json:"last_day_signature,omitempty"`
 }
 
@@ -2209,8 +2209,8 @@ func handleReconcileBlockedHistoryStatus(w http.ResponseWriter, r *http.Request)
 	}
 	reconcileStatusMu.Lock()
 	status := reconcileStatus
-	reconcileStatusMu.Unlock()
 	status.Running = fullReconcileInProgress.Load()
+	reconcileStatusMu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(status)
 }
@@ -2242,10 +2242,76 @@ func handleReconcileTamperingHistoryStatus(w http.ResponseWriter, r *http.Reques
 	}
 	reconcileStatusMu.Lock()
 	status := tamperingReconcileState
-	reconcileStatusMu.Unlock()
 	status.Running = tamperingReconcileBusy.Load()
+	reconcileStatusMu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(status)
+}
+
+func beginBlockedHistoryReconcileStatus(reason string) bool {
+	reconcileStatusMu.Lock()
+	defer reconcileStatusMu.Unlock()
+	if !fullReconcileInProgress.CompareAndSwap(false, true) {
+		return false
+	}
+	reconcileStatus.StartupSkipped = false
+	reconcileStatus.StartupSkipReason = ""
+	reconcileStatus.Running = true
+	reconcileStatus.LastTriggerReason = reason
+	reconcileStatus.LastStartedAt = time.Now().UTC()
+	reconcileStatus.LastFinishedAt = time.Time{}
+	reconcileStatus.LastDays = 0
+	reconcileStatus.LastUpdated = 0
+	reconcileStatus.LastFailed = 0
+	reconcileStatus.LastTargetSignature = ""
+	reconcileStatus.LastMessage = "reconcile running"
+	return true
+}
+
+func finishBlockedHistoryReconcileStatus(days, updated, failed int, targetSignature string) {
+	reconcileStatusMu.Lock()
+	reconcileStatus.LastDays = days
+	reconcileStatus.LastUpdated = updated
+	reconcileStatus.LastFailed = failed
+	reconcileStatus.LastTargetSignature = targetSignature
+	reconcileStatus.LastMessage = fmt.Sprintf("reconcile complete days=%d updated=%d failed=%d", days, updated, failed)
+	reconcileStatus.LastFinishedAt = time.Now().UTC()
+	reconcileStatus.Running = false
+	fullReconcileInProgress.Store(false)
+	reconcileStatusMu.Unlock()
+}
+
+func beginTamperingHistoryReconcileStatus(reason string) bool {
+	reconcileStatusMu.Lock()
+	defer reconcileStatusMu.Unlock()
+	if !tamperingReconcileBusy.CompareAndSwap(false, true) {
+		return false
+	}
+	tamperingReconcileState.StartupSkipped = false
+	tamperingReconcileState.StartupSkipReason = ""
+	tamperingReconcileState.Running = true
+	tamperingReconcileState.LastTriggerReason = reason
+	tamperingReconcileState.LastStartedAt = time.Now().UTC()
+	tamperingReconcileState.LastFinishedAt = time.Time{}
+	tamperingReconcileState.LastDays = 0
+	tamperingReconcileState.LastUpdated = 0
+	tamperingReconcileState.LastFailed = 0
+	tamperingReconcileState.LastDaySignature = ""
+	tamperingReconcileState.LastMessage = "reconcile running"
+	return true
+}
+
+func finishTamperingHistoryReconcileStatus(days, updated, failed int, daySignature string) {
+	reconcileStatusMu.Lock()
+	tamperingReconcileState.LastDays = days
+	tamperingReconcileState.LastUpdated = updated
+	tamperingReconcileState.LastFailed = failed
+	tamperingReconcileState.LastDaySignature = daySignature
+	tamperingReconcileState.LastMessage = fmt.Sprintf("reconcile complete days=%d updated=%d failed=%d", days, updated, failed)
+	tamperingReconcileState.LastFinishedAt = time.Now().UTC()
+	tamperingReconcileState.Running = false
+	tamperingReconcileBusy.Store(false)
+	reconcileStatusMu.Unlock()
 }
 
 func maybeStartStartupBlockedHistoryReconcile() {
@@ -2303,26 +2369,11 @@ func maybeStartStartupBlockedHistoryReconcile() {
 }
 
 func startFullBlockedHistoryReconcileAsync(reason string, selectedTargets []TrafficTarget) bool {
-	if !fullReconcileInProgress.CompareAndSwap(false, true) {
+	if !beginBlockedHistoryReconcileStatus(reason) {
 		log.Printf("[HISTORY] full reconcile request ignored: already in progress (reason=%s)", reason)
 		return false
 	}
-	reconcileStatusMu.Lock()
-	reconcileStatus.StartupSkipped = false
-	reconcileStatus.StartupSkipReason = ""
-	reconcileStatus.Running = true
-	reconcileStatus.LastTriggerReason = reason
-	reconcileStatus.LastStartedAt = time.Now().UTC()
-	reconcileStatus.LastMessage = "reconcile running"
-	reconcileStatusMu.Unlock()
 	go func() {
-		defer func() {
-			fullReconcileInProgress.Store(false)
-			reconcileStatusMu.Lock()
-			reconcileStatus.Running = false
-			reconcileStatus.LastFinishedAt = time.Now().UTC()
-			reconcileStatusMu.Unlock()
-		}()
 		configMutex.RLock()
 		pceURL := config.PCEURL
 		orgID := config.OrgID
@@ -2369,13 +2420,7 @@ func startFullBlockedHistoryReconcileAsync(reason string, selectedTargets []Traf
 			}
 		}
 		configUpdateMu.Unlock()
-		reconcileStatusMu.Lock()
-		reconcileStatus.LastDays = days
-		reconcileStatus.LastUpdated = updated
-		reconcileStatus.LastFailed = failed
-		reconcileStatus.LastTargetSignature = fp
-		reconcileStatus.LastMessage = fmt.Sprintf("reconcile complete days=%d updated=%d failed=%d", days, updated, failed)
-		reconcileStatusMu.Unlock()
+		finishBlockedHistoryReconcileStatus(days, updated, failed, fp)
 		log.Printf("[HISTORY] full reconcile complete reason=%s days=%d updated=%d failed=%d", reason, days, updated, failed)
 	}()
 	return true
@@ -2816,26 +2861,11 @@ func maybeStartStartupTamperingHistoryReconcile() {
 }
 
 func startTamperingHistoryReconcileAsync(reason string, dayKeys []string) bool {
-	if !tamperingReconcileBusy.CompareAndSwap(false, true) {
+	if !beginTamperingHistoryReconcileStatus(reason) {
 		log.Printf("[TAMPER-HISTORY] reconcile request ignored: already in progress (reason=%s)", reason)
 		return false
 	}
-	reconcileStatusMu.Lock()
-	tamperingReconcileState.StartupSkipped = false
-	tamperingReconcileState.StartupSkipReason = ""
-	tamperingReconcileState.Running = true
-	tamperingReconcileState.LastTriggerReason = reason
-	tamperingReconcileState.LastStartedAt = time.Now().UTC()
-	tamperingReconcileState.LastMessage = "reconcile running"
-	reconcileStatusMu.Unlock()
 	go func() {
-		defer func() {
-			tamperingReconcileBusy.Store(false)
-			reconcileStatusMu.Lock()
-			tamperingReconcileState.Running = false
-			tamperingReconcileState.LastFinishedAt = time.Now().UTC()
-			reconcileStatusMu.Unlock()
-		}()
 		configMutex.RLock()
 		pceURL := config.PCEURL
 		orgID := config.OrgID
@@ -2847,13 +2877,6 @@ func startTamperingHistoryReconcileAsync(reason string, dayKeys []string) bool {
 		}
 		sig := tamperingDayFingerprint(requested)
 		updated, failed := reconcileStoredTamperingHistory(baseURL, requested)
-		reconcileStatusMu.Lock()
-		tamperingReconcileState.LastDays = len(requested)
-		tamperingReconcileState.LastUpdated = updated
-		tamperingReconcileState.LastFailed = failed
-		tamperingReconcileState.LastDaySignature = sig
-		tamperingReconcileState.LastMessage = fmt.Sprintf("reconcile complete days=%d updated=%d failed=%d", len(requested), updated, failed)
-		reconcileStatusMu.Unlock()
 		if failed == 0 && updated > 0 {
 			marker, _ := loadTamperingHistoryReconcileMarker()
 			marker.MarkDaysComplete(requested, time.Now().UTC())
@@ -2865,6 +2888,7 @@ func startTamperingHistoryReconcileAsync(reason string, dayKeys []string) bool {
 				reconcileStatusMu.Unlock()
 			}
 		}
+		finishTamperingHistoryReconcileStatus(len(requested), updated, failed, sig)
 		log.Printf("[TAMPER-HISTORY] reconcile complete reason=%s days=%d updated=%d failed=%d", reason, len(requested), updated, failed)
 	}()
 	return true

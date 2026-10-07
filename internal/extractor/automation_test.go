@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +210,119 @@ func TestShouldDeliverRunPolicies(t *testing.T) {
 	}
 }
 
+func TestPartialRunRetainsArtifactWithoutSuccessMetricsAndSendsFailureNotification(t *testing.T) {
+	artifact := filepath.Join(t.TempDir(), "traffic_PARTIAL.csv")
+	if err := os.WriteFile(artifact, []byte("header\npartial\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := extractionManifestPath(artifact)
+	if err := os.WriteFile(manifest, []byte(`{"partial":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	received := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		received <- payload
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	manager := &AutomationManager{storePath: filepath.Join(t.TempDir(), "automation.json"), data: automationStoreData{
+		Version: automationStoreVersion,
+		Templates: map[string]ReportTemplate{"tpl": {
+			ID: "tpl", Name: "Scheduled Traffic", DeliveryDestination: []string{"dst"},
+			AlertPolicy: AlertPolicy{DeliverOnFailure: true},
+		}},
+		Destinations: map[string]DeliveryDestination{"dst": {
+			ID: "dst", Name: "failure webhook", Type: "generic_webhook", Enabled: true,
+			EndpointURL: server.URL, AllowPrivateNetwork: true, WebhookMode: "notification",
+		}},
+		Runs: []AutomationRun{{
+			ID: "run-partial", TemplateID: "tpl", Status: "running",
+			Metrics: RunMetrics{TotalFlows: 999, PreviousCompletedRunID: "must-be-cleared"},
+		}},
+	}}
+	manager.finishPartialRun(context.Background(), "run-partial", artifact, errors.New("2 query chunks did not complete"))
+
+	run := manager.data.Runs[0]
+	if run.Status != "partial" || run.ArtifactPath != artifact || run.Error != "2 query chunks did not complete" {
+		t.Fatalf("partial run = %#v", run)
+	}
+	if !reflect.DeepEqual(run.Metrics, RunMetrics{}) {
+		t.Fatalf("partial metrics must not be used as a complete baseline: %#v", run.Metrics)
+	}
+	if run.DeliverySkipped != "successful delivery skipped because extraction output is partial" {
+		t.Fatalf("delivery skip reason = %q", run.DeliverySkipped)
+	}
+	if !reflect.DeepEqual(run.AdditionalArtifactPaths, []string{manifest}) {
+		t.Fatalf("partial companion artifacts = %#v, want coverage manifest", run.AdditionalArtifactPaths)
+	}
+	if len(run.DeliveryResults) != 1 || !run.DeliveryResults[0].Success {
+		t.Fatalf("failure notification result = %#v", run.DeliveryResults)
+	}
+	select {
+	case payload := <-received:
+		if failed, _ := payload["failed"].(bool); !failed {
+			t.Fatalf("failure notification payload = %#v", payload)
+		}
+		if title := fmt.Sprint(payload["title"]); strings.Contains(strings.ToLower(title), "completed") || !strings.Contains(strings.ToLower(title), "failed") {
+			t.Fatalf("partial run was presented as success: title=%q", title)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("failure notification was not sent")
+	}
+}
+
+func TestReportGenerationFailureRetainsCSVArtifact(t *testing.T) {
+	artifact := filepath.Join(t.TempDir(), "traffic.csv")
+	if err := os.WriteFile(artifact, []byte("header\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := extractionManifestPath(artifact)
+	if err := os.WriteFile(manifest, []byte(`{"partial":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager := &AutomationManager{storePath: filepath.Join(t.TempDir(), "automation.json"), data: automationStoreData{
+		Version:      automationStoreVersion,
+		Templates:    map[string]ReportTemplate{"tpl": {ID: "tpl", Name: "Report"}},
+		Destinations: map[string]DeliveryDestination{},
+		Runs:         []AutomationRun{{ID: "run-report-failed", TemplateID: "tpl", Status: "running", Metrics: RunMetrics{TotalFlows: 42}}},
+	}}
+	manager.finishFailedRunWithArtifact(context.Background(), "run-report-failed", artifact, errors.New("render executive PDF"))
+	run := manager.data.Runs[0]
+	if run.Status != "failed" || run.ArtifactPath != artifact || run.Error != "render executive PDF" {
+		t.Fatalf("failed report run = %#v", run)
+	}
+	if !reflect.DeepEqual(run.Metrics, RunMetrics{}) || !reflect.DeepEqual(run.AdditionalArtifactPaths, []string{manifest}) {
+		t.Fatalf("failed report run must not publish success metrics/reports: %#v", run)
+	}
+}
+
+func TestPartialRunIsNotUsedAsMetricsBaseline(t *testing.T) {
+	t.Parallel()
+	manager := &AutomationManager{data: automationStoreData{Runs: []AutomationRun{
+		{ID: "partial", TemplateID: "tpl", Status: "partial", Metrics: RunMetrics{TotalFlows: 1000}},
+		{ID: "complete", TemplateID: "tpl", Status: "completed", Metrics: RunMetrics{TotalFlows: 10}},
+	}}}
+	metrics := manager.calculateMetrics("tpl", "new", []PortProtocolSummary{{Protocol: "TCP", Port: 443, FlowCount: 15}}, AnalyticsInsights{})
+	if metrics.PreviousCompletedRunID != "complete" || metrics.FlowChangePercent != 50 {
+		t.Fatalf("metrics used an incomplete baseline: %#v", metrics)
+	}
+}
+
+func TestPartialRunErrorIncludesCancellationAndFailedChunkContext(t *testing.T) {
+	t.Parallel()
+	if got := partialRunError(true, 0, "").Error(); !strings.Contains(got, "cancelled") || !strings.Contains(got, "partial artifact") {
+		t.Fatalf("cancelled partial reason = %q", got)
+	}
+	if got := partialRunError(false, 3, "PCE query incomplete").Error(); !strings.Contains(got, "3 failed chunk") {
+		t.Fatalf("failed-chunk partial reason = %q", got)
+	}
+}
+
 func TestCalculateRunMetricsFindsChanges(t *testing.T) {
 	t.Parallel()
 	manager := &AutomationManager{data: automationStoreData{Runs: []AutomationRun{{
@@ -307,22 +423,17 @@ func TestGenericWebhookMultipartDelivery(t *testing.T) {
 }
 
 func TestAutomationStorePermissionsAndRestartRecovery(t *testing.T) {
-	configRoot := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", configRoot)
+	path := filepath.Join(t.TempDir(), "automation.json")
 	store := automationStoreData{
 		Version:      automationStoreVersion,
 		Templates:    map[string]ReportTemplate{"tpl": {ID: "tpl", Name: "Stored"}},
 		Destinations: map[string]DeliveryDestination{},
 		Runs:         []AutomationRun{{ID: "running", Status: "running"}, {ID: "queued", Status: "queued"}},
 	}
-	path, err := automationStorePath()
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := writePrivateJSON(path, store); err != nil {
 		t.Fatal(err)
 	}
-	manager := &AutomationManager{}
+	manager := &AutomationManager{storePath: path}
 	if err := manager.load(); err != nil {
 		t.Fatal(err)
 	}
@@ -336,14 +447,14 @@ func TestAutomationStorePermissionsAndRestartRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Fatalf("automation store permissions = %o, want 600", info.Mode().Perm())
 	}
 	store.Version = automationStoreVersion + 1
 	if err := writePrivateJSON(path, store); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&AutomationManager{}).load(); err == nil || !strings.Contains(err.Error(), "newer") {
+	if err := (&AutomationManager{storePath: path}).load(); err == nil || !strings.Contains(err.Error(), "newer") {
 		t.Fatalf("future store version error = %v", err)
 	}
 }
@@ -380,6 +491,35 @@ func TestRetentionOnlyRemovesTrackedFilesInsideOutputFolder(t *testing.T) {
 	}
 	if _, err := os.Stat(outside); err != nil {
 		t.Fatalf("outside report must remain: %v", err)
+	}
+}
+
+func TestRetentionIncludesPartialAndFailedRunsAndRemovesTrackedManifests(t *testing.T) {
+	t.Parallel()
+	output := t.TempDir()
+	newestPartial := filepath.Join(output, "newest_PARTIAL.csv")
+	newestManifest := extractionManifestPath(newestPartial)
+	oldFailed := filepath.Join(output, "old.csv")
+	oldManifest := extractionManifestPath(oldFailed)
+	for _, path := range []string{newestPartial, newestManifest, oldFailed, oldManifest} {
+		if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manager := &AutomationManager{data: automationStoreData{Runs: []AutomationRun{
+		{ID: "new", TemplateID: "tpl", Status: "partial", ArtifactPath: newestPartial, AdditionalArtifactPaths: []string{newestManifest}},
+		{ID: "old", TemplateID: "tpl", Status: "failed", ArtifactPath: oldFailed, AdditionalArtifactPaths: []string{oldManifest}},
+	}}}
+	manager.applyRetention(ReportTemplate{ID: "tpl", SavePath: output, RetentionCount: 1})
+	for _, path := range []string{newestPartial, newestManifest} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("newest retained artifact %s should remain: %v", path, err)
+		}
+	}
+	for _, path := range []string{oldFailed, oldManifest} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expired retained artifact %s should be removed, stat error = %v", path, err)
+		}
 	}
 }
 
@@ -445,6 +585,73 @@ func TestAutomationStateDoesNotExposeDestinationSecrets(t *testing.T) {
 	}
 }
 
+func TestPartialAutomationArtifactIsDownloadableAndTerminal(t *testing.T) {
+	artifact := filepath.Join(t.TempDir(), "traffic_PARTIAL.csv")
+	want := "header\npartial\n"
+	if err := os.WriteFile(artifact, []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := extractionManifestPath(artifact)
+	manifestData := `{"partial":true}`
+	if err := os.WriteFile(manifest, []byte(manifestData), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previous := automation
+	automation = &AutomationManager{data: automationStoreData{
+		Templates: map[string]ReportTemplate{}, Destinations: map[string]DeliveryDestination{},
+		Runs: []AutomationRun{{ID: "run-partial", Status: "partial", ArtifactPath: artifact, AdditionalArtifactPaths: []string{manifest}, Error: "incomplete extraction"}},
+	}}
+	t.Cleanup(func() { automation = previous })
+
+	recorder := httptest.NewRecorder()
+	handleAutomationRunArtifact(recorder, httptest.NewRequest(http.MethodGet, "/api/automation/runs/artifact?id=run-partial&kind=csv", nil))
+	if recorder.Code != http.StatusOK || recorder.Body.String() != want {
+		t.Fatalf("partial artifact response = %d %q", recorder.Code, recorder.Body.String())
+	}
+	if disposition := recorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, "traffic_PARTIAL.csv") {
+		t.Fatalf("Content-Disposition = %q", disposition)
+	}
+	coverageRecorder := httptest.NewRecorder()
+	handleAutomationRunArtifact(coverageRecorder, httptest.NewRequest(http.MethodGet, "/api/automation/runs/artifact?id=run-partial&kind=coverage", nil))
+	if coverageRecorder.Code != http.StatusOK || coverageRecorder.Body.String() != manifestData {
+		t.Fatalf("coverage artifact response = %d %q", coverageRecorder.Code, coverageRecorder.Body.String())
+	}
+	if got := coverageRecorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Fatalf("coverage Content-Type = %q", got)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	run, err := waitForAutomationRun(ctx, "run-partial")
+	if err == nil || run.Status != "partial" || !strings.Contains(err.Error(), "incomplete extraction") {
+		t.Fatalf("partial terminal result = run %#v, err %v", run, err)
+	}
+}
+
+func TestPartialOutputFrontendMessagingIsProminentAndDownloadable(t *testing.T) {
+	t.Parallel()
+	indexData, err := staticFiles.ReadFile("frontend/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := string(indexData)
+	for _, expected := range []string{"partialOutputWarning", "data.partial", "data.failedChunks", "PARTIAL OUTPUT SAVED", "RUN FAILED — NO OUTPUT SAVED", "restoreLatestExtractionStatus", "const terminal = Boolean(data.done)", "Cancellation requested; stopping queries and saving completed data"} {
+		if !strings.Contains(index, expected) {
+			t.Errorf("extractor frontend is missing %q", expected)
+		}
+	}
+	automationData, err := staticFiles.ReadFile("frontend/automation.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	automationHTML := string(automationData)
+	for _, expected := range []string{"status-partial", "Download partial CSV", "Download coverage manifest", "const completed = run.status === 'completed'"} {
+		if !strings.Contains(automationHTML, expected) {
+			t.Errorf("automation frontend is missing %q", expected)
+		}
+	}
+}
+
 func TestTemplateValidationRejectsExcessiveChunkCount(t *testing.T) {
 	state.Mu.Lock()
 	previousProfiles := state.Profiles
@@ -465,9 +672,9 @@ func TestTemplateValidationRejectsExcessiveChunkCount(t *testing.T) {
 }
 
 func TestSchedulerQueuesMissedRunAndAdvancesSchedule(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
 	manager := &AutomationManager{
+		storePath: filepath.Join(t.TempDir(), "automation.json"),
 		data: automationStoreData{
 			Version: automationStoreVersion,
 			Templates: map[string]ReportTemplate{"tpl": {
@@ -558,7 +765,7 @@ func TestScheduledExecutiveArtifactsAreValidAndPrivate(t *testing.T) {
 		if statErr != nil {
 			t.Fatalf("stat artifact %s: %v", path, statErr)
 		}
-		if info.Mode().Perm() != 0o600 {
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 			t.Fatalf("artifact %s mode = %v", path, info.Mode().Perm())
 		}
 	}

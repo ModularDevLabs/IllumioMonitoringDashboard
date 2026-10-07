@@ -950,7 +950,8 @@ func TestApplicationHeadersUseConsistentNavigationAndThemeControls(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	shellCSS := string(shell)
+	// Windows checkouts may use CRLF without changing the CSS rules.
+	shellCSS := strings.ReplaceAll(string(shell), "\r\n", "\n")
 	for _, rule := range []string{"scrollbar-gutter: stable", ".app-header-action {\n        order: 1", ".app-nav {\n        order: 2", ".theme-switcher {\n        order: 3"} {
 		if !strings.Contains(shellCSS, rule) {
 			t.Fatalf("shared app shell is missing the stable header rule %q", rule)

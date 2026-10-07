@@ -319,7 +319,7 @@
 				<p id="reportConfigMessage" class="muted text-sm">Settings are retained with a saved dataset.</p>
 			</div>
 			<div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4" data-offline-remove>
-				<label class="text-sm">Report Title<input id="reportTitleInput" maxlength="160" class="mt-1 w-full rounded-lg border px-3 py-2" value="Blocked Traffic Executive Summary"></label>
+				<label class="text-sm">Report Title<input id="reportTitleInput" maxlength="160" class="mt-1 w-full rounded-lg border px-3 py-2" value="Traffic Executive Summary"></label>
 				<label class="text-sm">Customer Name<input id="reportCustomerInput" maxlength="160" class="mt-1 w-full rounded-lg border px-3 py-2"></label>
 				<label class="text-sm">Prepared By<input id="reportPreparedInput" maxlength="160" class="mt-1 w-full rounded-lg border px-3 py-2"></label>
 				<label class="text-sm">Optional Logo<input id="reportLogoInput" type="file" accept="image/png,image/jpeg,image/svg+xml" class="mt-1 w-full text-sm"></label>
@@ -503,7 +503,7 @@
 
 			<section class="panel rounded-3xl p-6" data-auto-collapsible="dimension-scorecard" data-collapse-title="Dimension Scorecard" data-image-section="dimension-scorecard" data-export-section="dimension-scorecard">
 				<p id="primaryScorecardLabel" class="label">Environment Scorecard</p>
-                <h2 class="headline mt-2 text-2xl font-bold">Where blocked traffic is concentrated</h2>
+				<h2 class="headline mt-2 text-2xl font-bold">Where traffic is concentrated</h2>
                 <div id="environmentScorecards" class="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3"></div>
             </section>
         </div>
@@ -1029,9 +1029,9 @@
 		}
 
 		function applyReportMetadata(metadata = {}) {
-			const title = metadata.title || 'Blocked Traffic Executive Summary';
+			const title = metadata.title || 'Traffic Executive Summary';
 			document.getElementById('reportTitle').textContent = title;
-			document.getElementById('reportCustomer').textContent = metadata.customer_name || 'Blocked Traffic Analysis';
+			document.getElementById('reportCustomer').textContent = metadata.customer_name || 'Traffic Analysis';
 			document.getElementById('reportPrepared').textContent = metadata.prepared_by ? `Prepared by ${metadata.prepared_by}` : '';
 			document.getElementById('reportNotes').textContent = metadata.notes || '';
 			document.getElementById('reportNotes').classList.toggle('hidden', !metadata.notes);
@@ -1058,8 +1058,8 @@
 
 		function previewReportMetadata() {
 			const metadata = reportMetadataFromInputs();
-			document.getElementById('reportTitle').textContent = metadata.title || 'Blocked Traffic Executive Summary';
-			document.getElementById('reportCustomer').textContent = metadata.customer_name || 'Blocked Traffic Analysis';
+			document.getElementById('reportTitle').textContent = metadata.title || 'Traffic Executive Summary';
+			document.getElementById('reportCustomer').textContent = metadata.customer_name || 'Traffic Analysis';
 			document.getElementById('reportPrepared').textContent = metadata.prepared_by ? `Prepared by ${metadata.prepared_by}` : '';
 			document.getElementById('reportNotes').textContent = metadata.notes;
 			document.getElementById('reportNotes').classList.toggle('hidden', !metadata.notes);

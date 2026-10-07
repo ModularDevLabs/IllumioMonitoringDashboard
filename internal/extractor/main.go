@@ -117,6 +117,8 @@ type AppState struct {
 	Logs             []string
 	IsDone           bool
 	IsCancelled      bool
+	IsPartial        bool
+	FailedChunks     int
 	FileName         string
 	Profiles         map[string]PCEProfile
 	CancelFunc       context.CancelFunc
@@ -253,6 +255,7 @@ type AnalyticsRecord struct {
 	PolicyDecision string
 	DraftDecision  string
 	TrafficScope   string
+	Partial        bool
 }
 
 type DiscoveryData struct {
@@ -1393,6 +1396,8 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		"newLogs":          state.Logs,
 		"done":             state.IsDone,
 		"cancelled":        state.IsCancelled,
+		"partial":          state.IsPartial,
+		"failedChunks":     state.FailedChunks,
 		"fileName":         state.FileName,
 		"error":            state.RunError,
 		"discoveryDone":    state.DiscoveryDone,
@@ -1762,8 +1767,10 @@ func parseCSVAnalyticsInputsDetailed(inputs []csvAnalyticsInput, primaryLabelKey
 			return parsedAnalyticsDataset{}, err
 		}
 		fileCoverage := DatasetFileCoverage{Name: input.Name, SHA256: input.SHA256, Size: input.Size, Rows: len(records)}
+		filePartial := strings.Contains(strings.ToUpper(filepath.Base(input.Name)), "_PARTIAL")
 		monthSet := map[string]bool{}
 		for _, record := range records {
+			filePartial = filePartial || record.Partial
 			if normalizedTrafficScope(record.TrafficScope) == trafficScopeAll || (record.PolicyDecision != "" && !strings.EqualFold(record.PolicyDecision, "blocked")) {
 				coverage.TrafficScope = trafficScopeAll
 			}
@@ -1779,6 +1786,10 @@ func parseCSVAnalyticsInputsDetailed(inputs []csvAnalyticsInput, primaryLabelKey
 			for _, month := range monthSpan(record.FirstSeen, record.LastSeen) {
 				monthSet[month] = true
 			}
+		}
+		if filePartial {
+			coverage.Partial = true
+			coverage.Warnings = append(coverage.Warnings, fmt.Sprintf("INCOMPLETE EXTRACTION: %s contains only successfully retrieved windows. Missing activity is unknown, not zero; consult its .extraction.json coverage file for the original gaps.", input.Name))
 		}
 		for month := range monthSet {
 			fileCoverage.Months = append(fileCoverage.Months, month)
@@ -2043,6 +2054,7 @@ func parseCSVAnalyticsRecords(reader io.Reader, sourceName, primaryLabelKey, sec
 			PolicyDecision: strings.ToLower(strings.TrimSpace(getValue(row, "Policy Decision"))),
 			DraftDecision:  strings.ToLower(strings.TrimSpace(getValue(row, "Draft Policy Decision"))),
 			TrafficScope:   normalizedTrafficScope(getValue(row, "Traffic Scope")),
+			Partial:        strings.EqualFold(getValue(row, "Extraction Status"), "partial"),
 		})
 	}
 	return records, nil
@@ -2243,6 +2255,9 @@ func handleImportCSV(w http.ResponseWriter, r *http.Request) {
 	state.TrafficScope = normalizedTrafficScope(parsed.Coverage.TrafficScope)
 	state.IsDone = true
 	state.IsCancelled = false
+	state.IsPartial = parsed.Coverage.Partial
+	state.FailedChunks = 0
+	state.RunError = ""
 	state.Mu.Unlock()
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -2328,6 +2343,8 @@ func beginExtractionWithContext(parent context.Context, cfg Config) (Config, con
 	state.TotalConnections = 0
 	state.IsDone = false
 	state.IsCancelled = false
+	state.IsPartial = false
+	state.FailedChunks = 0
 	state.Logs = []string{}
 	state.FileName = ""
 	state.LastSummary = nil
@@ -3176,19 +3193,17 @@ func runExtraction(ctx context.Context, cfg Config) {
 	}
 	chunks := buildExtractionChunks(rangeStart, rangeEnd, chunkDuration)
 
-	runCtx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
 	jobs := make(chan int, len(chunks))
 	var wg sync.WaitGroup
-	var extractionErr error
-	var extractionErrOnce sync.Once
+	var completedWindows, missingWindows []ExtractionWindow
+	processedChunks := make([]bool, len(chunks))
 	for w := 1; w <= 3; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for chunkIdx := range jobs {
 				select {
-				case <-runCtx.Done():
+				case <-ctx.Done():
 					return
 				default:
 					state.Mu.Lock()
@@ -3209,32 +3224,9 @@ func runExtraction(ctx context.Context, cfg Config) {
 						state.Mu.Unlock()
 						addLog(fmt.Sprintf("Chunk %d/%d: %s", chunkIdx+1, len(chunks), message))
 					}
-					chunkReq := req
-					chunkReq.StartDate = chunks[chunkIdx].Start.Format(time.RFC3339)
-					chunkReq.EndDate = chunks[chunkIdx].End.Format(time.RFC3339)
-					var flows []illumio.TrafficFlow
-					var err error
-					for attempt := 1; attempt <= maxChunkAttempts; attempt++ {
-						chunkCtx, chunkCancel := context.WithTimeout(runCtx, maxChunkQueryTime)
-						flows, err = client.FetchDayOfTraffic(chunkCtx, chunkReq, chunkLog)
-						chunkCancel()
-						if err == nil || runCtx.Err() != nil {
-							break
-						}
-						if attempt < maxChunkAttempts {
-							chunkLog(fmt.Sprintf("attempt %d/%d failed: %v; retrying...", attempt, maxChunkAttempts, err))
-							delay := time.Duration(1<<uint(attempt-1)) * time.Second
-							select {
-							case <-time.After(delay):
-							case <-runCtx.Done():
-								finishChunk()
-								return
-							}
-						}
-					}
-					finishChunk()
-					if err == nil {
+					commit := func(window extractionChunk, flows []illumio.TrafficFlow) {
 						aggMu.Lock()
+						completedWindows = append(completedWindows, ExtractionWindow{Start: window.Start, EndExclusive: window.End})
 						for _, f := range flows {
 							connectionKey := FlowKey{
 								SrcIP: f.SrcIP, DstIP: f.DstIP, Port: f.DstPort, Proto: f.Proto,
@@ -3310,18 +3302,26 @@ func runExtraction(ctx context.Context, cfg Config) {
 							}
 						}
 						state.Mu.Lock()
-						state.CompletedChunks++
 						state.TotalConnections = len(connectionSet)
 						state.Mu.Unlock()
 						aggMu.Unlock()
-						addLog(fmt.Sprintf("Chunk %d/%d (%s to %s): %d connections gathered", chunkIdx+1, len(chunks), chunks[chunkIdx].Start.Format("2006-01-02 15:04Z"), chunks[chunkIdx].End.Format("2006-01-02 15:04Z"), len(flows)))
+						chunkLog(fmt.Sprintf("%s to %s: %d connections gathered", window.Start.Format(time.RFC3339), window.End.Format(time.RFC3339), len(flows)))
+					}
+					gaps := fetchExtractionChunk(ctx, req, chunks[chunkIdx], client.FetchDayOfTraffic, commit, chunkLog)
+					finishChunk()
+					processedChunks[chunkIdx] = true
+					aggMu.Lock()
+					missingWindows = append(missingWindows, gaps...)
+					aggMu.Unlock()
+					state.Mu.Lock()
+					if len(gaps) == 0 {
+						state.CompletedChunks++
 					} else {
-						addLog(fmt.Sprintf("Error chunk %d/%d (%s to %s): %v", chunkIdx+1, len(chunks), chunks[chunkIdx].Start.Format("2006-01-02 15:04Z"), chunks[chunkIdx].End.Format("2006-01-02 15:04Z"), err))
-						extractionErrOnce.Do(func() {
-							extractionErr = fmt.Errorf("chunk %d/%d failed after %d attempts: %w", chunkIdx+1, len(chunks), maxChunkAttempts, err)
-							cancelRun()
-						})
-						return
+						state.FailedChunks++
+					}
+					state.Mu.Unlock()
+					for _, gap := range gaps {
+						chunkLog(fmt.Sprintf("WARNING: missing %s to %s: %s. Keeping completed windows and continuing where possible.", gap.Start.Format(time.RFC3339), gap.EndExclusive.Format(time.RFC3339), gap.Reason))
 					}
 				}
 			}
@@ -3334,19 +3334,39 @@ func runExtraction(ctx context.Context, cfg Config) {
 	close(jobs)
 	wg.Wait()
 
-	if extractionErr != nil {
-		addLog(fmt.Sprintf("Extraction aborted without writing a CSV: %v", extractionErr))
-		markRunFinished("", false)
+	for i, processed := range processedChunks {
+		if !processed {
+			reason := "window was not queried"
+			if ctx.Err() != nil {
+				reason = ctx.Err().Error()
+			}
+			missingWindows = append(missingWindows, ExtractionWindow{Start: chunks[i].Start, EndExclusive: chunks[i].End, Reason: reason})
+		}
+	}
+	sortExtractionWindows(completedWindows)
+	sortExtractionWindows(missingWindows)
+	partial := len(missingWindows) > 0
+	cancelled := errors.Is(ctx.Err(), context.Canceled)
+	state.Mu.Lock()
+	completedChunks := state.CompletedChunks
+	state.IsPartial = partial
+	state.FailedChunks = len(chunks) - completedChunks
+	state.Mu.Unlock()
+	if len(completedWindows) == 0 {
+		addLog("Error: no traffic query windows completed successfully; no CSV could be saved. See the missing-window errors above.")
+		markRunFinished("", cancelled)
 		return
 	}
-	if ctx.Err() != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			addLog(fmt.Sprintf("Extraction exceeded the %s overall time limit; no CSV was written.", maxExtractionTime))
-			markRunFinished("", false)
-		} else {
-			markRunFinished("", true)
+	warning := ""
+	if partial {
+		warning = fmt.Sprintf("INCOMPLETE EXTRACTION: %d/%d original chunks completed; %d smaller or original window(s) missing. Saved data covers successful windows only; missing activity is unknown, not zero.", completedChunks, len(chunks), len(missingWindows))
+		if ctx.Err() != nil {
+			warning += " Extraction stopped: " + ctx.Err().Error() + "."
 		}
-		return
+		state.Mu.Lock()
+		state.RunError = warning
+		state.Mu.Unlock()
+		addLog(warning)
 	}
 
 	finalPath, err := outputCSVPath(cfg.SavePath, cfg.FileName)
@@ -3355,8 +3375,17 @@ func runExtraction(ctx context.Context, cfg Config) {
 		markRunFinished("", false)
 		return
 	}
+	if partial {
+		finalPath = partialCSVPath(finalPath)
+	}
 
 	f, closeRoot, err := createExclusiveRootedFile(finalPath, 0600)
+	if errors.Is(err, os.ErrExist) {
+		// A prior partial run may have used this name even though the requested
+		// full-export name was available when this run began. Never overwrite it.
+		finalPath = strings.TrimSuffix(finalPath, filepath.Ext(finalPath)) + "_" + time.Now().UTC().Format("20060102T150405.000000000") + ".csv"
+		f, closeRoot, err = createExclusiveRootedFile(finalPath, 0600)
+	}
 	if err != nil {
 		addLog(fmt.Sprintf("Error: %v", err))
 		markRunFinished("", false)
@@ -3383,6 +3412,9 @@ func runExtraction(ctx context.Context, cfg Config) {
 		header = append(header, "Dst "+strings.ToUpper(k[:1])+k[1:])
 	}
 	header = append(header, "FQDN", "Port", "Protocol", "Process Name", "Policy Decision", "Draft Policy Decision", "Traffic Scope", "Flows")
+	if partial {
+		header = append(header, "Extraction Status")
+	}
 	if err := w.Write(header); err != nil {
 		addLog(fmt.Sprintf("Error writing CSV header: %v", err))
 		markRunFinished("", false)
@@ -3435,6 +3467,9 @@ func runExtraction(ctx context.Context, cfg Config) {
 			normalizedTrafficScope(cfg.TrafficScope),
 			fmt.Sprintf("%d", entry.TotalCount),
 		)
+		if partial {
+			row = append(row, "partial")
+		}
 		for i := range row {
 			row[i] = safeCSVCell(row[i])
 		}
@@ -3492,6 +3527,19 @@ func runExtraction(ctx context.Context, cfg Config) {
 		addLog(fmt.Sprintf("Error closing CSV: %v", err))
 		markRunFinished("", false)
 		return
+	}
+	// The valid CSV is durable. Later report/manifest errors must not delete it.
+	outputComplete = true
+	manifest := extractionManifest{
+		Version: 1, Partial: partial, CSVFile: filepath.Base(finalPath), RequestedStart: rangeStart,
+		RequestedEnd: rangeEnd.Add(24 * time.Hour), RequestedChunks: len(chunks), CompletedChunks: completedChunks,
+		CompletedWindows: completedWindows, MissingWindows: missingWindows, Warning: warning,
+	}
+	if err := writeExtractionManifest(finalPath, manifest); err != nil {
+		addLog(fmt.Sprintf("Warning: CSV saved, but could not save the extraction coverage file: %v", err))
+		warning += " Coverage-file write failed; consult the extraction log for missing windows."
+	} else {
+		addLog(fmt.Sprintf("Extraction coverage saved to %s", extractionManifestPath(finalPath)))
 	}
 
 	summary := make([]PortProtocolSummary, 0, len(summaryMap))
@@ -3580,13 +3628,10 @@ func runExtraction(ctx context.Context, cfg Config) {
 		}
 		return insights.MonthlyExternalDestinations[i].Destination < insights.MonthlyExternalDestinations[j].Destination
 	})
-	coverageEnd := rangeEnd.Add(24*time.Hour - time.Second)
-	coverage := normalizeCoverage(DatasetCoverage{Source: "live_extraction", TrafficScope: normalizedTrafficScope(cfg.TrafficScope), Files: []DatasetFileCoverage{{
-		Name: filepath.Base(finalPath), Rows: len(aggregatedFlows), FirstDetected: rangeStart, LastDetected: coverageEnd,
-		Months: monthSpan(rangeStart, coverageEnd),
-	}}})
+	coverage := coverageForExtraction(finalPath, normalizedTrafficScope(cfg.TrafficScope), len(aggregatedFlows), completedWindows, missingWindows, warning)
 	if info, err := statRootedFile(finalPath); err == nil {
 		coverage.Files[0].Size = info.Size()
+		addLog(fmt.Sprintf("CSV output: %d rows, %d bytes (%.1f MiB). PCE download sizes include response metadata and can be much larger.", len(aggregatedFlows), info.Size(), float64(info.Size())/(1<<20)))
 	}
 
 	state.Mu.Lock()
@@ -3596,7 +3641,10 @@ func runExtraction(ctx context.Context, cfg Config) {
 	state.TrafficScope = normalizedTrafficScope(cfg.TrafficScope)
 	state.Mu.Unlock()
 
-	outputComplete = true
-	addLog(fmt.Sprintf("SUCCESS: Final data saved to %s", finalPath))
-	markRunFinished(finalPath, false)
+	if partial {
+		addLog(fmt.Sprintf("PARTIAL CSV SAVED: %s. %s", finalPath, warning))
+	} else {
+		addLog(fmt.Sprintf("SUCCESS: Final data saved to %s", finalPath))
+	}
+	markRunFinished(finalPath, cancelled)
 }
