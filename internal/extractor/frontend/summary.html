@@ -146,9 +146,10 @@
 					<input id="csvSecondaryLabel" type="text" value="app" aria-label="Secondary CSV label type" placeholder="Secondary label (for example app)" class="rounded-lg px-3 py-2 text-sm">
 					<input id="csvDatasetName" type="text" maxlength="120" aria-label="Optional saved dataset name" placeholder="Save as named dataset (optional)" class="rounded-lg px-3 py-2 text-sm">
                     <input id="csvFile" type="file" accept=".csv,text/csv" multiple class="muted text-sm file:mr-4 file:rounded-lg file:border-0 file:px-4 file:py-2 file:text-sm file:font-semibold">
-                    <button id="importCSVBtn" class="rounded-lg px-4 py-2 text-sm font-semibold text-white" style="background: var(--accent-strong);">Import CSVs</button>
+                    <button id="importCSVBtn" type="button" class="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60" style="background: var(--accent-strong);">Import CSVs</button>
                 </div>
             </div>
+            <p id="csvImportStatus" class="muted mt-3 text-xs" role="status" aria-live="polite"></p>
         </div>
 
 		<div class="mb-8 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
@@ -396,6 +397,7 @@
 
     <script src="/blocked-traffic/assets/app-version.js"></script>
     <script src="/blocked-traffic/assets/collapsible.js"></script>
+    <script src="/blocked-traffic/assets/csv-import.js"></script>
     <script>
         let latestInsights = {};
 		let primaryDimensionName = 'Environment';
@@ -815,35 +817,31 @@
 
         async function importCSV() {
             const input = document.getElementById('csvFile');
+            const status = document.getElementById('csvImportStatus');
             if (!input.files || input.files.length === 0) {
-                document.getElementById('fileLabel').innerText = 'Choose one or more CSV files first.';
+                status.innerText = 'Choose one or more CSV files first.';
                 return;
             }
 
 			const files = Array.from(input.files);
-            const formData = new FormData();
-			files.forEach(file => formData.append('files', file));
-			formData.append('primary_label_key', document.getElementById('csvPrimaryLabel').value || 'env');
-			formData.append('secondary_label_key', document.getElementById('csvSecondaryLabel').value || 'app');
-			formData.append('dataset_name', document.getElementById('csvDatasetName').value || '');
-			const selectionLabel = files.length === 1 ? files[0].name : `${files.length} CSV files`;
-            document.getElementById('fileLabel').innerText = `Importing ${selectionLabel}...`;
 
             try {
-                const res = await fetch('/blocked-traffic/api/results/import-csv', {
-                    method: 'POST',
-                    cache: 'no-store',
-                    body: formData
+                await ITTCSVImport.upload({
+                    files,
+                    button: document.getElementById('importCSVBtn'),
+                    fields: {
+                        primary_label_key: document.getElementById('csvPrimaryLabel').value || 'env',
+                        secondary_label_key: document.getElementById('csvSecondaryLabel').value || 'app',
+                        dataset_name: document.getElementById('csvDatasetName').value || '',
+                    },
+                    onStatus: (message) => {
+                        status.innerText = message;
+                    },
                 });
-                const data = await res.json();
-                if (!data.success) {
-                    document.getElementById('fileLabel').innerText = `Import failed: ${data.error || 'Unknown error'}`;
-                    return;
-                }
                 await loadSummary();
 				await loadDatasets();
             } catch (error) {
-                document.getElementById('fileLabel').innerText = `Import failed: ${error.message}`;
+                status.innerText = error.message;
             }
         }
 

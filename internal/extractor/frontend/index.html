@@ -438,11 +438,12 @@
                 <div class="flex flex-col gap-3 md:flex-row md:items-center">
                     <input id="mainCsvDatasetName" type="text" maxlength="120" placeholder="Save as named dataset (optional)" class="rounded-lg border px-3 py-2 text-sm">
                     <input id="mainCsvFile" type="file" accept=".csv,text/csv" multiple class="text-sm themed-muted file:mr-4 file:rounded-lg file:border-0 file:px-4 file:py-2 file:text-sm file:font-semibold">
-                    <button id="uploadCSVBtn" type="button" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold hover:bg-emerald-500">
+                    <button id="uploadCSVBtn" type="button" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60">
                         Upload CSVs
                     </button>
                 </div>
             </div>
+            <p id="mainCsvImportStatus" class="mt-3 text-xs themed-muted" role="status" aria-live="polite"></p>
         </div>
 
         <!-- Progress -->
@@ -470,6 +471,7 @@
 
     <script src="/blocked-traffic/assets/app-version.js"></script>
     <script src="/blocked-traffic/assets/collapsible.js"></script>
+    <script src="/blocked-traffic/assets/csv-import.js"></script>
     <script>
         let profiles = {};
         let pollingInterval = null;
@@ -925,33 +927,32 @@
         async function uploadCSVAndOpenSummary() {
             const fileInput = document.getElementById('mainCsvFile');
             const files = Array.from(fileInput.files || []);
+            const status = document.getElementById('mainCsvImportStatus');
             if (files.length === 0) {
-                alert('Please choose one or more CSV files first.');
+                status.innerText = 'Choose one or more CSV files first.';
                 return;
             }
 
-            const formData = new FormData();
-			files.forEach(file => formData.append('files', file));
-			formData.append('primary_label_key', document.getElementById('analysis_primary_label').value || 'env');
-			formData.append('secondary_label_key', document.getElementById('analysis_secondary_label').value || 'app');
-			formData.append('dataset_name', document.getElementById('mainCsvDatasetName').value || '');
-
-			const selectionLabel = files.length === 1 ? `'${files[0].name}'` : `${files.length} CSV files`;
-            log(`Importing ${selectionLabel} for analytics review...`);
+            const selection = ITTCSVImport.selectionDetails(files);
+            log(`Importing ${selection.label} for analytics review...`);
 
             try {
-                const res = await fetch('/blocked-traffic/api/results/import-csv', {
-                    method: 'POST',
-                    body: formData
+                await ITTCSVImport.upload({
+                    files,
+                    button: document.getElementById('uploadCSVBtn'),
+                    fields: {
+                        primary_label_key: document.getElementById('analysis_primary_label').value || 'env',
+                        secondary_label_key: document.getElementById('analysis_secondary_label').value || 'app',
+                        dataset_name: document.getElementById('mainCsvDatasetName').value || '',
+                    },
+                    onStatus: (message) => {
+                        status.innerText = message;
+                    },
                 });
-                const data = await res.json();
-                if (!data.success) {
-                    log(`CSV import failed: ${data.error || 'Unknown error'}`);
-                    return;
-                }
                 window.location.href = '/blocked-traffic/summary';
-            } catch (e) {
-                log(`CSV import failed: ${e.message}`);
+            } catch (error) {
+                status.innerText = error.message;
+                log(error.message);
             }
         }
 

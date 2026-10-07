@@ -1,5 +1,18 @@
 # Release Notes
 
+## v1.3.0-rc.7 - 2026-10-07
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. This keeps the separate dashboard and extractor API credentials and does not replace the stable release.
+
+### Fixed
+
+- Removed the 64 MiB combined CSV upload cap. Large imports remain disk-backed and parse raw CSV rows incrementally to reduce peak memory use.
+- Both CSV import screens now show file counts, total size, upload progress, and the server-analysis phase, with actionable connection, response, and upload errors.
+- Concurrent duplicate imports are prevented. Interrupted uploads clean up temporary files, and invalid imports leave the previous analytics intact.
+- Added regression coverage for a three-file import containing a 91 MB CSV, preserving cross-file deduplication and monthly totals.
+
+Available temporary disk space and memory for derived analytics still apply. The existing 60-file batch limit remains; dashboard collection and traffic extraction continue independently of CSV imports.
+
 ## v1.3.0-rc.6 - 2026-10-07
 
 Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; extractor access remains localhost-only.

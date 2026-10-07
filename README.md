@@ -98,7 +98,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 ## Binaries
 
-The `v1.3.0-rc.6` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for the extraction recovery and reconciliation-status fixes.
+The `v1.3.0-rc.7` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for the large-CSV import, extraction recovery, and reconciliation-status fixes.
 
 For source builds, use Go 1.26 or newer; the module pins Go 1.26.8. The rebuild script creates the following compatibility filenames in its selected build directory:
 
@@ -130,6 +130,7 @@ This development build embeds the Blocked Traffic Extractor as an isolated modul
 - Extractor runs require an existing absolute target folder. The folder and filename are validated before any PCE query begins so output failures are reported immediately.
 - All-traffic CSVs add `Policy Decision`, `Draft Policy Decision`, and `Traffic Scope` columns. Imports use these fields to retain scope and keep different decision rows distinct while preserving the established endpoint/service-based unique-connection definition.
 - Traffic result downloads are decoded one row at a time, with no fixed total response-byte limit. Logs show downloaded response-body bytes and decoded rows; these measure the PCE JSON response, not the CSV size. Bounded metadata/control requests keep their separate safety limit.
+- CSV analysis imports have no fixed per-file or combined file-size limit. File parts larger than the 8 MiB in-memory budget spill to the system temporary folder, and CSV rows are parsed incrementally. Available temporary disk space and memory for the resulting analytics still apply. The UI shows upload progress and the analysis phase; one CSV import runs at a time, independently of dashboard collection and traffic extraction. The existing 60-file batch limit remains.
 - Queries reported as truncated at the requested 200,000-row maximum are automatically divided into smaller time windows. Subdivision keeps the original filters and scope, stops below one minute or after ten levels, and never combines a truncated parent result with its children.
 - A failed query window no longer discards successful windows or stops other chunks. Failures, cancellation, and overall timeouts save the completed data as an explicitly marked `_PARTIAL.csv` (including a header-only file when completed windows contain no traffic). If no query window completes, there is no data to export. Disk-write failures are still reported separately.
 - Each saved CSV has a companion `.extraction.json` file recording requested, completed, and missing time windows (exclusive end times). Partial analytics show incomplete-coverage warnings; the partial CSV includes an `Extraction Status` column so the warning survives re-import after a rename. Missing windows are unknown activity, not zero.

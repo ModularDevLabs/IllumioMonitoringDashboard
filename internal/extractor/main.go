@@ -27,7 +27,7 @@ import (
 	"illumio-dash/internal/extractor/illumio"
 )
 
-//go:embed frontend/*.html frontend/tailwind.css frontend/app-shell.css frontend/product-shell.css frontend/theme-init.js frontend/collapsible.js frontend/app-version.js frontend/product-shell.js
+//go:embed frontend/*.html frontend/tailwind.css frontend/app-shell.css frontend/product-shell.css frontend/theme-init.js frontend/collapsible.js frontend/app-version.js frontend/product-shell.js frontend/csv-import.js
 var staticFiles embed.FS
 
 // appVersion is replaced by scripts/build_release.sh using -ldflags. Source
@@ -276,7 +276,6 @@ var state = &AppState{
 const (
 	appConfigDirName    = "illumio-monitoring-dashboard-extractor"
 	maxJSONRequestSize  = 1 << 20
-	maxCSVUploadSize    = 64 << 20
 	maxCSVUploadFiles   = 60
 	maxExtractionTime   = 24 * time.Hour
 	maxChunkQueryTime   = 30 * time.Minute
@@ -807,6 +806,9 @@ func NewHandler(appCtx context.Context, version string) (http.Handler, error) {
 	})
 	mux.HandleFunc("/assets/app-version.js", func(w http.ResponseWriter, r *http.Request) {
 		serveEmbeddedAsset(w, r, "frontend/app-version.js", "text/javascript; charset=utf-8")
+	})
+	mux.HandleFunc("/assets/csv-import.js", func(w http.ResponseWriter, r *http.Request) {
+		serveEmbeddedAsset(w, r, "frontend/csv-import.js", "text/javascript; charset=utf-8")
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -1908,18 +1910,21 @@ func monthlyDimensionAnalyticsFromRecords(records []AnalyticsRecord) ([]MonthlyR
 
 func parseCSVAnalyticsRecords(reader io.Reader, sourceName, primaryLabelKey, secondaryLabelKey string) ([]AnalyticsRecord, error) {
 	csvReader := csv.NewReader(reader)
-	rows, err := csvReader.ReadAll()
+	// Keep only the current raw row; retaining ReadAll's table alongside the
+	// analytics records needlessly multiplies memory use for large exports.
+	csvReader.ReuseRecord = true
+	headers, err := csvReader.Read()
+	if errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("%s is empty", sourceName)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", sourceName, err)
-	}
-	if len(rows) < 1 {
-		return nil, fmt.Errorf("%s is empty", sourceName)
 	}
 
 	headerIndex := make(map[string]int)
 	sourceLabelHeaders := []string{}
 	destinationLabelHeaders := []string{}
-	for i, header := range rows[0] {
+	for i, header := range headers {
 		normalizedHeader := strings.TrimSpace(header)
 		headerIndex[strings.ToLower(normalizedHeader)] = i
 		if strings.HasPrefix(strings.ToLower(normalizedHeader), "src ") {
@@ -1954,22 +1959,30 @@ func parseCSVAnalyticsRecords(reader io.Reader, sourceName, primaryLabelKey, sec
 	}
 
 	records := []AnalyticsRecord{}
-	for rowIndex, row := range rows[1:] {
+	for {
+		row, err := csvReader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", sourceName, err)
+		}
 		if len(row) == 0 {
 			continue
 		}
+		rowLine, _ := csvReader.FieldPos(0)
 
 		flowCount, err := strconv.Atoi(getValue(row, "Flows"))
 		if err != nil || flowCount < 0 {
-			return nil, fmt.Errorf("%s row %d has an invalid Flows value", sourceName, rowIndex+2)
+			return nil, fmt.Errorf("%s row %d has an invalid Flows value", sourceName, rowLine)
 		}
 		port, err := strconv.Atoi(getValue(row, "Port"))
 		if err != nil || port < 0 || port > 65535 {
-			return nil, fmt.Errorf("%s row %d has an invalid Port value", sourceName, rowIndex+2)
+			return nil, fmt.Errorf("%s row %d has an invalid Port value", sourceName, rowLine)
 		}
 		protocol := getValue(row, "Protocol")
 		if protocol == "" {
-			return nil, fmt.Errorf("%s row %d has an empty Protocol value", sourceName, rowIndex+2)
+			return nil, fmt.Errorf("%s row %d has an empty Protocol value", sourceName, rowLine)
 		}
 		protoNumber := protocolNumberFromName(protocol)
 		if protoNumber == 0 {
@@ -2028,10 +2041,10 @@ func parseCSVAnalyticsRecords(reader io.Reader, sourceName, primaryLabelKey, sec
 		firstSeen := parseCSVTimestamp(firstSeenRaw)
 		lastSeen := parseCSVTimestamp(lastSeenRaw)
 		if firstSeenRaw != "" && firstSeen.IsZero() {
-			return nil, fmt.Errorf("%s row %d has an invalid First Detected timestamp", sourceName, rowIndex+2)
+			return nil, fmt.Errorf("%s row %d has an invalid First Detected timestamp", sourceName, rowLine)
 		}
 		if lastSeenRaw != "" && lastSeen.IsZero() {
-			return nil, fmt.Errorf("%s row %d has an invalid Last Detected timestamp", sourceName, rowIndex+2)
+			return nil, fmt.Errorf("%s row %d has an invalid Last Detected timestamp", sourceName, rowLine)
 		}
 
 		records = append(records, AnalyticsRecord{
@@ -2140,28 +2153,68 @@ func portProtocolSummaryFromRecords(records []AnalyticsRecord) []PortProtocolSum
 	return finalSummary
 }
 
+// Serialize CSV imports so repeated requests cannot multiply the memory needed
+// for one dataset. This does not block dashboard collection or extraction.
+var csvImportSlot = make(chan struct{}, 1)
+
+type csvContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader csvContextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
+}
+
 func handleImportCSV(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) || !requireSameOrigin(w, r) {
 		return
 	}
+	select {
+	case csvImportSlot <- struct{}{}:
+		defer func() { <-csvImportSlot }()
+	default:
+		writeJSONError(w, http.StatusConflict, "Another CSV import is in progress. Wait for it to finish before importing again.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxCSVUploadSize)
+	started := time.Now()
+	log.Printf("[CSV import] receiving upload (%d request bytes; -1 means unknown size)", r.ContentLength)
+	fail := func(status int, err error) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			status = http.StatusRequestTimeout
+			err = fmt.Errorf("CSV import interrupted before results were saved: %w", err)
+		}
+		log.Printf("[CSV import] failed after %s: %v", time.Since(started).Round(time.Millisecond), err)
+		writeJSONError(w, status, err.Error())
+	}
+	defer func() {
+		if r.MultipartForm != nil {
+			if err := r.MultipartForm.RemoveAll(); err != nil {
+				log.Printf("[CSV import] temporary-upload cleanup failed: %v", err)
+			}
+		}
+	}()
+	// This is a memory threshold, not an upload-size limit. Larger file parts
+	// spill to the OS temporary directory, which is cleaned up on every exit.
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			writeJSONError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("CSV upload exceeds the %d MiB limit", maxCSVUploadSize>>20))
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) {
+			fail(http.StatusInternalServerError, fmt.Errorf("could not store the CSV upload in the system temporary folder: %w. Check available disk space and write permissions, then retry", err))
 		} else {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
+			fail(http.StatusBadRequest, fmt.Errorf("CSV upload could not be received completely: %w. Keep this page open until the upload finishes and retry", err))
 		}
 		return
 	}
-	if r.MultipartForm != nil {
-		defer r.MultipartForm.RemoveAll()
-	} else {
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "multipart CSV upload is required"})
+	if r.MultipartForm == nil {
+		fail(http.StatusBadRequest, errors.New("multipart CSV upload is required"))
 		return
 	}
 
@@ -2169,11 +2222,11 @@ func handleImportCSV(w http.ResponseWriter, r *http.Request) {
 	// Keep accepting the original single-file field for API compatibility.
 	fileHeaders = append(fileHeaders, r.MultipartForm.File["file"]...)
 	if len(fileHeaders) == 0 {
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "at least one CSV file is required"})
+		fail(http.StatusBadRequest, errors.New("at least one CSV file is required"))
 		return
 	}
 	if len(fileHeaders) > maxCSVUploadFiles {
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": fmt.Sprintf("select no more than %d CSV files", maxCSVUploadFiles)})
+		fail(http.StatusBadRequest, fmt.Errorf("select no more than %d CSV files", maxCSVUploadFiles))
 		return
 	}
 
@@ -2191,40 +2244,46 @@ func handleImportCSV(w http.ResponseWriter, r *http.Request) {
 		if name == "." || name == "" {
 			name = "unnamed.csv"
 		}
+		log.Printf("[CSV import] preparing %q (%d bytes)", name, header.Size)
 		hashFile, err := header.Open()
 		if err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": fmt.Sprintf("open %s: %v", name, err)})
+			fail(http.StatusInternalServerError, fmt.Errorf("open uploaded CSV %s: %w", name, err))
 			return
 		}
 		hasher := sha256.New()
-		_, hashErr := io.Copy(hasher, hashFile)
+		_, hashErr := io.Copy(hasher, csvContextReader{ctx: r.Context(), reader: hashFile})
 		_ = hashFile.Close()
 		if hashErr != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": fmt.Sprintf("read %s: %v", name, hashErr)})
+			fail(http.StatusInternalServerError, fmt.Errorf("read uploaded CSV %s: %w", name, hashErr))
 			return
 		}
 		digest := fmt.Sprintf("%x", hasher.Sum(nil))
 		if duplicateName, duplicate := seenDigests[digest]; duplicate {
-			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": fmt.Sprintf("%s duplicates the contents of %s", name, duplicateName)})
+			fail(http.StatusBadRequest, fmt.Errorf("%s duplicates the contents of %s", name, duplicateName))
 			return
 		}
 		seenDigests[digest] = name
 
 		file, err := header.Open()
 		if err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": fmt.Sprintf("open %s: %v", name, err)})
+			fail(http.StatusInternalServerError, fmt.Errorf("open uploaded CSV %s: %w", name, err))
 			return
 		}
 		openedFiles = append(openedFiles, file)
-		inputs = append(inputs, csvAnalyticsInput{Name: name, Reader: file, SHA256: digest, Size: header.Size})
+		inputs = append(inputs, csvAnalyticsInput{Name: name, Reader: csvContextReader{ctx: r.Context(), reader: file}, SHA256: digest, Size: header.Size})
 		fileNames = append(fileNames, name)
 	}
 
 	primaryLabelKey := r.FormValue("primary_label_key")
 	secondaryLabelKey := r.FormValue("secondary_label_key")
+	log.Printf("[CSV import] analyzing %d file(s)", len(fileHeaders))
 	parsed, err := parseCSVAnalyticsInputsDetailed(inputs, primaryLabelKey, secondaryLabelKey)
 	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+		fail(http.StatusBadRequest, err)
+		return
+	}
+	if err := r.Context().Err(); err != nil {
+		fail(http.StatusRequestTimeout, err)
 		return
 	}
 	fileName := "Imported CSV: " + fileNames[0]
@@ -2239,7 +2298,7 @@ func handleImportCSV(w http.ResponseWriter, r *http.Request) {
 			Coverage: parsed.Coverage, Report: reportMetadata,
 		})
 		if err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+			fail(http.StatusInternalServerError, fmt.Errorf("save imported dataset: %w", err))
 			return
 		}
 		datasetID = saved.ID
@@ -2259,6 +2318,7 @@ func handleImportCSV(w http.ResponseWriter, r *http.Request) {
 	state.FailedChunks = 0
 	state.RunError = ""
 	state.Mu.Unlock()
+	log.Printf("[CSV import] completed %d file(s) in %s", len(fileNames), time.Since(started).Round(time.Millisecond))
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":   true,

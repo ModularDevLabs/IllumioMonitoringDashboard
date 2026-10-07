@@ -863,9 +863,16 @@ func TestCSVImportViewsAllowMultipleFiles(t *testing.T) {
 		if !strings.Contains(html, `type="file" accept=".csv,text/csv" multiple`) {
 			t.Fatalf("%s does not expose a multiple CSV file picker", page)
 		}
-		if !strings.Contains(html, "formData.append('files', file)") {
-			t.Fatalf("%s does not submit every selected CSV", page)
+		if !strings.Contains(html, `<script src="/blocked-traffic/assets/csv-import.js"></script>`) || !strings.Contains(html, "ITTCSVImport.upload({") {
+			t.Fatalf("%s does not use the shared multi-file CSV uploader", page)
 		}
+	}
+	uploader, err := staticFiles.ReadFile("frontend/csv-import.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(uploader), "formData.append('files', file)") {
+		t.Fatal("shared uploader does not submit every selected CSV")
 	}
 }
 
