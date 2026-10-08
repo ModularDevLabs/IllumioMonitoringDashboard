@@ -8,7 +8,10 @@ const vm = require('node:vm');
 
 const heatmapPath = path.resolve(__dirname, '../../internal/extractor/frontend/heatmaps.html');
 const html = fs.readFileSync(heatmapPath, 'utf8');
-const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]).join('\n');
+// Extract controlled test fixtures, not untrusted HTML. This is not a sanitizer
+// or general HTML parser; tag casing and closing attributes must still work.
+const scriptBodies = markup => [...markup.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/gi)].map(match => match[1]);
+const script = scriptBodies(html).join('\n');
 
 class Element {
   constructor() {
@@ -125,6 +128,10 @@ function chooseEnvironmentPair(page) {
     'renderHeatmap(); persistHeatmapState();'
   );
 }
+
+test('heatmap fixture scripts support mixed-case tags and closing-tag whitespace or attributes', () => {
+  assert.deepEqual(scriptBodies('<SCRIPT>let first = 1;</SCRIPT >\n<ScRiPt type="text/javascript">let second = 2;</sCrIpT ignored="fixture">'), ['let first = 1;', 'let second = 2;']);
+});
 
 test('heatmap state asset is loaded before section and page scripts', () => {
   assert.match(html, /src="\/(?:blocked-traffic\/)?assets\/analysis-state\.js"/);
@@ -285,4 +292,3 @@ test('overlapping refresh responses cannot restore an older analysis', async () 
   await older;
   assert.equal(page.store.currentRevision(), 'newer-analysis');
 });
-

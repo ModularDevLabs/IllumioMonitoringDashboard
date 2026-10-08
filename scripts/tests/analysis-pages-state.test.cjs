@@ -8,7 +8,10 @@ const repo = path.join(__dirname, '../..');
 const frontend = existsSync(path.join(repo, 'frontend/summary.html')) ? path.join(repo, 'frontend') : path.join(repo, 'internal/extractor/frontend');
 const { createStore } = require(path.join(frontend, 'analysis-state.js'));
 const source = page => readFileSync(path.join(frontend, `${page}.html`), 'utf8');
-const inline = page => [...source(page).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].find(match => match[1].includes(page === 'summary' ? 'function renderDashboard' : 'function renderExecutiveSummary'))[1];
+// Only controlled repository/export fixtures are extracted here. This is not
+// HTML sanitization or a general parser; handle tag casing and closing attributes.
+const scriptBodies = markup => [...markup.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/gi)].map(match => match[1]);
+const inline = page => scriptBodies(source(page)).find(body => body.includes(page === 'summary' ? 'function renderDashboard' : 'function renderExecutiveSummary'));
 const plain = value => JSON.parse(JSON.stringify(value));
 
 function storage() {
@@ -74,6 +77,10 @@ const payload = (revision = 'analysis-1') => ({
     monthly_port_protocol: ['443', '9300', '22'].map((port, index) => ({ month: '2026-03', protocol: 'TCP', port, flow_count: 30 - index, unique_connections: 1 })),
     monthly_relationships: ['Production', 'Development'].map(source => ({ month: '2026-03', source, destination: 'Database', flow_count: 10 })),
   },
+});
+
+test('analysis fixture scripts support mixed-case tags and closing-tag whitespace or attributes', () => {
+  assert.deepEqual(scriptBodies('<SCRIPT>let first = 1;</SCRIPT >\n<ScRiPt type="text/javascript">let second = 2;</sCrIpT ignored="fixture">'), ['let first = 1;', 'let second = 2;']);
 });
 
 test('analysis pages load revision-scoped state before collapsible enhancement and contain valid scripts', () => {
@@ -191,11 +198,11 @@ test('HTML exports embed current filters and unsaved report edits safely', async
   app.context.previewReportMetadata();
   await app.context.downloadExecutiveHTML();
   const html = await app.window.downloadedBlob.text();
-  const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)];
+  const scripts = scriptBodies(html);
   assert.equal(scripts.length, 3);
-  for (const script of scripts) new vm.Script(script[1]);
+  for (const script of scripts) new vm.Script(script);
   const embedded = vm.createContext({ window: {} });
-  vm.runInContext(scripts[0][1], embedded);
+  vm.runInContext(scripts[0], embedded);
   assert.equal(embedded.window.__ITT_EXECUTIVE_VIEW_STATE__.trendRange, 'all');
   assert.deepEqual(plain(embedded.window.__ITT_EXECUTIVE_VIEW_STATE__.services), []);
   assert.equal(embedded.window.__ITT_EXECUTIVE_PAYLOAD__.report_metadata.title, 'Draft </script> title');
