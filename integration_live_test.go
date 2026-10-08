@@ -1,12 +1,16 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestLiveIntegrationFromConfig(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("ILLUMIO_LIVE_TEST")) != "1" {
+		t.Skip("set ILLUMIO_LIVE_TEST=1 to exercise a configured PCE")
+	}
 	if !loadConfig() {
 		t.Fatalf("config.json is missing or incomplete")
 	}

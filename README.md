@@ -11,6 +11,16 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 ## Features
 
+- Integrated Blocked Traffic Extractor development preview:
+  - Available within the dashboard at `/blocked-traffic/`
+  - Uses one PCE-inspired application shell across monitoring and extractor pages, with grouped/collapsible left navigation and a responsive mobile drawer
+  - Shares a persistent light/dark preference and active-page context across both functions
+  - Includes extraction, multi-CSV analytics, configurable label dimensions, heatmaps, executive summaries, datasets, templates, scheduling, and artifact delivery
+  - Supports blocked-only or all-policy-decision extraction; all-traffic exports preserve active and draft policy decisions on every CSV row
+  - Uses independent PCE profiles and API credentials; dashboard collector credentials are never reused by the extractor
+  - Remains localhost-only even when the Monitoring Dashboard is configured for network hosting
+  - Namespaces extractor pages and APIs so existing dashboard routes remain unchanged
+
 - VEN health visibility:
   - Warning-state workloads
   - Error-state workloads
@@ -77,7 +87,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 - Operational confidence:
   - Dashboard pipeline strip includes an SLO confidence badge (`HIGH`/`MEDIUM`/`LOW`/`UNKNOWN`)
 - Theme:
-  - Light/dark mode toggle in dashboard, drilldown, and report views
+  - Unified light/dark mode toggle across dashboard, drilldown, report, extractor, analytics, heatmap, executive-summary, and automation views
   - Shared UI helpers embedded from `/static/ui-common.js`
 - Durable cross-version state:
   - State files are stored in a shared data directory so new fork/binary versions can reuse history.
@@ -88,7 +98,9 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 ## Binaries
 
-Cross-platform binaries are produced in the project root:
+The `v1.3.0-rc.8` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for analysis view persistence, port-formatting fixes, and the included large-CSV import and extraction recovery improvements.
+
+For source builds, use Go 1.26 or newer; the module pins Go 1.26.8. The rebuild script creates the following compatibility filenames in its selected build directory:
 
 - `illumio-dashboard-linux-amd64`
 - `illumio-dashboard.exe`
@@ -102,6 +114,32 @@ Cross-platform binaries are produced in the project root:
 3. Save config when prompted.
 4. Open `http://localhost:18443`.
 5. Go to `/settings` to configure traffic targets, retention, and optional alerting.
+6. Open `/blocked-traffic/` to use the integrated Blocked Traffic Extractor with its own PCE profile and API credentials.
+
+## Blocked Traffic Extractor Integration
+
+This development build embeds the Blocked Traffic Extractor as an isolated module in the dashboard executable. The dashboard and extractor share the HTTP listener and navigation only; they do not share API credentials, profiles, request state, or saved analysis data. Extractor routes continue to require a localhost host name or loopback address.
+
+- Dashboard credentials remain in `config.json` and drive continuous monitoring collection.
+- Extractor credentials remain in the platform user configuration directory under `illumio-monitoring-dashboard-extractor/pce_profiles.json` and drive only extractor requests.
+- Extractor templates, delivery destinations, run history, and saved datasets remain in that same dedicated extractor directory.
+- Heatmap filters and drilldowns, analytics pivot selections, executive chart settings and report drafts, and collapsed analysis sections are retained within the current browser tab while navigating or refreshing. A successful import, explicit saved-dataset reload, or new extraction result resets the view; failed imports and report-setting saves do not. These temporary choices are separate from saved metadata and theme preferences.
+- The integration is based on Blocked Traffic Extractor `v1.5.0`.
+- PCE operations require a saved extractor profile, and non-loopback PCE origins require HTTPS.
+- Manual runs and automation templates can select **Blocked traffic only** (the backward-compatible default) or **All traffic**. All-traffic queries include allowed, potentially blocked, blocked, and unknown decisions.
+- Source, destination, and service exclusions are available for manual runs, saved profiles, and automation templates. Service exclusions accept discovered PCE service names or explicit values such as `TCP:22` and `UDP:5355`.
+- Extractor runs require an existing absolute target folder. The folder and filename are validated before any PCE query begins so output failures are reported immediately.
+- All-traffic CSVs add `Policy Decision`, `Draft Policy Decision`, and `Traffic Scope` columns. Imports use these fields to retain scope and keep different decision rows distinct while preserving the established endpoint/service-based unique-connection definition.
+- Traffic result downloads are decoded one row at a time, with no fixed total response-byte limit. Logs show downloaded response-body bytes and decoded rows; these measure the PCE JSON response, not the CSV size. Bounded metadata/control requests keep their separate safety limit.
+- CSV analysis imports have no fixed per-file or combined file-size limit. File parts larger than the 8 MiB in-memory budget spill to the system temporary folder, and CSV rows are parsed incrementally. Available temporary disk space and memory for the resulting analytics still apply. The UI shows upload progress and the analysis phase; one CSV import runs at a time, independently of dashboard collection and traffic extraction. The existing 60-file batch limit remains.
+- Queries reported as truncated at the requested 200,000-row maximum are automatically divided into smaller time windows. Subdivision keeps the original filters and scope, stops below one minute or after ten levels, and never combines a truncated parent result with its children.
+- A failed query window no longer discards successful windows or stops other chunks. Failures, cancellation, and overall timeouts save the completed data as an explicitly marked `_PARTIAL.csv` (including a header-only file when completed windows contain no traffic). If no query window completes, there is no data to export. Disk-write failures are still reported separately.
+- Each saved CSV has a companion `.extraction.json` file recording requested, completed, and missing time windows (exclusive end times). Partial analytics show incomplete-coverage warnings; the partial CSV includes an `Extraction Status` column so the warning survives re-import after a rename. Missing windows are unknown activity, not zero.
+- Scheduled partial runs retain their CSV for download and use failure notifications when enabled; they are not delivered as successful reports or used as completed-run comparison baselines.
+- Dashboard collection and traffic extraction run concurrently in independent Go workers with separate HTTP clients, request contexts, credentials, progress state, and retry handling. Extraction status includes active-chunk and PCE heartbeat details so long-running queries remain visibly alive while dashboard collection continues.
+- Artifact reads and writes are root-confined to prevent path and symlink traversal.
+
+See [BLOCKED_TRAFFIC_INTEGRATION.md](BLOCKED_TRAFFIC_INTEGRATION.md) for route, storage, security, and maintenance details.
 
 ## Network Hosting Walkthrough
 
@@ -178,11 +216,23 @@ Runtime state is stored in a shared data directory:
 - override: `ILLUMIO_DASH_DATA_DIR`
 - optional config override: `data_dir` in `config.json`
 
+### Outbound Destination Trust
+
+Outbound PCE and webhook destinations are constrained by two trust lists that can be changed only by editing `config.json` directly:
+
+- `pce_allowed_origins` lists additional exact PCE origins that may be selected through the web settings. The origin already configured in `pce_url` remains trusted, so it does not have to be repeated in the list. PCE origins must use HTTPS; plain HTTP is accepted only for a literal loopback development endpoint such as `http://127.0.0.1:8443` or `http://localhost:8443`.
+- `webhook_private_allowed_origins` lists exact private or loopback webhook origins that are intentionally permitted. Public webhook destinations must use HTTPS. A private or loopback webhook, including a local HTTP receiver, is rejected unless its exact origin appears in this list.
+
+An origin consists only of its scheme, host, and effective port—for example `https://pce.internal:8443` or `http://127.0.0.1:9000`. Do not include a path, query string, credentials, or fragment. The Settings page can select or update destinations within these boundaries, but it cannot add trusted origins or expand either list. Edit `config.json` when a new origin must be trusted.
+
+Webhook delivery does not follow redirects or use environment-configured HTTP proxies. PCE redirects are limited to the same exact trusted origin. Link-local and cloud-metadata webhook destinations are always blocked, including when supplied through a trust list.
+
 ### Required fields
 
 ```json
 {
   "pce_url": "https://your-pce:8443",
+  "pce_allowed_origins": [],
   "api_key": "api_key_id",
   "api_secret": "api_secret",
   "org_id": "1",
@@ -217,6 +267,7 @@ Runtime state is stored in a shared data directory:
   "webhook_enabled": false,
   "webhook_provider": "generic",
   "webhook_url": "https://hooks.example.com/...",
+  "webhook_private_allowed_origins": [],
   "daily_summary_webhook_enabled": false,
   "daily_summary_webhook_provider": "generic",
   "daily_summary_webhook_url": "https://hooks.example.com/..."
@@ -227,7 +278,8 @@ Runtime state is stored in a shared data directory:
 
 | Key | Purpose | Default | Notes |
 |---|---|---|---|
-| `pce_url` | Illumio PCE base URL | none | Required |
+| `pce_url` | Illumio PCE base URL | none | Required; configured origin remains trusted; HTTPS required except literal loopback HTTP |
+| `pce_allowed_origins[]` | Additional PCE origins permitted through web settings | empty | Config-file-only exact-origin trust list; web settings cannot expand it |
 | `api_key` | PCE API key ID | none | Required |
 | `api_secret` | PCE API secret | none | Required |
 | `org_id` | PCE org ID | `1` | String in config |
@@ -261,10 +313,12 @@ Runtime state is stored in a shared data directory:
 | `tampering_anomaly_days` | Tampering daily baseline lookback days (when baseline=`daily`) | blocked days fallback | Range `1..3650` |
 | `tampering_anomaly_min_coverage_pct` | Tampering minimum daily baseline coverage before anomaly checks | blocked min coverage fallback | Range `1..100` |
 | `tampering_daily_anomaly_pct` | Tampering threshold when baseline=`daily` | tampering anomaly fallback | Range `1..10000` |
-| `traffic_targets[]` | Blocked traffic targets | built-in defaults | Each item has `name`, `kind`, optional per-target MA/anomaly overrides, and blocked alert controls |
+| `traffic_targets[]` | Blocked traffic targets | built-in defaults | Each item has `name`, `kind`, optional `service_exclusions`, per-target MA/anomaly overrides, and blocked alert controls |
 | `traffic_source_exclusions[]` | Source exclusions for blocked queries | empty | Each item has `name`, `kind`; field can be cleared to disable exclusions |
+| `traffic_service_exclusions[]` | Global service exclusions for blocked queries | empty | Direct `PROTO:port`/range selectors or exact active PCE service object names; omitted from reporting, baselines, anomaly detection, and alerts |
 | `webhook_enabled` | Enable webhook alert sends | `false` | Requires valid `webhook_url` |
-| `webhook_url` | Webhook endpoint | empty | Used for alert transitions + test webhook |
+| `webhook_url` | Webhook endpoint | empty | Used for alert transitions + test webhook; public destinations require HTTPS |
+| `webhook_private_allowed_origins[]` | Private/loopback webhook origins permitted for anomaly and daily-summary delivery | empty | Config-file-only exact-origin trust list; web settings cannot expand it; link-local/metadata destinations remain blocked |
 | `webhook_provider` | Payload format | `generic` | `generic`, `slack`, `teams` |
 | `webhook_slack_channel` | Optional Slack channel override | empty | Some endpoints ignore override |
 | `webhook_slack_username` | Optional Slack username override | empty | Some endpoints ignore override |
@@ -314,13 +368,30 @@ Guidance:
 ```json
 {
   "traffic_targets": [
-    { "name": "LG-E-PROD-ENVS", "kind": "label_group", "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_alert_enabled": true, "blocked_alert_min_latest": 0 },
+    { "name": "LG-E-PROD-ENVS", "kind": "label_group", "service_exclusions": ["TCP:9300"], "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_alert_enabled": true, "blocked_alert_min_latest": 0 },
     { "name": "LG-E-NONPROD-ENVS", "kind": "label_group" },
     { "name": "E-WEB", "kind": "label" },
     { "name": "SOME-NAME", "kind": "auto" }
   ]
 }
 ```
+
+Optional service exclusions can be global, per target, or both. Per-target entries are added to the global list:
+
+```json
+{
+  "traffic_service_exclusions": ["Approved Backup Service", "UDP:53"],
+  "traffic_targets": [
+    { "name": "LG-E-PROD-ENVS", "kind": "label_group", "service_exclusions": ["TCP:9300", "TCP:8000-8100"] }
+  ]
+}
+```
+
+- Direct selectors accept `TCP:9300`, `UDP:53`, `TCP:8000-8100`, numeric protocols, `9300/TCP`, or `9300 TCP`.
+- A named selector is matched case-insensitively against active PCE policy service objects. Service names must be unique; duplicate matches are rejected so an exclusion cannot silently become broader than intended.
+- Unknown or ambiguous named services, catalog retrieval failures, and malformed direct selectors are rejected before settings are saved rather than running an unfiltered query.
+- Exclusions are sent in the PCE Explorer query itself, so excluded traffic never enters reports, rolling state, baselines, anomaly calculations, or webhooks.
+- Changing an effective exclusion resets the affected target's rolling state and starts an authoritative retained-history reconciliation. Existing daily totals remain preserved but hidden until that reconciliation succeeds. Historical hostname detail for that target restarts from the change because it cannot be reconstructed from count-only history.
 
 Optional source exclusions (leave empty to disable exclusions):
 
@@ -345,6 +416,7 @@ Optional per-target blocked anomaly overrides:
 - `blocked_anomaly_pct`: anomaly threshold percent for this target only (1-10000)
 - `blocked_alert_enabled`: set `false` to disable blocked anomaly alerts for this target
 - `blocked_alert_min_latest`: per-target minimum latest 5m blocked value required to alert (`0` inherits global `blocked_alert_min_latest`)
+- `service_exclusions`: services excluded only for this target, in addition to global `traffic_service_exclusions`
 - If omitted, global blocked anomaly settings are used.
 
 If `traffic_targets` is omitted, defaults are used:
@@ -436,6 +508,8 @@ Use `/settings` to manage network exposure controls:
 
 Use `/settings` to rotate API credentials without app downtime:
 - Update `PCE URL`, `Org ID`, `API Key`, and optionally `API Secret`
+- The configured PCE origin remains trusted; selecting a different origin requires it to be present in `pce_allowed_origins` in `config.json`
+- The Settings page cannot add or modify trusted PCE origins
 - Save credentials to apply on the next outbound API request (no restart required)
 - Secret is write-only in UI; UI only indicates whether a secret is currently set
 - Direct `config.json` edits are also detected and reloaded automatically before outbound API calls
@@ -446,6 +520,8 @@ Use `/settings` to manage webhook alerting:
 - Enable/disable webhook
 - Choose provider (`generic`, `slack`, `teams`)
 - Set webhook URL
+- Public webhook destinations require HTTPS; private and loopback destinations require an exact-origin entry in `webhook_private_allowed_origins` in `config.json`
+- The Settings page cannot add private webhook origins to the trust list
 - Optional Slack fields: channel, username, icon emoji
 - Optional Teams field: title prefix
 - Send test webhooks (tests every enabled webhook configuration)
@@ -476,13 +552,14 @@ Use `/settings` to manage webhook alerting:
 - `GET /api/config/targets`:
   - Current configured traffic targets
   - Current configured traffic source exclusions
+  - Current global and per-target traffic service exclusions
   - Current `history_days`
   - Current blocked moving-average and anomaly settings
   - Current `timezone`
   - Current `bind_address` and `public_base_url`
 - `PUT /api/config/targets`:
   - Save traffic/data settings
-  - body: `{ "traffic_targets": [{"name":"...","kind":"...","blocked_alert_enabled":true,"blocked_alert_min_latest":0}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "blocked_host_metrics_enabled": false, "blocked_host_retention_mode": "rolling_24h_plus_daily", "rules_metrics_enabled": false, "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_alert_min_latest": 0, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
+  - body: `{ "traffic_targets": [{"name":"...","kind":"...","service_exclusions":["TCP:9300"],"blocked_alert_enabled":true,"blocked_alert_min_latest":0}], "traffic_source_exclusions": [{"name":"LG-SCANNERS","kind":"auto"}], "traffic_service_exclusions": ["Approved Backup Service"], "history_days": 365, "blocked_port_daily_enabled": true, "blocked_port_store_backend": "sqlite", "blocked_rolling_dedupe_backend": "sqlite", "blocked_host_metrics_enabled": false, "blocked_host_retention_mode": "rolling_24h_plus_daily", "rules_metrics_enabled": false, "diagnostics_enabled": false, "blocked_ma_window": 12, "blocked_anomaly_pct": 50, "blocked_alert_min_latest": 0, "blocked_anomaly_baseline": "daily", "blocked_anomaly_days": 7, "blocked_anomaly_min_pct": 70, "ven_ma_window": 12, "ven_anomaly_pct": 50, "ven_anomaly_baseline": "5m", "ven_anomaly_days": 7, "ven_anomaly_min_pct": 70, "tampering_ma_window": 12, "tampering_anomaly_pct": 50, "tampering_anomaly_baseline": "daily", "tampering_anomaly_days": 7, "tampering_anomaly_min_pct": 70, "tampering_daily_anomaly_pct": 50, "timezone": "America/Chicago", "bind_address": "0.0.0.0:18443", "public_base_url": "https://illumio-dashboard.internal" }`
 - `POST /api/refresh`:
   - Trigger immediate collection cycle
 - `POST /api/refresh/policy-metrics`:
@@ -497,19 +574,23 @@ Use `/settings` to manage webhook alerting:
     - start/finish timestamps
     - day/update/failure counts
     - startup-skip reason and completion marker metadata
+  - Unset timestamps are omitted. Start/finish details describe a run in this app session; the separate saved completion checkpoint can come from an earlier session.
 - `POST /api/reconcile/tampering-history`:
   - Trigger asynchronous full tampering-history reconciliation over stored prior day keys
   - If a reconcile run is already in progress, request is ignored and response indicates current state
 - `GET /api/reconcile/tampering-history/status`:
   - Returns current tampering reconcile state and last run summary (days/updated/failed, startup-skip reason, completion marker timestamp)
+  - Uses the same timestamp and session semantics as blocked-history status. Settings shows whether a run was automatic at startup or manually requested.
 - `GET /api/config/alerts`:
   - Read alerting/webhook settings (anomaly webhook + daily reconcile summary webhook)
 - `PUT /api/config/alerts`:
   - Save alerting/webhook settings (anomaly webhook + daily reconcile summary webhook)
+  - Cannot expand `webhook_private_allowed_origins`; private/loopback URLs must already be trusted in `config.json`
 - `GET /api/config/credentials`:
   - Read current PCE/API credentials (`api_secret_set` is returned, secret value is never returned)
 - `PUT /api/config/credentials`:
   - Rotate PCE/API credentials at runtime (applies on next outbound API call)
+  - A changed PCE origin must match the configured origin or an entry in `pce_allowed_origins`; this API cannot expand the trust list
   - body: `{ "pce_url": "...", "org_id": "1", "api_key": "...", "api_secret": "..." }`
 - `POST /api/webhook/test`:
   - Sends test webhook events for all enabled webhook configs (anomaly webhook and/or daily reconcile summary webhook)
@@ -620,6 +701,8 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
     - startup auto-check reconciles stored prior-day tampering snapshots missing completion marker
     - previously reconciled tampering day keys are skipped using persisted day markers
     - manual reconcile is available from Settings and `POST /api/reconcile/tampering-history`
+    - traffic targets and source/service exclusions do not trigger tampering reconciliation or filter tampering history
+    - the Settings page groups tampering history controls and live status under **Tampering Settings & History**, separately from blocked traffic history
 - HTTP basic auth is used for PCE API calls
 - `config.json` is written with file mode `0600`
 - For async traffic queries, result count is read from job status and falls back to results download endpoints if needed

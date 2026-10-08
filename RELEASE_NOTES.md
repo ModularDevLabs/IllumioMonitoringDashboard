@@ -1,5 +1,71 @@
 # Release Notes
 
+## v1.3.0-rc.8 - 2026-10-08
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; the stable release and integration branch status are unchanged.
+
+### Changed
+
+- Heatmaps retain dimension-specific filters, selected cells, protocol and port drilldowns, search text, and hide-empty choices across navigation and refresh.
+- Analytics pivot selections, executive chart ranges and selections, comparison months, export-section choices, report drafts, and collapsed analysis sections are retained for the current analysis within the browser tab's session.
+- A successful CSV import, explicit saved-dataset reload, or completed extraction starts a fresh analysis view, even when filenames are unchanged. Failed imports, report-setting saves, and ordinary refreshes do not reset view choices. Theme preferences remain separate.
+- Downloaded executive HTML captures current chart selections and unsaved report edits without sharing live browser state.
+
+### Fixed
+
+- Port identifiers no longer use thousands separators in heatmap drilldowns, analytics pivots, or executive service cards; flow and connection counts retain numeric formatting.
+- Drilldown controls remain available when their filter combination matches no rows.
+- Invalid stored preferences recover safely, and older overlapping refresh responses cannot replace a newer analysis.
+
+View choices are not permanent saved views and end with the browser tab's session. Save Report Settings continues to retain report metadata with saved datasets. This release includes RC7's large-CSV import improvements and prior traffic recovery fixes.
+
+## v1.3.0-rc.7 - 2026-10-07
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. This keeps the separate dashboard and extractor API credentials and does not replace the stable release.
+
+### Fixed
+
+- Removed the 64 MiB combined CSV upload cap. Large imports remain disk-backed and parse raw CSV rows incrementally to reduce peak memory use.
+- Both CSV import screens now show file counts, total size, upload progress, and the server-analysis phase, with actionable connection, response, and upload errors.
+- Concurrent duplicate imports are prevented. Interrupted uploads clean up temporary files, and invalid imports leave the previous analytics intact.
+- Added regression coverage for a three-file import containing a 91 MB CSV, preserving cross-file deduplication and monthly totals.
+
+Available temporary disk space and memory for derived analytics still apply. The existing 60-file batch limit remains; dashboard collection and traffic extraction continue independently of CSV imports.
+
+## v1.3.0-rc.6 - 2026-10-07
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; extractor access remains localhost-only.
+
+### Fixed
+- Traffic-result downloads now stream without the previous 256 MiB total-size cutoff and log downloaded bytes and parsed rows. PCE-truncated queries automatically split into smaller windows while preserving their filters.
+- Failed, cancelled, or timed-out extractions preserve successfully completed windows in marked partial CSVs and record missing windows in a companion coverage file. Remaining chunks continue after an individual failure; incomplete data is clearly identified in analytics and scheduled-run history rather than reported as success.
+- Reconciliation status omits unset timestamps instead of displaying year 0001, and identifies automatic startup runs, manual requests, and traffic service exclusion changes.
+- Saved history completion checkpoints are distinguished from run details in the current session; a new run no longer inherits the preceding run's finish time or counters.
+- Tampering history controls and status now appear in Tampering Settings & History, separate from traffic targets and exclusions. Status refreshes while Settings is open and after saving traffic changes.
+
+### Security and Reliability
+- Updated the Go build toolchain and SSH/SFTP dependency to include the security fixes used in the standalone extractor build.
+- Added regression checks proving streaming downloads and cleanup retain saved-origin restrictions and reject cross-origin redirects before sending credentials.
+- Failed coverage-file writes are cleaned up without discarding an already saved CSV.
+- Executive report fallback labels no longer describe all-traffic data as blocked-only traffic.
+
+## v1.3.0-rc.5 - 2026-10-02
+
+### Added
+- Global and per-target monitoring service exclusions for direct protocol/port selectors and active PCE policy service object names.
+- Exclusions apply at query time across live totals, port/host detail, retained history, baselines, anomalies, and alerting.
+- Effective filter changes reset affected rolling state and trigger retained-history reconciliation while preserving and hiding prior daily data until the rebuild succeeds.
+- Named exclusions are validated against the complete active-service catalog (including the PCE asynchronous collection path beyond 500 objects) before settings are saved; missing or ambiguous service names fail safely.
+
+### Fixed
+- Extractor runs now validate the required absolute target folder and filename before querying the PCE, and the UI reports the actual output error instead of ending with a generic no-output message.
+- Failed blocked-traffic target queries no longer resolve an active anomaly alert as if traffic had recovered.
+- Service-exclusion changes, PCE credential updates, collector commits, retained-history writes, and alert transitions are serialized so superseded traffic cannot re-enter baselines or trigger stale notifications.
+- Direct config-file reloads reject duplicate case-insensitive traffic target names that would otherwise collide in history and alert state.
+
+### Security Hardening
+- Added config-file-only `pce_allowed_origins` and `webhook_private_allowed_origins` trust lists. Web settings cannot expand them; PCE traffic is restricted to trusted HTTPS origins (with loopback HTTP for development), PCE redirects cannot leave their trusted origin, and private webhooks require exact-origin authorization with redirects, proxy use, link-local addresses, and cloud-metadata destinations blocked.
+
 ## v1.2.11 - 2026-04-17
 
 ### Fixed

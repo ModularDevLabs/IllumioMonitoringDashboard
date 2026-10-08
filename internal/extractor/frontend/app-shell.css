@@ -1,0 +1,295 @@
+html {
+    scrollbar-gutter: stable;
+}
+
+.app-version-footer {
+    position: fixed;
+    bottom: 0.9rem;
+    left: 0.9rem;
+    z-index: 40;
+    display: inline-flex;
+    max-width: calc(100vw - 1.8rem);
+    align-items: center;
+    gap: 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    color: var(--muted);
+    padding: 0.45rem 0.7rem;
+    font-size: 0.67rem;
+    font-weight: 650;
+    line-height: 1;
+    backdrop-filter: blur(12px);
+}
+
+.app-version-product {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-version-value {
+    flex: 0 0 auto;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.app-version-separator {
+    color: var(--accent);
+}
+
+.app-header {
+    align-items: flex-start;
+}
+
+.app-header-actions {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+}
+
+.app-nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.app-nav-link {
+    display: inline-flex;
+    min-height: 2.5rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 0.65rem;
+    background: var(--panel-soft);
+    color: var(--text);
+    padding: 0.5rem 0.85rem;
+    font-size: 0.8rem;
+    font-weight: 650;
+    line-height: 1;
+    text-decoration: none;
+    transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.app-nav-link:hover {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--panel-soft));
+}
+
+.app-nav-link[aria-current="page"] {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, var(--panel-soft));
+    color: var(--text);
+    box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.theme-switcher {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    background: var(--panel-soft);
+    padding: 0.25rem;
+}
+
+.theme-button {
+    display: inline-flex;
+    min-height: 2rem;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid transparent;
+    border-radius: 0.55rem;
+    background: transparent;
+    color: var(--muted);
+    padding: 0.45rem 0.7rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.theme-button::before {
+    width: 0.42rem;
+    height: 0.42rem;
+    border-radius: 9999px;
+    background: currentColor;
+    content: "";
+    opacity: 0.28;
+}
+
+.theme-button:hover {
+    color: var(--text);
+}
+
+.theme-button.active,
+body[data-theme="default"] .theme-button[data-theme-option="default"],
+body[data-theme="illumio"] .theme-button[data-theme-option="illumio"],
+body[data-theme="illumio-light"] .theme-button[data-theme-option="illumio-light"] {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--text);
+    box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.theme-button.active::before,
+body[data-theme="default"] .theme-button[data-theme-option="default"]::before,
+body[data-theme="illumio"] .theme-button[data-theme-option="illumio"]::before,
+body[data-theme="illumio-light"] .theme-button[data-theme-option="illumio-light"]::before {
+    background: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+    opacity: 1;
+}
+
+.app-header-action {
+    min-height: 2.5rem;
+}
+
+.auto-collapse-toolbar {
+    display: flex;
+    min-height: 2.25rem;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.auto-collapse-summary {
+    display: none;
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.auto-collapse-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 0.65rem;
+    background: var(--panel-soft);
+    color: var(--text);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.auto-collapse-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.section-image-button {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 0.65rem;
+    background: var(--panel-soft);
+    color: var(--text);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.standalone-image-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.75rem;
+}
+
+.auto-collapse-toggle:hover,
+.auto-collapse-toggle:focus-visible,
+.section-image-button:hover,
+.section-image-button:focus-visible {
+    border-color: var(--accent);
+}
+
+.auto-collapse-icon {
+    transition: transform 160ms ease;
+}
+
+.is-auto-collapsed .auto-collapse-toolbar {
+    justify-content: space-between;
+    margin-bottom: 0;
+}
+
+.is-auto-collapsed .auto-collapse-summary {
+    display: inline;
+}
+
+.is-auto-collapsed .auto-collapse-icon {
+    transform: rotate(-90deg);
+}
+
+@media print {
+    .app-version-footer,
+    .auto-collapse-toolbar {
+        display: none !important;
+    }
+
+    .auto-collapse-content {
+        display: block !important;
+    }
+}
+
+/* Keep navigation and the theme selector anchored to the same right-hand
+   positions even when a page adds its own Refresh or export actions. */
+@media (min-width: 1800px) {
+    .app-header-action {
+        order: 1;
+    }
+
+    .app-nav {
+        order: 2;
+    }
+
+    .theme-switcher {
+        order: 3;
+    }
+}
+
+.app-nav-link:focus-visible,
+.theme-button:focus-visible,
+.app-header-action:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+@media (max-width: 1799px) {
+    .app-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .app-header-actions {
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 639px) {
+    .app-nav,
+    .theme-switcher {
+        width: 100%;
+    }
+
+    .app-nav-link {
+        flex: 1 1 auto;
+    }
+
+    .theme-button {
+        flex: 1 1 0;
+        justify-content: center;
+        padding-inline: 0.4rem;
+    }
+}

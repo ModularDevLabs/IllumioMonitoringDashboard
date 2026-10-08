@@ -4,6 +4,8 @@
     <title>Illumio Settings</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/product-shell.css">
+    <script src="/static/product-shell.js" defer></script>
     <style>
         :root {
             --illumio-orange: rgb(250, 102, 36);
@@ -126,6 +128,9 @@
         .tg-min { grid-area: min; }
         .tg-alert { grid-area: alert; }
         .tg-remove { grid-area: remove; }
+        .target-service-exclusions {
+            width: 100%;
+        }
         .settings-grid {
             display: grid;
             grid-template-columns: 1fr;
@@ -185,6 +190,7 @@
                 <button id="btn-theme" type="button" class="btn btn-light btn-sm">Dark Mode</button>
                 <a href="/executive" class="btn btn-light btn-sm">Executive View</a>
                 <a href="/trends" class="btn btn-light btn-sm">Trend View</a>
+                <a href="/blocked-traffic/" class="btn btn-light btn-sm">Traffic Extractor</a>
                 <a href="/" class="btn btn-light btn-sm">Back to Dashboard</a>
             </span>
         </div>
@@ -319,6 +325,11 @@
                         <label class="form-label form-label-sm small text-muted mb-1" for="source-exclusions">Traffic Source Exclusions (comma-separated names)</label>
                         <input type="text" class="form-control form-control-sm" id="source-exclusions" placeholder="LG-SCANNERS">
                     </div>
+                    <div class="mb-2 mt-2 section-full">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="traffic-service-exclusions">Traffic Service Exclusions (comma-separated ports or PCE service names)</label>
+                        <input type="text" class="form-control form-control-sm" id="traffic-service-exclusions" placeholder="TCP:9300, UDP:53, TCP:8000-8100, Approved Backup Service">
+                        <div class="small text-muted mt-1">These services are excluded globally from traffic reporting, baselines, anomaly detection, and alerts. Use TCP:port, UDP:port, a port range, or an exact PCE policy service object name. Changing an effective rule resets affected baselines and reconciles their stored history.</div>
+                    </div>
                     <div class="mb-1 mt-2 section-full">
                         <label class="form-label form-label-sm small text-muted mb-1">Traffic Targets (comma-separated names)</label>
                     </div>
@@ -328,12 +339,15 @@
                         <button class="btn btn-outline-primary btn-sm" id="btn-save-traffic" type="button">Save Targets/Exclusions</button>
                         <button class="btn btn-outline-success btn-sm" id="btn-refresh-now" type="button">Refresh Now</button>
                         <button class="btn btn-outline-success btn-sm" id="btn-refresh-policy" type="button">Refresh Policy Metrics</button>
-                        <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-history" type="button">Reconcile Blocked History</button>
-                        <button class="btn btn-outline-warning btn-sm" id="btn-reconcile-tampering-history" type="button">Reconcile Tampering History</button>
                     </div>
                     <div class="small mt-2 section-full" id="msg-traffic"></div>
-                    <div class="small mt-1 text-muted section-full" id="msg-reconcile-status"></div>
-                    <div class="small mt-1 text-muted section-full" id="msg-tampering-reconcile-status"></div>
+                    <div class="section-full mt-3 pt-2 border-top">
+                        <div class="small fw-semibold">Blocked Traffic History</div>
+                        <div class="small text-muted mt-1">Rebuild stored traffic history using the current targets and exclusions.</div>
+                        <button class="btn btn-outline-warning btn-sm mt-2" id="btn-reconcile-history" type="button">Reconcile Blocked History</button>
+                        <div class="small mt-2" id="msg-blocked-reconcile"></div>
+                        <div class="small mt-1 text-muted" id="msg-reconcile-status" role="status" aria-live="polite"></div>
+                    </div>
                 </details>
 
                 <div class="settings-grid mt-2">
@@ -373,7 +387,7 @@
                     </details>
 
                     <details class="section-toggle mb-2">
-                        <summary>Tampering Anomaly Settings</summary>
+                        <summary>Tampering Settings &amp; History</summary>
                         <div class="mb-2 mt-2">
                             <label class="form-label form-label-sm small text-muted mb-1" for="tampering-ma-window">
                                 Tampering 5m Moving Average Window (points)
@@ -410,6 +424,13 @@
                             <button class="btn btn-outline-primary btn-sm" id="btn-save-tampering" type="button">Save Tampering Settings</button>
                         </div>
                         <div class="small mt-2" id="msg-tampering"></div>
+                        <div class="mt-3 pt-2 border-top">
+                            <div class="small fw-semibold">Tampering History</div>
+                            <div class="small text-muted mt-1">Stored tampering history is checked automatically at startup. Traffic targets and exclusions do not affect tampering history.</div>
+                            <button class="btn btn-outline-warning btn-sm mt-2" id="btn-reconcile-tampering-history" type="button">Reconcile Tampering History</button>
+                            <div class="small mt-2" id="msg-tampering-reconcile"></div>
+                            <div class="small mt-1 text-muted" id="msg-tampering-reconcile-status" role="status" aria-live="polite"></div>
+                        </div>
                     </details>
                 </div>
         </div>
@@ -444,8 +465,8 @@
 
             <div class="card p-3">
                 <details class="section-toggle" open>
-                    <summary>API Credentials</summary>
-                    <p class="text-muted small mb-3 mt-1">Update PCE URL/API credentials without restarting. New requests use saved values immediately.</p>
+                    <summary>Dashboard API Credentials</summary>
+                    <p class="text-muted small mb-3 mt-1">These credentials are used only by monitoring-dashboard collection. The Traffic Extractor has separate saved PCE profiles and API credentials.</p>
 
                     <div class="mb-2">
                         <label class="form-label form-label-sm small text-muted mb-1" for="cred-pce-url">PCE URL</label>
@@ -582,6 +603,7 @@
     </div>
 
     <script src="/static/ui-common.js"></script>
+    <script src="/static/reconcile-status.js"></script>
     <script>
         const THEME_KEY = 'illumio_theme';
         let editableTargets = [];
@@ -623,6 +645,11 @@
             el.innerText = text;
         }
 
+        async function responseErrorMessage(response, fallback = 'Request failed') {
+            const detail = String(await response.text().catch(() => '')).trim().replace(/\s+/g, ' ');
+            return detail ? `${fallback} (${response.status}): ${detail}` : `${fallback} (${response.status})`;
+        }
+
         function escAttr(v) {
             return String(v ?? '')
                 .replaceAll('&', '&amp;')
@@ -636,6 +663,20 @@
             const v = String(raw || '').trim().toLowerCase();
             if (v === 'rolling_24h_only' || v === 'rolling_24h_plus_daily' || v === 'daily_only') return v;
             return 'rolling_24h_plus_daily';
+        }
+
+        function parseServiceExclusions(raw) {
+            const seen = new Set();
+            return String(raw || '')
+                .split(',')
+                .map((value) => value.trim())
+                .filter((value) => {
+                    if (!value) return false;
+                    const key = value.toLowerCase();
+                    if (seen.has(key)) return false;
+                    seen.add(key);
+                    return true;
+                });
         }
 
         function renderTargetEditor() {
@@ -662,6 +703,10 @@
                         </select>
                         <button type="button" class="btn btn-outline-danger btn-sm tg-remove" data-type="remove" data-idx="${idx}">Remove</button>
                     </div>
+                    <div class="target-service-exclusions">
+                        <label class="form-label form-label-sm small text-muted mb-1" for="target-service-exclusions-${idx}">Service Exclusions for This Target (added to global exclusions)</label>
+                        <input type="text" class="form-control form-control-sm" id="target-service-exclusions-${idx}" placeholder="TCP:9300, UDP:53, TCP:8000-8100, Approved Backup Service" value="${escAttr((target.service_exclusions || []).join(', '))}" data-type="service_exclusions" data-idx="${idx}">
+                    </div>
                 `;
                 root.appendChild(row);
             });
@@ -686,6 +731,9 @@
             root.querySelectorAll('[data-type="alert_min_latest"]').forEach((el) => el.addEventListener('input', (e) => {
                 const raw = String(e.target.value || '').trim();
                 editableTargets[Number(e.target.dataset.idx)].blocked_alert_min_latest = raw === '' ? 0 : Number(raw);
+            }));
+            root.querySelectorAll('[data-type="service_exclusions"]').forEach((el) => el.addEventListener('input', (e) => {
+                editableTargets[Number(e.target.dataset.idx)].service_exclusions = parseServiceExclusions(e.target.value);
             }));
             root.querySelectorAll('[data-type="remove"]').forEach((el) => el.addEventListener('click', (e) => {
                 editableTargets.splice(Number(e.target.dataset.idx), 1);
@@ -752,13 +800,15 @@
             document.getElementById('public-base-url').value = publicBaseURL;
             document.getElementById('timezone').value = timezone;
             document.getElementById('source-exclusions').value = (d.traffic_source_exclusions || []).map((t) => t.name || '').filter((n) => n).join(', ');
+            document.getElementById('traffic-service-exclusions').value = (d.traffic_service_exclusions || []).join(', ');
             editableTargets = (d.traffic_targets || []).map((t) => ({
                 name: t.name || '',
                 kind: t.kind || 'auto',
                 blocked_ma_window: Number(t.blocked_ma_window || 0),
                 blocked_anomaly_pct: Number(t.blocked_anomaly_pct || 0),
                 blocked_alert_enabled: t.blocked_alert_enabled !== false,
-                blocked_alert_min_latest: Number(t.blocked_alert_min_latest || 0)
+                blocked_alert_min_latest: Number(t.blocked_alert_min_latest || 0),
+                service_exclusions: Array.isArray(t.service_exclusions) ? t.service_exclusions : []
             }));
             renderTargetEditor();
         }
@@ -772,7 +822,7 @@
                 body: JSON.stringify(payload)
             });
             if (!r.ok) {
-                showMsg(messageId, `Save failed (${r.status})`, 'danger');
+                showMsg(messageId, await responseErrorMessage(r, 'Save failed'), 'danger');
                 return false;
             }
             showMsg(messageId, successText, 'success');
@@ -789,7 +839,7 @@
                 body: JSON.stringify(payload)
             });
             if (!r.ok) {
-                showMsg(messageId, `Save failed (${r.status})`, 'danger');
+                showMsg(messageId, await responseErrorMessage(r, 'Save failed'), 'danger');
                 return false;
             }
             showMsg(messageId, successText, 'success');
@@ -798,7 +848,9 @@
         }
 
         async function saveTrafficSettings() {
-            await saveSettingsWithMessage('msg-traffic', 'Traffic targets/exclusions saved.', { targetsOnly: true });
+            if (await saveSettingsWithMessage('msg-traffic', 'Traffic targets/exclusions saved.', { targetsOnly: true })) {
+                await refreshReconcileStatuses();
+            }
         }
 
         async function saveTrafficStorageSettings() {
@@ -828,7 +880,8 @@
                     blocked_ma_window: Number(t.blocked_ma_window || 0),
                     blocked_anomaly_pct: Number(t.blocked_anomaly_pct || 0),
                     blocked_alert_enabled: t.blocked_alert_enabled !== false,
-                    blocked_alert_min_latest: Number(t.blocked_alert_min_latest || 0)
+                    blocked_alert_min_latest: Number(t.blocked_alert_min_latest || 0),
+                    service_exclusions: parseServiceExclusions((t.service_exclusions || []).join(','))
                 }))
                 .map((t) => {
                     t.kind = t.kind.toLowerCase();
@@ -856,6 +909,7 @@
                 .filter((n) => n.length > 0)
                 .map((name) => ({ name, kind: 'auto' }));
             payload.traffic_source_exclusions = exclusions;
+            payload.traffic_service_exclusions = parseServiceExclusions(document.getElementById('traffic-service-exclusions').value);
             if (saveTargetsOnly) {
                 return payload;
             }
@@ -979,7 +1033,7 @@
                 body: JSON.stringify(payload)
             });
             if (!r.ok) {
-                showMsg('msg-hosting', `Save failed (${r.status})`, 'danger');
+                showMsg('msg-hosting', await responseErrorMessage(r, 'Save failed'), 'danger');
                 return;
             }
             showMsg('msg-hosting', 'Hosting settings saved. Restart app to apply bind changes.', 'success');
@@ -1011,83 +1065,74 @@
             showMsg('msg-traffic', `Policy metrics refreshed (rulesets=${rs}, rules=${rls}).`, 'success');
         }
 
-        function formatTS(ts) {
-            if (!ts) return '';
-            const d = new Date(ts);
-            if (Number.isNaN(d.getTime())) return '';
-            return d.toLocaleString();
+        function setReconcileStatusText(id, message) {
+            const element = document.getElementById(id);
+            if (element.textContent !== message) element.textContent = message;
         }
 
         async function loadReconcileStatus() {
-            const r = await fetch('/api/reconcile/blocked-history/status');
+            const r = await fetch('/api/reconcile/blocked-history/status', { cache: 'no-store' });
             if (!r.ok) throw new Error(`Load reconcile status failed (${r.status})`);
             const s = await r.json();
-            let msg = '';
-            if (s.running) {
-                msg = `Blocked history reconcile running (started ${formatTS(s.last_started_at) || 'recently'}).`;
-            } else if (s.last_finished_at) {
-                msg = `Last reconcile: ${formatTS(s.last_finished_at)} | days=${s.last_days || 0} updated=${s.last_updated || 0} failed=${s.last_failed || 0}.`;
-            } else if (s.startup_skipped) {
-                msg = `Startup reconcile skipped: ${s.startup_skip_reason || 'already completed for current target set'}.`;
-            } else {
-                msg = 'No reconcile run recorded yet.';
-            }
-            const completed = formatTS(s.last_completed_at);
-            if (completed) {
-                msg += ` Completed marker: ${completed}.`;
-            }
-            document.getElementById('msg-reconcile-status').innerText = msg;
+            setReconcileStatusText('msg-reconcile-status', ReconcileStatus.describe(s, 'blocked'));
+            document.getElementById('btn-reconcile-history').disabled = Boolean(s.running);
         }
 
         async function loadTamperingReconcileStatus() {
-            const r = await fetch('/api/reconcile/tampering-history/status');
+            const r = await fetch('/api/reconcile/tampering-history/status', { cache: 'no-store' });
             if (!r.ok) throw new Error(`Load tampering reconcile status failed (${r.status})`);
             const s = await r.json();
-            let msg = '';
-            if (s.running) {
-                msg = `Tampering history reconcile running (started ${formatTS(s.last_started_at) || 'recently'}).`;
-            } else if (s.last_finished_at) {
-                msg = `Tampering reconcile: ${formatTS(s.last_finished_at)} | days=${s.last_days || 0} updated=${s.last_updated || 0} failed=${s.last_failed || 0}.`;
-            } else if (s.startup_skipped) {
-                msg = `Tampering startup reconcile skipped: ${s.startup_skip_reason || 'already completed for stored days'}.`;
-            } else {
-                msg = 'No tampering reconcile run recorded yet.';
-            }
-            const completed = formatTS(s.last_completed_at);
-            if (completed) {
-                msg += ` Completed marker: ${completed}.`;
-            }
-            document.getElementById('msg-tampering-reconcile-status').innerText = msg;
+            setReconcileStatusText('msg-tampering-reconcile-status', ReconcileStatus.describe(s, 'tampering'));
+            document.getElementById('btn-reconcile-tampering-history').disabled = Boolean(s.running);
         }
 
-        async function triggerFullReconcile() {
-            const r = await fetch('/api/reconcile/blocked-history', { method: 'POST' });
-            if (!r.ok) {
-                showMsg('msg-traffic', `Reconcile trigger failed (${r.status})`, 'danger');
-                return;
-            }
-            const d = await r.json().catch(() => ({}));
-            if (d.started) {
-                showMsg('msg-traffic', 'Blocked history reconciliation started.', 'success');
-            } else {
-                showMsg('msg-traffic', d.message || 'Reconcile already running.', 'warning');
-            }
-            await loadReconcileStatus().catch(() => {});
+        let reconcileStatusRefresh = null;
+        let reconcileStatusTimer = null;
+        let reconcilePollingActive = true;
+        let reconcilePollingGeneration = 0;
+
+        function refreshReconcileStatuses() {
+            if (reconcileStatusRefresh) return reconcileStatusRefresh;
+            reconcileStatusRefresh = Promise.allSettled([loadReconcileStatus(), loadTamperingReconcileStatus()])
+                .then((results) => {
+                    const ids = ['msg-reconcile-status', 'msg-tampering-reconcile-status'];
+                    results.forEach((result, i) => {
+                        if (result.status === 'rejected') {
+                            setReconcileStatusText(ids[i], 'Reconciliation status is unavailable. Retrying shortly.');
+                        }
+                    });
+                }).finally(() => { reconcileStatusRefresh = null; });
+            return reconcileStatusRefresh;
         }
 
-        async function triggerTamperingReconcile() {
-            const r = await fetch('/api/reconcile/tampering-history', { method: 'POST' });
-            if (!r.ok) {
-                showMsg('msg-traffic', `Tampering reconcile trigger failed (${r.status})`, 'danger');
-                return;
+        async function pollReconcileStatuses() {
+            if (!reconcilePollingActive) return;
+            const generation = reconcilePollingGeneration;
+            if (!document.hidden) await refreshReconcileStatuses();
+            if (reconcilePollingActive && generation === reconcilePollingGeneration) {
+                reconcileStatusTimer = setTimeout(pollReconcileStatuses, 5000);
             }
-            const d = await r.json().catch(() => ({}));
-            if (d.started) {
-                showMsg('msg-traffic', 'Tampering history reconciliation started.', 'success');
-            } else {
-                showMsg('msg-traffic', d.message || 'Tampering reconcile already running.', 'warning');
+        }
+
+        async function triggerHistoryReconcile(endpoint, messageId, label) {
+            try {
+                const r = await fetch(endpoint, { method: 'POST' });
+                if (!r.ok) throw new Error(`Request failed (${r.status})`);
+                const d = await r.json();
+                showMsg(messageId, d.started ? `${label} history reconciliation started.` :
+                    (d.message || `${label} history reconciliation is already running.`), d.started ? 'success' : 'warning');
+            } catch (error) {
+                showMsg(messageId, `Could not confirm that reconciliation started. ${error.message}`, 'danger');
             }
-            await loadTamperingReconcileStatus().catch(() => {});
+            await refreshReconcileStatuses();
+        }
+
+        function triggerFullReconcile() {
+            return triggerHistoryReconcile('/api/reconcile/blocked-history', 'msg-blocked-reconcile', 'Blocked traffic');
+        }
+
+        function triggerTamperingReconcile() {
+            return triggerHistoryReconcile('/api/reconcile/tampering-history', 'msg-tampering-reconcile', 'Tampering');
         }
 
         function updateProviderSections() {
@@ -1230,7 +1275,7 @@
         document.getElementById('webhook-provider').addEventListener('change', updateProviderSections);
         document.getElementById('summary-webhook-provider').addEventListener('change', updateSummaryProviderSections);
         document.getElementById('btn-add-target').addEventListener('click', () => {
-            editableTargets.push({ name: '', kind: 'auto', blocked_ma_window: 0, blocked_anomaly_pct: 0, blocked_alert_enabled: true, blocked_alert_min_latest: 0 });
+            editableTargets.push({ name: '', kind: 'auto', blocked_ma_window: 0, blocked_anomaly_pct: 0, blocked_alert_enabled: true, blocked_alert_min_latest: 0, service_exclusions: [] });
             renderTargetEditor();
         });
         document.getElementById('btn-save-traffic').addEventListener('click', saveTrafficSettings);
@@ -1248,7 +1293,19 @@
         document.getElementById('btn-test-webhook').addEventListener('click', testWebhook);
         document.getElementById('btn-send-daily-summary').addEventListener('click', sendDailySummaryNow);
 
-        Promise.all([loadTrafficSettings(), loadAlertSettings(), loadCredentialSettings(), loadReconcileStatus(), loadTamperingReconcileStatus()]).catch((e) => {
+        pollReconcileStatuses();
+        window.addEventListener('pagehide', () => {
+            reconcilePollingActive = false;
+            reconcilePollingGeneration++;
+            clearTimeout(reconcileStatusTimer);
+        });
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted) {
+                reconcilePollingActive = true;
+                pollReconcileStatuses();
+            }
+        });
+        Promise.all([loadTrafficSettings(), loadAlertSettings(), loadCredentialSettings()]).catch((e) => {
             showMsg('msg-traffic', e.message, 'danger');
             showMsg('msg-alerts', e.message, 'danger');
             showMsg('msg-credentials', e.message, 'danger');
