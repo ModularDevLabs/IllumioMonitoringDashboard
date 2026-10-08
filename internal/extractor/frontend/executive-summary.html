@@ -510,13 +510,66 @@
     </div>
 
     <script src="/blocked-traffic/assets/app-version.js"></script>
+    <script src="/blocked-traffic/assets/analysis-state.js"></script>
     <script src="/blocked-traffic/assets/collapsible.js"></script>
     <script>
 		let primaryDimensionName = 'Environment';
 		let latestExecutivePayload = null;
 		let reportLogoDataURL = '';
 		let includedReportSections = null;
+		let executiveViewState = {};
+		let executiveStateReady = false;
+		let executiveLoadRequest = 0;
 		const trendColors = ['#ff5500', '#22c55e', '#38bdf8', '#a855f7', '#f59e0b', '#e11d48', '#14b8a6', '#6366f1'];
+
+		function activateExecutiveState(payload) {
+			let saved;
+			if (window.__ITT_EXECUTIVE_PAYLOAD__) {
+				saved = window.__ITT_EXECUTIVE_VIEW_STATE__;
+			} else {
+				window.ITTAnalysisState?.activate(payload);
+				saved = window.ITTAnalysisState?.read('executive', {});
+			}
+			executiveViewState = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+			executiveStateReady = true;
+		}
+
+		function captureExecutiveViewState() {
+			const selected = id => [...(document.getElementById(id)?.selectedOptions || [])].map(option => option.value);
+			const metadata = document.getElementById('reportTitleInput')
+				? {...reportMetadataFromInputs(),
+					title: document.getElementById('reportTitleInput').value,
+					customer_name: document.getElementById('reportCustomerInput').value,
+					prepared_by: document.getElementById('reportPreparedInput').value,
+					notes: document.getElementById('reportNotesInput').value}
+				: {...(latestExecutivePayload?.report_metadata || {}), included_sections: selectedReportSectionIDs()};
+			return {
+				trendRange: document.getElementById('trendRangeSelect')?.value || '6',
+				services: selected('serviceTrendSelect'),
+				relationships: selected('relationshipTrendSelect'),
+				comparisonStart: document.getElementById('comparisonStartMonth')?.value || '',
+				comparisonEnd: document.getElementById('comparisonEndMonth')?.value || '',
+				reportDraft: metadata
+			};
+		}
+
+		function saveExecutiveState() {
+			if (!executiveStateReady) return;
+			executiveViewState = captureExecutiveViewState();
+			if (window.__ITT_EXECUTIVE_PAYLOAD__) window.__ITT_EXECUTIVE_VIEW_STATE__ = executiveViewState;
+			else window.ITTAnalysisState?.write('executive', executiveViewState);
+		}
+
+		function restoreExecutiveReportDraft(payload) {
+			const saved = executiveViewState.reportDraft;
+			const draft = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : null;
+			applyReportMetadata(draft || payload.report_metadata || {});
+			if (!draft || !document.getElementById('reportTitleInput')) return;
+			for (const [id, key] of [['reportTitleInput', 'title'], ['reportCustomerInput', 'customer_name'], ['reportPreparedInput', 'prepared_by'], ['reportNotesInput', 'notes']]) {
+				if (typeof draft[key] === 'string') document.getElementById(id).value = draft[key];
+			}
+			previewReportMetadata(false);
+		}
 
 		function dimensionName(key) {
 			const value = String(key || '').trim();
@@ -811,13 +864,14 @@
 
 		function serviceKey(row) { return `${row.protocol}:${row.port}`; }
 
-		function populateMultiSelect(selectID, entries, defaultCount = 5) {
+		function populateMultiSelect(selectID, entries, defaultCount = 5, savedValues) {
 			const select = document.getElementById(selectID);
-			const previous = new Set([...select.selectedOptions].map(option => option.value));
+			const hasSavedSelection = Array.isArray(savedValues);
+			const previous = new Set(hasSavedSelection ? savedValues : []);
 			select.replaceChildren();
 			entries.forEach((entry, index) => {
 				const option = new Option(entry.label, entry.value);
-				option.selected = previous.size ? previous.has(entry.value) : index < defaultCount;
+				option.selected = hasSavedSelection ? previous.has(entry.value) : index < defaultCount;
 				select.appendChild(option);
 			});
 		}
@@ -880,8 +934,8 @@
 			const months = trendMonthInfo(payload, false).map(item => item.month);
 			const startSelect = document.getElementById('comparisonStartMonth');
 			const endSelect = document.getElementById('comparisonEndMonth');
-			const previousStart = startSelect.value;
-			const previousEnd = endSelect.value;
+			const previousStart = executiveViewState.comparisonStart;
+			const previousEnd = executiveViewState.comparisonEnd;
 			for (const select of [startSelect, endSelect]) {
 				select.replaceChildren();
 				months.forEach(month => select.appendChild(new Option(month, month)));
@@ -1056,7 +1110,7 @@
 			};
 		}
 
-		function previewReportMetadata() {
+		function previewReportMetadata(persist = true) {
 			const metadata = reportMetadataFromInputs();
 			document.getElementById('reportTitle').textContent = metadata.title || 'Traffic Executive Summary';
 			document.getElementById('reportCustomer').textContent = metadata.customer_name || 'Traffic Analysis';
@@ -1064,6 +1118,7 @@
 			document.getElementById('reportNotes').textContent = metadata.notes;
 			document.getElementById('reportNotes').classList.toggle('hidden', !metadata.notes);
 			const logo = document.getElementById('reportLogo'); logo.src = metadata.logo_data_url; logo.classList.toggle('hidden', !metadata.logo_data_url);
+			if (persist) saveExecutiveState();
 		}
 
 		async function saveReportMetadata() {
@@ -1073,6 +1128,7 @@
 				const data = await response.json();
 				if (!response.ok || !data.success) throw new Error(data.error || 'Unable to save report settings');
 				applyReportMetadata(data.report_metadata);
+				saveExecutiveState();
 				document.getElementById('reportConfigMessage').textContent = 'Report settings saved.';
 			} catch (error) { document.getElementById('reportConfigMessage').textContent = error.message; }
 		}
@@ -1262,7 +1318,9 @@
 				try { collapsibleSource = await (await fetch('/blocked-traffic/assets/collapsible.js')).text(); } catch (_) {}
 				const reportSource = [...document.scripts].find(script => !script.src && script.textContent.includes('function renderExecutiveSummary'))?.textContent || '';
 				const exportPayload = structuredClone(latestExecutivePayload || {});
-				exportPayload.report_metadata = {...(exportPayload.report_metadata || {}), included_sections: selectedSections};
+				const exportViewState = captureExecutiveViewState();
+				exportPayload.report_metadata = {...exportViewState.reportDraft, included_sections: selectedSections};
+				const embeddedViewState = JSON.stringify(exportViewState).replaceAll('<', '\\u003c');
 				const embeddedPayload = JSON.stringify(exportPayload).replaceAll('<', '\\u003c');
 				const embeddedTheme = JSON.stringify(exportTheme).replaceAll('<', '\\u003c');
 				const body = document.body.cloneNode(true);
@@ -1273,7 +1331,7 @@
 				setExportFilter(body, selectedSections);
 				body.querySelectorAll('.app-nav, .app-header-action, [data-offline-remove], script').forEach(node => node.remove());
 				const closingScriptPrefix = '<' + '/script';
-				const scripts = `<script>window.__ITT_EXECUTIVE_PAYLOAD__=${embeddedPayload};window.__ITT_EXECUTIVE_THEME__=${embeddedTheme};<\/script><script>${collapsibleSource.replaceAll(closingScriptPrefix, '<\\/script')}<\/script><script>${reportSource.replaceAll(closingScriptPrefix, '<\\/script')}<\/script>`;
+				const scripts = `<script>window.__ITT_EXECUTIVE_PAYLOAD__=${embeddedPayload};window.__ITT_EXECUTIVE_THEME__=${embeddedTheme};window.__ITT_EXECUTIVE_VIEW_STATE__=${embeddedViewState};<\/script><script>${collapsibleSource.replaceAll(closingScriptPrefix, '<\\/script')}<\/script><script>${reportSource.replaceAll(closingScriptPrefix, '<\\/script')}<\/script>`;
 				const bodyHTML = body.outerHTML.replace('</body>', `${scripts}</body>`);
 				const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(document.getElementById('reportTitle').textContent)}</title><style>${cssParts.join('\n')}</style></head>${bodyHTML}</html>`;
 				downloadBlob(new Blob([html], {type: 'text/html;charset=utf-8'}), `${reportBaseName()}.html`);
@@ -1469,7 +1527,7 @@
                 item.innerHTML = `
                     <div class="flex items-start justify-between gap-4">
                         <div>
-                            <div class="headline text-base font-semibold">${escapeHtml(row.protocol)} ${formatNumber(row.port)}</div>
+                            <div class="headline text-base font-semibold">${escapeHtml(row.protocol)} ${escapeHtml(String(row.port ?? 0))}</div>
                             <div class="muted mt-1 text-sm">Observed across ${formatNumber(row.month_count)} months</div>
                         </div>
                         <div class="text-right">
@@ -1501,7 +1559,7 @@
                 item.innerHTML = `
                     <div class="flex items-start justify-between gap-4">
                         <div>
-                            <div class="headline text-base font-semibold">${escapeHtml(row.protocol)} ${formatNumber(row.port)}</div>
+                            <div class="headline text-base font-semibold">${escapeHtml(row.protocol)} ${escapeHtml(String(row.port ?? 0))}</div>
                             <div class="muted mt-1 text-sm">New in ${escapeHtml(latest.month)}</div>
                         </div>
                         <div class="metric-warning text-right text-xl font-extrabold">${formatNumber(row.flow_count)}</div>
@@ -1599,11 +1657,12 @@
         }
 
         function renderExecutiveSummary(payload) {
+			activateExecutiveState(payload);
 			latestExecutivePayload = payload;
             const summary = payload.summary || [];
             const insights = payload.insights || {};
 			applyDimensionLabels(insights);
-			applyReportMetadata(payload.report_metadata || {});
+			restoreExecutiveReportDraft(payload);
 			renderExecutiveCoverage(payload.coverage || {});
             const totalFlows = summary.reduce((sum, row) => sum + (row.flow_count || 0), 0);
             const totalConnections = summary.reduce((sum, row) => sum + (row.unique_connections || 0), 0);
@@ -1631,14 +1690,17 @@
 			renderExternalSpotlight(insights.top_external_destination_ips || []);
             renderEnvironmentScorecards(environmentScorecards(insights), totalFlows);
 			const options = trendOptionData(payload);
-			populateMultiSelect('serviceTrendSelect', options.services);
-			populateMultiSelect('relationshipTrendSelect', options.relationships);
+			document.getElementById('trendRangeSelect').value = ['6', '12', 'all'].includes(executiveViewState.trendRange) ? executiveViewState.trendRange : '6';
+			populateMultiSelect('serviceTrendSelect', options.services, 5, executiveViewState.services);
+			populateMultiSelect('relationshipTrendSelect', options.relationships, 5, executiveViewState.relationships);
 			setComparisonMonths(payload);
 			renderTrendCharts();
 			renderPeriodComparison();
+			saveExecutiveState();
         }
 
         async function loadExecutiveSummary() {
+			const requestID = ++executiveLoadRequest;
             const fileLabel = document.getElementById('fileLabel');
             fileLabel.innerText = 'Loading latest analytics...';
             try {
@@ -1650,7 +1712,10 @@
 				}
 				const res = await fetch(`/blocked-traffic/api/results/summary?t=${Date.now()}`, {cache: 'no-store'});
                 const data = await res.json();
+				if (requestID !== executiveLoadRequest) return;
+				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
                 if (!data.summary || data.summary.length === 0) {
+					activateExecutiveState(data);
                     document.getElementById('emptyState').classList.remove('hidden');
                     document.getElementById('content').classList.add('hidden');
                     fileLabel.innerText = data.fileName ? `Latest run: ${data.fileName}` : 'No successful fetch is currently loaded.';
@@ -1661,6 +1726,7 @@
                 document.getElementById('content').classList.remove('hidden');
                 renderExecutiveSummary(data);
             } catch (error) {
+				if (requestID !== executiveLoadRequest) return;
                 document.getElementById('emptyState').classList.remove('hidden');
                 document.getElementById('content').classList.add('hidden');
                 fileLabel.innerText = `Failed to load executive analytics: ${error.message}`;
@@ -1680,8 +1746,9 @@
 			bind('downloadExecutiveHTMLBtn', 'click', downloadExecutiveHTML);
 			bind('saveReportMetadataBtn', 'click', saveReportMetadata);
 			bind('downloadMonthlyCSVBtn', 'click', downloadMonthlyCSV);
-			bind('selectAllReportSectionsBtn', 'click', () => setReportSectionSelection(null));
-			bind('clearReportSectionsBtn', 'click', () => setReportSectionSelection([]));
+			bind('selectAllReportSectionsBtn', 'click', () => { setReportSectionSelection(null); saveExecutiveState(); });
+			bind('clearReportSectionsBtn', 'click', () => { setReportSectionSelection([]); saveExecutiveState(); });
+			bind('reportSectionChoices', 'change', saveExecutiveState);
 			bind('clearReportLogoBtn', 'click', () => { reportLogoDataURL = ''; const input = document.getElementById('reportLogoInput'); if (input) input.value = ''; previewReportMetadata(); });
 			['reportTitleInput', 'reportCustomerInput', 'reportPreparedInput', 'reportNotesInput'].forEach(id => bind(id, 'input', previewReportMetadata));
 			bind('reportLogoInput', 'change', event => {
@@ -1693,19 +1760,22 @@
 				reader.onload = () => { reportLogoDataURL = String(reader.result || ''); previewReportMetadata(); document.getElementById('reportConfigMessage').textContent = 'Logo loaded. Save report settings to retain it.'; };
 				reader.readAsDataURL(file);
 			});
-			bind('trendRangeSelect', 'change', renderTrendCharts);
-			bind('serviceTrendSelect', 'change', renderTrendCharts);
-			bind('relationshipTrendSelect', 'change', renderTrendCharts);
-			const selectTop = (id, count) => { [...document.getElementById(id).options].forEach((option, index) => { option.selected = index < count; }); renderTrendCharts(); };
+			const updateTrends = () => { saveExecutiveState(); renderTrendCharts(); };
+			bind('trendRangeSelect', 'change', updateTrends);
+			bind('serviceTrendSelect', 'change', updateTrends);
+			bind('relationshipTrendSelect', 'change', updateTrends);
+			const selectTop = (id, count) => { [...document.getElementById(id).options].forEach((option, index) => { option.selected = index < count; }); updateTrends(); };
 			bind('selectTopServicesBtn', 'click', () => selectTop('serviceTrendSelect', 5));
 			bind('clearServicesBtn', 'click', () => selectTop('serviceTrendSelect', 0));
 			bind('selectTopRelationshipsBtn', 'click', () => selectTop('relationshipTrendSelect', 5));
 			bind('clearRelationshipsBtn', 'click', () => selectTop('relationshipTrendSelect', 0));
-			bind('comparisonStartMonth', 'change', renderPeriodComparison);
-			bind('comparisonEndMonth', 'change', renderPeriodComparison);
+			const updateComparison = () => { saveExecutiveState(); renderPeriodComparison(); };
+			bind('comparisonStartMonth', 'change', updateComparison);
+			bind('comparisonEndMonth', 'change', updateComparison);
 			document.querySelectorAll('[data-chart-download]').forEach(button => button.addEventListener('click', () => downloadChart(button.dataset.chartDownload, button.dataset.format)));
             loadExecutiveSummary();
         };
+		window.addEventListener('pageshow', (event) => { if (event.persisted && !window.__ITT_EXECUTIVE_PAYLOAD__) loadExecutiveSummary(); });
     </script>
 </body>
 </html>

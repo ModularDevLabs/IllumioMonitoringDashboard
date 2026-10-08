@@ -1,5 +1,24 @@
 # Release Notes
 
+## v1.3.0-rc.8 - 2026-10-08
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; the stable release and integration branch status are unchanged.
+
+### Changed
+
+- Heatmaps retain dimension-specific filters, selected cells, protocol and port drilldowns, search text, and hide-empty choices across navigation and refresh.
+- Analytics pivot selections, executive chart ranges and selections, comparison months, export-section choices, report drafts, and collapsed analysis sections are retained for the current analysis within the browser tab's session.
+- A successful CSV import, explicit saved-dataset reload, or completed extraction starts a fresh analysis view, even when filenames are unchanged. Failed imports, report-setting saves, and ordinary refreshes do not reset view choices. Theme preferences remain separate.
+- Downloaded executive HTML captures current chart selections and unsaved report edits without sharing live browser state.
+
+### Fixed
+
+- Port identifiers no longer use thousands separators in heatmap drilldowns, analytics pivots, or executive service cards; flow and connection counts retain numeric formatting.
+- Drilldown controls remain available when their filter combination matches no rows.
+- Invalid stored preferences recover safely, and older overlapping refresh responses cannot replace a newer analysis.
+
+View choices are not permanent saved views and end with the browser tab's session. Save Report Settings continues to retain report metadata with saved datasets. This release includes RC7's large-CSV import improvements and prior traffic recovery fixes.
+
 ## v1.3.0-rc.7 - 2026-10-07
 
 Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. This keeps the separate dashboard and extractor API credentials and does not replace the stable release.

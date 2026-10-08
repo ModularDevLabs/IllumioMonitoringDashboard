@@ -77,6 +77,7 @@ func handleDatasetLoad(w http.ResponseWriter, r *http.Request) {
 	state.Mu.Lock()
 	state.LastSummary = append([]PortProtocolSummary(nil), dataset.Summary...)
 	state.LastInsights = dataset.Insights
+	state.AnalysisRevision = newAnalysisRevision()
 	state.FileName = dataset.FileName
 	state.DatasetID = dataset.ID
 	state.DatasetCoverage = dataset.Coverage

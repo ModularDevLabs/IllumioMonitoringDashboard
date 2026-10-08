@@ -98,7 +98,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 ## Binaries
 
-The `v1.3.0-rc.7` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for the large-CSV import, extraction recovery, and reconciliation-status fixes.
+The `v1.3.0-rc.8` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for analysis view persistence, port-formatting fixes, and the included large-CSV import and extraction recovery improvements.
 
 For source builds, use Go 1.26 or newer; the module pins Go 1.26.8. The rebuild script creates the following compatibility filenames in its selected build directory:
 
@@ -123,6 +123,7 @@ This development build embeds the Blocked Traffic Extractor as an isolated modul
 - Dashboard credentials remain in `config.json` and drive continuous monitoring collection.
 - Extractor credentials remain in the platform user configuration directory under `illumio-monitoring-dashboard-extractor/pce_profiles.json` and drive only extractor requests.
 - Extractor templates, delivery destinations, run history, and saved datasets remain in that same dedicated extractor directory.
+- Heatmap filters and drilldowns, analytics pivot selections, executive chart settings and report drafts, and collapsed analysis sections are retained within the current browser tab while navigating or refreshing. A successful import, explicit saved-dataset reload, or new extraction result resets the view; failed imports and report-setting saves do not. These temporary choices are separate from saved metadata and theme preferences.
 - The integration is based on Blocked Traffic Extractor `v1.5.0`.
 - PCE operations require a saved extractor profile, and non-loopback PCE origins require HTTPS.
 - Manual runs and automation templates can select **Blocked traffic only** (the backward-compatible default) or **All traffic**. All-traffic queries include allowed, potentially blocked, blocked, and unknown decisions.

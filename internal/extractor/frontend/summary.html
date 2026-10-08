@@ -396,10 +396,29 @@
     </div>
 
     <script src="/blocked-traffic/assets/app-version.js"></script>
+    <script src="/blocked-traffic/assets/analysis-state.js"></script>
     <script src="/blocked-traffic/assets/collapsible.js"></script>
     <script src="/blocked-traffic/assets/csv-import.js"></script>
     <script>
         let latestInsights = {};
+		let summaryViewState = {};
+		let summaryStateReady = false;
+		let summaryLoadRequest = 0;
+
+		function activateSummaryState(payload) {
+			window.ITTAnalysisState?.activate(payload);
+			const saved = window.ITTAnalysisState?.read('summary', {});
+			summaryViewState = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+			summaryStateReady = true;
+			initializeCollapsibles();
+			window.ITTSections?.initialize();
+		}
+
+		function saveSummaryState() {
+			if (!summaryStateReady) return;
+			summaryViewState.pivotSources = getSelectedPivotSourceEnvs();
+			window.ITTAnalysisState?.write('summary', summaryViewState);
+		}
 		let primaryDimensionName = 'Environment';
 		let secondaryDimensionName = 'Application';
 
@@ -461,14 +480,14 @@
             document.querySelectorAll('[data-collapsible]').forEach((section) => {
                 const key = section.dataset.collapsible;
                 const toggle = section.querySelector('[data-collapse-toggle]');
-                const saved = localStorage.getItem(`ittCollapse:${key}`);
-                applyCollapsedState(section, saved === 'true');
+                applyCollapsedState(section, summaryViewState.collapsed?.[key] === true);
                 if (!toggle || toggle.dataset.bound === 'true') return;
                 toggle.dataset.bound = 'true';
                 toggle.addEventListener('click', () => {
                     const collapsed = !section.classList.contains('is-collapsed');
                     applyCollapsedState(section, collapsed);
-                    localStorage.setItem(`ittCollapse:${key}`, collapsed ? 'true' : 'false');
+                    summaryViewState.collapsed = {...summaryViewState.collapsed, [key]: collapsed};
+                    saveSummaryState();
                 });
             });
         }
@@ -528,7 +547,7 @@
 
         function renderPivotSourceEnvOptions(options = []) {
             const select = document.getElementById('pivotSourceEnvSelect');
-            const previousSelection = new Set(getSelectedPivotSourceEnvs());
+            const previousSelection = new Set(Array.isArray(summaryViewState.pivotSources) ? summaryViewState.pivotSources : []);
             select.innerHTML = '';
 
             options.forEach((name) => {
@@ -603,7 +622,7 @@
                 html += `<td class="px-4 py-3">${formatNumber(protocolGrandTotal)}</td></tr>`;
 
                 portEntries.forEach((entry) => {
-                    html += `<tr class="hover:bg-gray-800/60"><td class="px-4 py-3"></td><td class="px-4 py-3 font-medium" style="color: var(--text);">${formatNumber(entry.port)}</td>`;
+                    html += `<tr class="hover:bg-gray-800/60"><td class="px-4 py-3"></td><td class="px-4 py-3 font-medium" style="color: var(--text);">${escapeHtml(formatPort(entry.port))}</td>`;
                     destinationOrder.forEach((destination) => {
                         html += `<td class="px-4 py-3">${formatNumber(entry.flowsByDestination[destination] || 0)}</td>`;
                     });
@@ -672,7 +691,7 @@
                             ${monthRows.map((row) => `
                                 <tr class="hover:bg-gray-800/60">
                                     <td class="px-5 py-4 font-medium" style="color: var(--text);">${escapeHtml(row.protocol)}</td>
-                                    <td class="px-5 py-4" style="color: var(--text);">${formatPort(row.port)}</td>
+                                    <td class="px-5 py-4" style="color: var(--text);">${escapeHtml(formatPort(row.port))}</td>
                                     <td class="px-5 py-4 text-emerald-300">${formatNumber(row.flow_count)}</td>
                                     <td class="px-5 py-4 text-amber-200">${formatNumber(row.unique_connections)}</td>
                                     <td class="px-5 py-4 text-sky-300">${formatNumber(row.active_connections)}</td>
@@ -792,11 +811,15 @@
         }
 
         async function loadSummary() {
+			const requestID = ++summaryLoadRequest;
             const fileLabel = document.getElementById('fileLabel');
             fileLabel.innerText = 'Loading latest results...';
             try {
                 const res = await fetch(`/blocked-traffic/api/results/summary?ts=${Date.now()}`, { cache: 'no-store' });
                 const data = await res.json();
+				if (requestID !== summaryLoadRequest) return;
+				if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+				activateSummaryState(data);
 				renderCoverage(data.coverage || {});
                 if (!data.summary || data.summary.length === 0) {
                     document.getElementById('emptyState').classList.remove('hidden');
@@ -809,6 +832,7 @@
                 document.getElementById('dashboard').classList.remove('hidden');
 				renderDashboard(data);
             } catch (error) {
+				if (requestID !== summaryLoadRequest) return;
                 document.getElementById('emptyState').classList.remove('hidden');
                 document.getElementById('dashboard').classList.add('hidden');
                 fileLabel.innerText = `Failed to load analytics: ${error.message}`;
@@ -944,10 +968,11 @@
 			document.getElementById('saveDatasetBtn').addEventListener('click', saveCurrentDataset);
 			document.getElementById('deleteDatasetBtn').addEventListener('click', deleteSelectedDataset);
             initializeCollapsibles();
-            document.getElementById('pivotSourceEnvSelect').addEventListener('change', () => renderEnvServicePivot(latestInsights));
+            document.getElementById('pivotSourceEnvSelect').addEventListener('change', () => { saveSummaryState(); renderEnvServicePivot(latestInsights); });
             loadSummary();
 			loadDatasets();
         };
+		window.addEventListener('pageshow', (event) => { if (event.persisted) loadSummary(); });
     </script>
 </body>
 </html>

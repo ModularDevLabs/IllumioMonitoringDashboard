@@ -27,7 +27,7 @@ import (
 	"illumio-dash/internal/extractor/illumio"
 )
 
-//go:embed frontend/*.html frontend/tailwind.css frontend/app-shell.css frontend/product-shell.css frontend/theme-init.js frontend/collapsible.js frontend/app-version.js frontend/product-shell.js frontend/csv-import.js
+//go:embed frontend/*.html frontend/tailwind.css frontend/app-shell.css frontend/product-shell.css frontend/theme-init.js frontend/collapsible.js frontend/app-version.js frontend/product-shell.js frontend/csv-import.js frontend/analysis-state.js
 var staticFiles embed.FS
 
 // appVersion is replaced by scripts/build_release.sh using -ldflags. Source
@@ -124,6 +124,7 @@ type AppState struct {
 	CancelFunc       context.CancelFunc
 	LastSummary      []PortProtocolSummary
 	LastInsights     AnalyticsInsights
+	AnalysisRevision string
 	DatasetID        string
 	DatasetCoverage  DatasetCoverage
 	ReportMetadata   ReportMetadata
@@ -810,6 +811,9 @@ func NewHandler(appCtx context.Context, version string) (http.Handler, error) {
 	mux.HandleFunc("/assets/csv-import.js", func(w http.ResponseWriter, r *http.Request) {
 		serveEmbeddedAsset(w, r, "frontend/csv-import.js", "text/javascript; charset=utf-8")
 	})
+	mux.HandleFunc("/assets/analysis-state.js", func(w http.ResponseWriter, r *http.Request) {
+		serveEmbeddedAsset(w, r, "frontend/analysis-state.js", "text/javascript; charset=utf-8")
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -1412,6 +1416,12 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
+// A revision identifies one loaded analysis, not its filename or saved dataset.
+// Explicitly reloading identical data starts a fresh set of browser preferences.
+func newAnalysisRevision() string {
+	return "analysis-" + rand.Text()
+}
+
 func handleSummary(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -1425,20 +1435,22 @@ func handleSummary(w http.ResponseWriter, r *http.Request) {
 	summary := state.LastSummary
 	insights := state.LastInsights
 	datasetID := state.DatasetID
+	analysisRevision := state.AnalysisRevision
 	coverage := state.DatasetCoverage
 	reportMetadata := state.ReportMetadata
 	trafficScope := normalizedTrafficScope(state.TrafficScope)
 	state.Mu.Unlock()
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":         fileName != "" && len(summary) > 0,
-		"fileName":        fileName,
-		"datasetId":       datasetID,
-		"summary":         summary,
-		"insights":        insights,
-		"coverage":        coverage,
-		"report_metadata": reportMetadata,
-		"traffic_scope":   trafficScope,
+		"success":          fileName != "" && len(summary) > 0,
+		"fileName":         fileName,
+		"datasetId":        datasetID,
+		"analysisRevision": analysisRevision,
+		"summary":          summary,
+		"insights":         insights,
+		"coverage":         coverage,
+		"report_metadata":  reportMetadata,
+		"traffic_scope":    trafficScope,
 	})
 }
 
@@ -2307,6 +2319,7 @@ func handleImportCSV(w http.ResponseWriter, r *http.Request) {
 	state.Mu.Lock()
 	state.LastSummary = parsed.Summary
 	state.LastInsights = parsed.Insights
+	state.AnalysisRevision = newAnalysisRevision()
 	state.FileName = fileName
 	state.DatasetID = datasetID
 	state.DatasetCoverage = parsed.Coverage
@@ -2409,6 +2422,7 @@ func beginExtractionWithContext(parent context.Context, cfg Config) (Config, con
 	state.FileName = ""
 	state.LastSummary = nil
 	state.LastInsights = AnalyticsInsights{}
+	state.AnalysisRevision = ""
 	state.DatasetID = ""
 	state.DatasetCoverage = DatasetCoverage{}
 	state.ReportMetadata = ReportMetadata{Title: reportTitleForScope(resolved.TrafficScope)}
@@ -3697,6 +3711,7 @@ func runExtraction(ctx context.Context, cfg Config) {
 	state.Mu.Lock()
 	state.LastSummary = summary
 	state.LastInsights = insights
+	state.AnalysisRevision = newAnalysisRevision()
 	state.DatasetCoverage = coverage
 	state.TrafficScope = normalizedTrafficScope(cfg.TrafficScope)
 	state.Mu.Unlock()

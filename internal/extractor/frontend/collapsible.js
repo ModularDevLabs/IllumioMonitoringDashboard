@@ -1,4 +1,15 @@
 (() => {
+    const initialState = new WeakMap();
+    function analysisStore() {
+        return window.__ITT_EXECUTIVE_PAYLOAD__ ? null : window.ITTAnalysisState;
+    }
+    function analysisPageKey() {
+        return 'sections:' + (document.body.dataset.collapseScope || window.location.pathname || 'page');
+    }
+    function analysisSections(store) {
+        const value = store.read(analysisPageKey());
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    }
     function storageKey(section) {
         const scope = document.body.dataset.collapseScope || window.location.pathname || 'page';
         return `ittCollapse:${scope}:${section.dataset.autoCollapsible}`;
@@ -14,12 +25,20 @@
         button.setAttribute('aria-expanded', String(!collapsed));
         label.textContent = collapsed ? 'Expand' : 'Collapse';
         if (persist) {
-            try { localStorage.setItem(storageKey(section), collapsed ? 'true' : 'false'); } catch (_) {}
+            const store = analysisStore();
+            if (store) {
+                const sections = analysisSections(store);
+                sections[section.dataset.autoCollapsible] = collapsed;
+                store.write(analysisPageKey(), sections);
+            } else {
+                try { localStorage.setItem(storageKey(section), collapsed ? 'true' : 'false'); } catch (_) {}
+            }
         }
         document.dispatchEvent(new CustomEvent('itt:section-toggle', { detail: { section, collapsed } }));
     }
 
     function enhance(section) {
+        if (!initialState.has(section)) initialState.set(section, section.classList.contains('is-auto-collapsed'));
         let toolbar = section.querySelector(':scope > .auto-collapse-toolbar');
         let content = section.querySelector(':scope > .auto-collapse-content');
         if (!toolbar || !content) {
@@ -45,11 +64,17 @@
             button.__ittCollapseBound = true;
             button.addEventListener('click', () => apply(section, !section.classList.contains('is-auto-collapsed'), true));
         }
-        let collapsed = section.classList.contains('is-auto-collapsed');
-        try {
-            const saved = localStorage.getItem(storageKey(section));
-            if (saved !== null) collapsed = saved === 'true';
-        } catch (_) {}
+        let collapsed = initialState.get(section);
+        const store = analysisStore();
+        if (store) {
+            const saved = analysisSections(store)[section.dataset.autoCollapsible];
+            if (typeof saved === 'boolean') collapsed = saved;
+        } else {
+            try {
+                const saved = localStorage.getItem(storageKey(section));
+                if (saved !== null) collapsed = saved === 'true';
+            } catch (_) {}
+        }
         apply(section, collapsed, false);
     }
 
@@ -58,6 +83,7 @@
     }
 
     window.ITTSections = { initialize, apply };
+    document.addEventListener('itt:analysis-activated', () => initialize());
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => initialize());
     else initialize();
 })();

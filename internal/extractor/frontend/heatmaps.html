@@ -298,6 +298,7 @@
     </div>
 
     <script src="/blocked-traffic/assets/app-version.js"></script>
+    <script src="/blocked-traffic/assets/analysis-state.js"></script>
     <script src="/blocked-traffic/assets/collapsible.js"></script>
     <script>
         let latestInsights = {};
@@ -312,6 +313,66 @@
             drillProtocol: new Set(),
             drillPort: new Set()
         };
+        const filterSearch = {};
+        let modeStates = {};
+        let heatmapStateReady = false;
+        let heatmapLoadSequence = 0;
+
+        function heatmapPairKey(source, destination) {
+            return JSON.stringify([source, destination]);
+        }
+
+        function captureModeState() {
+            return {
+                filters: Object.fromEntries(Object.entries(filterState).map(([key, values]) => [key, Array.from(values)])),
+                search: { ...filterSearch },
+                pair: selectedDrilldownPair ? { ...selectedDrilldownPair } : null
+            };
+        }
+
+        function restoreModeState(saved = {}) {
+            const state = saved && typeof saved === 'object' ? saved : {};
+            for (const key of Object.keys(filterState)) {
+                const values = state.filters && state.filters[key];
+                filterState[key] = new Set(Array.isArray(values) ? values.filter((value) => typeof value === 'string') : []);
+                filterSearch[key] = state.search && typeof state.search[key] === 'string' ? state.search[key] : '';
+            }
+            const pair = state.pair;
+            selectedDrilldownPair = pair && typeof pair.source === 'string' && typeof pair.destination === 'string'
+                ? { source: pair.source, destination: pair.destination } : null;
+            selectedCellKey = selectedDrilldownPair ? heatmapPairKey(selectedDrilldownPair.source, selectedDrilldownPair.destination) : null;
+        }
+
+        function persistHeatmapState() {
+            if (!heatmapStateReady) return;
+            modeStates[currentMode] = captureModeState();
+            window.ITTAnalysisState?.write('heatmaps', {
+                mode: currentMode,
+                hideEmpty: document.getElementById('hideEmptyToggle').checked,
+                modes: modeStates
+            });
+        }
+
+        function restoreHeatmapState() {
+            const saved = window.ITTAnalysisState?.read('heatmaps', {}) || {};
+            currentMode = ['env', 'app', 'combined'].includes(saved.mode) ? saved.mode : 'env';
+            modeStates = {};
+            for (const mode of ['env', 'app', 'combined']) {
+                if (saved.modes && saved.modes[mode] && typeof saved.modes[mode] === 'object') modeStates[mode] = saved.modes[mode];
+            }
+            document.getElementById('hideEmptyToggle').checked = typeof saved.hideEmpty === 'boolean' ? saved.hideEmpty : true;
+            restoreModeState(modeStates[currentMode]);
+        }
+
+        function clearSelectedPair() {
+            selectedCellKey = null;
+            selectedDrilldownPair = null;
+            filterState.drillProtocol.clear();
+            filterState.drillPort.clear();
+            filterSearch.drillProtocol = '';
+            filterSearch.drillPort = '';
+            resetDrilldown();
+        }
 
         function applyTheme(theme) {
             document.body.dataset.theme = theme;
@@ -383,7 +444,8 @@
             const menu = root.querySelector('[data-filter-menu]');
             const search = root.querySelector('[data-filter-search]');
             const optionsWrap = root.querySelector('[data-filter-options]');
-            const preservedSearch = options.searchTerm || '';
+            const preservedSearch = options.searchTerm ?? filterSearch[stateKey] ?? '';
+            filterSearch[stateKey] = preservedSearch;
 
             function renderOptions(searchTerm = '') {
                 const term = searchTerm.trim().toLowerCase();
@@ -436,7 +498,11 @@
                 runFiltersForState(stateKey);
             });
 
-            search.addEventListener('input', () => renderOptions(search.value));
+            search.addEventListener('input', () => {
+                filterSearch[stateKey] = search.value;
+                renderOptions(search.value);
+                persistHeatmapState();
+            });
             search.value = preservedSearch;
             renderOptions(preservedSearch);
             if (options.keepOpen) {
@@ -453,7 +519,20 @@
         });
 
         function applyMode(mode) {
+            if (!['env', 'app', 'combined'].includes(mode)) return;
+            if (mode !== currentMode) {
+                modeStates[currentMode] = captureModeState();
+                restoreModeState(modeStates[mode]);
+            }
             currentMode = mode;
+            updateModeLabels();
+            populateFilterOptions();
+            renderHeatmap();
+            persistHeatmapState();
+        }
+
+        function updateModeLabels() {
+            const mode = currentMode;
             document.getElementById('envModeBtn').classList.toggle('active', mode === 'env');
             document.getElementById('appModeBtn').classList.toggle('active', mode === 'app');
             document.getElementById('combinedModeBtn').classList.toggle('active', mode === 'combined');
@@ -467,10 +546,6 @@
                 : mode === 'app'
 					? `Source ${secondaryDimensionName} to destination ${secondaryDimensionName}`
 					: `Source ${primaryDimensionName}/${secondaryDimensionName} to destination ${primaryDimensionName}/${secondaryDimensionName}`;
-            selectedCellKey = null;
-            populateFilterOptions();
-            renderHeatmap();
-            resetDrilldown();
         }
 
         function getCurrentPivotRows() {
@@ -550,17 +625,11 @@
 
         function runFiltersForState(stateKey) {
             if (stateKey === 'source' || stateKey === 'destination') {
-                selectedCellKey = null;
-                selectedDrilldownPair = null;
-                filterState.drillProtocol.clear();
-                filterState.drillPort.clear();
                 renderHeatmap();
-                resetDrilldown();
-                return;
-            }
-            if (selectedDrilldownPair) {
+            } else if (selectedDrilldownPair) {
                 renderDrilldown(selectedDrilldownPair.source, selectedDrilldownPair.destination);
             }
+            persistHeatmapState();
         }
 
         function resetDrilldown() {
@@ -582,11 +651,6 @@
                     return a.port - b.port;
                 });
 
-            if (rows.length === 0) {
-                resetDrilldown();
-                return;
-            }
-
             const totalFlows = rows.reduce((sum, row) => sum + (row.flow_count || 0), 0);
             const totalConnections = rows.reduce((sum, row) => sum + (row.unique_connections || 0), 0);
             document.getElementById('drilldownLabel').innerText = `${source} -> ${destination}`;
@@ -601,12 +665,15 @@
                 tr.className = 'hover:bg-gray-800/60';
                 tr.innerHTML = `
                     <td class="px-5 py-4 font-medium" style="color: var(--text);">${escapeHtml(row.protocol)}</td>
-                    <td class="px-5 py-4" style="color: var(--text);">${formatNumber(row.port)}</td>
+                    <td class="px-5 py-4" style="color: var(--text);">${escapeHtml(row.port)}</td>
                     <td class="px-5 py-4 text-emerald-300">${formatNumber(row.flow_count)}</td>
                     <td class="px-5 py-4 text-amber-200">${formatNumber(row.unique_connections)}</td>
                 `;
                 body.appendChild(tr);
             });
+            if (rows.length === 0) {
+                body.innerHTML = '<tr><td colspan="4" class="px-5 py-4 muted">No services match the selected protocol and port filters. Adjust or clear the filters above.</td></tr>';
+            }
 
             document.getElementById('drilldownEmpty').classList.add('hidden');
             document.getElementById('drilldownPanel').classList.remove('hidden');
@@ -622,7 +689,7 @@
             allRows.forEach((row) => {
                 sourceTotals.set(row.source, (sourceTotals.get(row.source) || 0) + (row.flow_count || 0));
                 destinationTotals.set(row.destination, (destinationTotals.get(row.destination) || 0) + (row.flow_count || 0));
-                const key = `${row.source}|||${row.destination}`;
+                const key = heatmapPairKey(row.source, row.destination);
                 if (!pairMap.has(key)) {
                     pairMap.set(key, { source: row.source, destination: row.destination, flow_count: 0, unique_connections: 0 });
                 }
@@ -639,6 +706,11 @@
                 .filter((entry) => !hideEmpty || entry[1] > 0)
                 .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
                 .map((entry) => entry[0]);
+
+            const selectedPair = selectedCellKey ? pairMap.get(selectedCellKey) : null;
+            if (!selectedPair || selectedPair.flow_count <= 0 || !sourceList.includes(selectedPair.source) || !destinationList.includes(selectedPair.destination)) {
+                clearSelectedPair();
+            }
 
             document.getElementById('visibleRowCount').innerText = formatNumber(sourceList.length);
             document.getElementById('visibleColCount').innerText = formatNumber(destinationList.length);
@@ -670,7 +742,7 @@
             sourceList.forEach((source) => {
                 html += `<tr><th class="heatmap-row-header px-3 py-3 text-left font-semibold text-gray-300">${escapeHtml(source)}</th>`;
                 destinationList.forEach((destination) => {
-                    const key = `${source}|||${destination}`;
+                    const key = heatmapPairKey(source, destination);
                     const row = pairMap.get(key);
                     const flowCount = row ? row.flow_count || 0 : 0;
                     const uniqueConnections = row ? row.unique_connections || 0 : 0;
@@ -697,38 +769,48 @@
 
             wrap.querySelectorAll('.heatmap-cell[data-clickable="true"]').forEach((cell) => {
                 cell.addEventListener('click', () => {
-                    selectedCellKey = `${cell.dataset.source}|||${cell.dataset.destination}`;
-                    filterState.drillProtocol.clear();
-                    filterState.drillPort.clear();
+                    const key = heatmapPairKey(cell.dataset.source, cell.dataset.destination);
+                    if (key !== selectedCellKey) clearSelectedPair();
+                    selectedCellKey = key;
+                    selectedDrilldownPair = { source: cell.dataset.source, destination: cell.dataset.destination };
                     renderHeatmap();
-                    renderDrilldown(cell.dataset.source, cell.dataset.destination);
+                    persistHeatmapState();
                 });
             });
 
             if (selectedKey && pairMap.has(selectedKey)) {
-                const [source, destination] = selectedKey.split('|||');
+                const { source, destination } = pairMap.get(selectedKey);
                 renderDrilldown(source, destination);
-            } else if (selectedKey && !pairMap.has(selectedKey)) {
-                selectedCellKey = null;
-                resetDrilldown();
             }
         }
 
         function renderPage(payload) {
+            heatmapStateReady = false;
+            window.ITTAnalysisState?.activate(payload);
             latestInsights = payload.insights || {};
+			restoreHeatmapState();
 			applyDimensionMetadata(latestInsights);
 			const scopeLabel = payload.traffic_scope === 'all' ? 'All policy decisions' : 'Blocked traffic only';
             document.getElementById('fileLabel').innerText = `Latest CSV: ${payload.fileName} · ${scopeLabel}`;
-			applyMode(currentMode);
+			updateModeLabels();
+            populateFilterOptions();
+            renderHeatmap();
+            heatmapStateReady = true;
+            persistHeatmapState();
         }
 
         async function loadHeatmaps() {
+            const sequence = ++heatmapLoadSequence;
             const fileLabel = document.getElementById('fileLabel');
             fileLabel.innerText = 'Loading latest analytics...';
             try {
                 const res = await fetch(`/blocked-traffic/api/results/summary?ts=${Date.now()}`, { cache: 'no-store' });
                 const data = await res.json();
+                if (sequence !== heatmapLoadSequence) return;
+                if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
                 if (!data.summary || data.summary.length === 0) {
+                    heatmapStateReady = false;
+                    window.ITTAnalysisState?.activate(data);
                     document.getElementById('emptyState').classList.remove('hidden');
                     document.getElementById('pageContent').classList.add('hidden');
                     fileLabel.innerText = data.fileName ? `Latest run: ${data.fileName}` : 'No successful fetch or import is currently loaded.';
@@ -739,6 +821,7 @@
                 document.getElementById('pageContent').classList.remove('hidden');
                 renderPage(data);
             } catch (error) {
+                if (sequence !== heatmapLoadSequence) return;
                 document.getElementById('emptyState').classList.remove('hidden');
                 document.getElementById('pageContent').classList.add('hidden');
                 fileLabel.innerText = `Failed to load heatmaps: ${error.message}`;
@@ -754,25 +837,31 @@
             document.getElementById('envModeBtn').addEventListener('click', () => applyMode('env'));
             document.getElementById('appModeBtn').addEventListener('click', () => applyMode('app'));
             document.getElementById('combinedModeBtn').addEventListener('click', () => applyMode('combined'));
-            document.getElementById('hideEmptyToggle').addEventListener('change', () => { selectedCellKey = null; renderHeatmap(); resetDrilldown(); });
+            document.getElementById('hideEmptyToggle').addEventListener('change', () => { renderHeatmap(); persistHeatmapState(); });
             document.getElementById('clearFiltersBtn').addEventListener('click', () => {
                 filterState.source.clear();
                 filterState.destination.clear();
                 filterState.drillProtocol.clear();
                 filterState.drillPort.clear();
+                for (const key of Object.keys(filterState)) filterSearch[key] = '';
                 populateFilterOptions();
-                selectedCellKey = null;
-                selectedDrilldownPair = null;
+                clearSelectedPair();
                 renderHeatmap();
-                resetDrilldown();
+                persistHeatmapState();
             });
             document.getElementById('clearDrilldownFiltersBtn').addEventListener('click', () => {
                 filterState.drillProtocol.clear();
                 filterState.drillPort.clear();
+                filterSearch.drillProtocol = '';
+                filterSearch.drillPort = '';
                 if (selectedDrilldownPair) renderDrilldown(selectedDrilldownPair.source, selectedDrilldownPair.destination);
+                persistHeatmapState();
             });
             loadHeatmaps();
         };
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted) loadHeatmaps();
+        });
     </script>
 </body>
 </html>
