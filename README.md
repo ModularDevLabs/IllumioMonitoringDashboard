@@ -35,7 +35,10 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Unique tampered VEN/workload names with `agent.tampering` events (last 24h)
   - Event counts in 5m/24h windows are deduped by stable event signature before trend aggregation
   - Daily tampering chart uses deduped today-so-far workload set input and retains max-only daily behavior
-  - Deduped names for drilldown
+  - Deduped names for drilldown, with each workload's latest observed tampering event time shown in the browser's local timezone
+  - Last-tamper timestamps survive restarts and control expiry from the rolling 24-hour list; they are event times, not collection times
+  - Upgrades retrieve missing timestamps from a tampering-only 24-hour query without resetting traffic history; legacy entries show unavailable until that query succeeds
+  - Switching between 24h and Daily charts does not change the workload list's 24-hour window
   - Tampering trend charts include moving-average overlays and anomaly detection (24h/5m series)
 - Blocked traffic analytics:
   - Configurable targets (labels and/or label groups)
@@ -98,7 +101,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 ## Binaries
 
-The `v1.3.0-rc.8` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for analysis view persistence, port-formatting fixes, and the included large-CSV import and extraction recovery improvements.
+The `v1.3.0-rc.9` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for per-workload last-tamper timestamps, accurate rolling 24-hour expiry, and the included analysis view persistence, large-CSV import, and extraction recovery improvements.
 
 For source builds, use Go 1.26 or newer; the module pins Go 1.26.8. The rebuild script creates the following compatibility filenames in its selected build directory:
 

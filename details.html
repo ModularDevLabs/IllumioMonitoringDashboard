@@ -80,6 +80,9 @@
             background: var(--card-bg);
         }
         .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+        .tampering-workload-item { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.35rem 1rem; }
+        .tampering-workload-name { min-width: 0; overflow-wrap: anywhere; }
+        .tampering-last-seen { font-size: 0.85rem; }
         .chart-wrap { height: 330px; }
         .trend-controls { gap: 8px; }
         .range-controls { gap: 6px; }
@@ -213,6 +216,7 @@
                     </table>
                 </div>
             </div>
+            <p id="tampering-list-window" class="card-meta d-none">Workloads with tampering events in the last 24 hours as of the latest collection. Last tamper shows the latest event for each workload. Changing the chart range does not change this list.</p>
             <ul class="list-group" id="items"></ul>
         </div>
     </div>
@@ -724,6 +728,84 @@
             });
         }
 
+        function tamperingEventTime(value) {
+            if (typeof value !== 'string') return null;
+            const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/.exec(value.trim());
+            if (!match) return null;
+            const [, yearText, monthText, dayText, hourText, minuteText, secondText, offset] = match;
+            const [year, month, day, hour, minute, second] = [yearText, monthText, dayText, hourText, minuteText, secondText].map(Number);
+            // Reject Go's zero timestamp and invalid calendar dates instead of
+            // allowing Date to normalize them into a misleading display date.
+            const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+            const monthDays = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+            if (year <= 1 || month < 1 || month > 12 || day < 1 || day > monthDays[month - 1] || hour > 23 || minute > 59 || second > 59) return null;
+            if (offset !== 'Z' && (Number(offset.slice(1, 3)) > 23 || Number(offset.slice(4)) > 59)) return null;
+            const date = new Date(value.trim());
+            if (!Number.isFinite(date.getTime())) return null;
+            return {
+                datetime: date.toISOString(),
+                label: date.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' })
+            };
+        }
+
+        function renderDrilldownItems(data) {
+            const list = document.getElementById('items');
+            const tampering = data.metric === 'tampering';
+            const caption = document.getElementById('tampering-list-window');
+            caption.classList.toggle('d-none', !tampering);
+            if (tampering) list.setAttribute('aria-describedby', 'tampering-list-window');
+            else list.removeAttribute('aria-describedby');
+            list.innerHTML = '';
+            if (data.metric === 'policy_ruleset' || data.metric === 'policy_rules') {
+                list.classList.add('d-none');
+                return;
+            }
+            list.classList.remove('d-none');
+            if (!data.items || data.items.length === 0) {
+                const li = document.createElement('li');
+                li.className = 'list-group-item text-muted';
+                li.innerText = tampering
+                    ? 'No workloads with tampering events in the last 24 hours as of the latest collection.'
+                    : 'No results for this metric in the latest collection cycle.';
+                list.appendChild(li);
+                return;
+            }
+            data.items.forEach((name, idx) => {
+                const li = document.createElement('li');
+                li.className = 'list-group-item mono';
+                if (tampering) {
+                    li.className = 'list-group-item tampering-workload-item';
+                    const workload = document.createElement('span');
+                    workload.className = 'mono tampering-workload-name';
+                    workload.textContent = name;
+                    const detail = document.createElement('span');
+                    detail.className = 'tampering-last-seen text-muted';
+                    const timestamp = Object.hasOwn(data.item_last_seen || {}, name) ? tamperingEventTime(data.item_last_seen[name]) : null;
+                    if (timestamp) {
+                        detail.textContent = 'Last tamper: ';
+                        const time = document.createElement('time');
+                        time.setAttribute('datetime', timestamp.datetime);
+                        time.textContent = timestamp.label;
+                        detail.appendChild(time);
+                    } else {
+                        detail.textContent = 'Last tamper: unavailable';
+                    }
+                    li.append(workload, detail);
+                } else {
+                    li.innerText = name;
+                }
+                if (data.metric === 'policy_rulesets' && Array.isArray(data.item_targets) && data.item_targets[idx]) {
+                    li.style.cursor = 'pointer';
+                    li.title = 'Click to view this ruleset trend';
+                    li.addEventListener('click', () => {
+                        const target = encodeURIComponent(String(data.item_targets[idx]));
+                        window.location.href = `/details?metric=policy_ruleset&target=${target}`;
+                    });
+                }
+                list.appendChild(li);
+            });
+        }
+
         async function load() {
             const metric = queryMetric();
             const target = queryTarget();
@@ -805,34 +887,7 @@
             } else {
                 document.getElementById('count').innerText = `${d.count} workload(s)`;
             }
-            const list = document.getElementById('items');
-            list.innerHTML = '';
-            if (d.metric === 'policy_ruleset' || d.metric === 'policy_rules') {
-                list.classList.add('d-none');
-            } else {
-                list.classList.remove('d-none');
-                if (!d.items || d.items.length === 0) {
-                    const li = document.createElement('li');
-                    li.className = 'list-group-item text-muted';
-                    li.innerText = 'No results for this metric in the latest collection cycle.';
-                    list.appendChild(li);
-                } else {
-                    d.items.forEach((name, idx) => {
-                        const li = document.createElement('li');
-                        li.className = 'list-group-item mono';
-                        li.innerText = name;
-                        if (d.metric === 'policy_rulesets' && Array.isArray(d.item_targets) && d.item_targets[idx]) {
-                            li.style.cursor = 'pointer';
-                            li.title = 'Click to view this ruleset trend';
-                            li.addEventListener('click', () => {
-                                const t = encodeURIComponent(String(d.item_targets[idx]));
-                                window.location.href = `/details?metric=policy_ruleset&target=${t}`;
-                            });
-                        }
-                        list.appendChild(li);
-                    });
-                }
-            }
+            renderDrilldownItems(d);
             if (d.metric === 'ven_warning' || d.metric === 'ven_error' || d.metric === 'ven_suspended' || String(d.metric || '').startsWith('mode_')) {
                 trend24h = d.trend_24h || d.trend || [];
                 trendDaily = d.trend_daily || [];
@@ -863,7 +918,7 @@
                 const anomalyText = d.anomaly_reason
                     ? ` | Anomaly: ${d.anomaly_reason}`
                     : (d.anomalous ? ' | Anomaly: triggered' : '');
-                document.getElementById('count').innerText = `${d.count} workload(s)${anomalyText}`;
+                document.getElementById('count').innerText = `${d.count} workload(s) with tampering events in the last 24 hours${anomalyText}`;
                 document.getElementById('trend-raw').innerText = '24h (5m)';
                 document.getElementById('trend-sum').innerText = 'Daily';
                 renderTrend(trendPoints, d.title, { hideList: false, showControls: true });

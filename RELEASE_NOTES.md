@@ -1,5 +1,22 @@
 # Release Notes
 
+## v1.3.0-rc.9 - 2026-10-15
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; this does not replace the stable release.
+
+### Added
+
+- Tampered VENs/Workloads now shows the latest observed tampering event timestamp beside each workload, including the browser's local timezone. Missing timestamps display as unavailable instead of a misleading date.
+- Last-tamper timestamps persist across restarts and are included in tampering drilldown and full-report CSV exports in UTC.
+
+### Fixed
+
+- The tampering list now expires entries using their actual event timestamps, including the initial 24-hour baseline. Older saved state retrieves missing timestamps without resetting unrelated monitoring history.
+- Tampering captions distinguish the rolling 24-hour workload list from the separately selectable 5-minute and daily charts.
+- Recovery after failed queries or collection gaps retrieves tampering events without turning the 24-hour backfill into a false five-minute spike. Partial responses retain known event timestamps and report incomplete pagination.
+
+On upgrade, the next successful tampering collection retrieves timestamps for older saved entries. Until then, entries without a recorded event time show unavailable. The timestamp indicates the latest observed tampering event, not proof that a workload is currently tampered with.
+
 ## v1.3.0-rc.8 - 2026-10-08
 
 Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; the stable release and integration branch status are unchanged.

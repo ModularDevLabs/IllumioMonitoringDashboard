@@ -35,7 +35,7 @@
       'v-warn': 'Count of VENs from /vens?health=warning.',
       'v-err': 'Count of VENs from /vens?health=error.',
       'v-suspended': 'Count of VENs whose status is suspended.',
-      'tamp': 'Unique deduped VEN/workload names with agent.tampering events in window.'
+      'tamp': 'Unique deduped VEN/workload names with agent.tampering events in the last 24 hours as of the latest collection. Click to view the latest tampering event time for each workload.'
     };
   }
 
