@@ -186,10 +186,12 @@ type BlockedTargetResult struct {
 
 type DashboardStats struct {
 	VENStatus struct {
-		Warning   []string    `json:"warning"`
-		Error     []string    `json:"error"`
-		Suspended []string    `json:"suspended"`
-		Status    FetchStatus `json:"status"`
+		Warning       []string    `json:"warning"`
+		Error         []string    `json:"error"`
+		Suspended     []string    `json:"suspended"`
+		Stopped       []string    `json:"stopped"`
+		StoppedStatus FetchStatus `json:"stopped_status"`
+		Status        FetchStatus `json:"status"`
 	} `json:"ven_status"`
 	Workloads struct {
 		Total            int                 `json:"total"`
@@ -236,6 +238,7 @@ type DrilldownResponse struct {
 	Title                   string               `json:"title"`
 	Count                   int                  `json:"count"`
 	Items                   []string             `json:"items"`
+	Status                  *FetchStatus         `json:"status,omitempty"`
 	ItemLastSeen            map[string]time.Time `json:"item_last_seen,omitempty"`
 	ItemTargets             []string             `json:"item_targets,omitempty"`
 	Trend                   []TrendPoint         `json:"trend,omitempty"`
@@ -303,6 +306,7 @@ type rollingBucket struct {
 	VENWarningCount    int
 	VENErrorCount      int
 	VENSuspendedCount  int
+	VENStoppedCount    *int
 	ModeIdleCount      int
 	ModeVisCount       int
 	ModeSelectiveCount int
@@ -343,6 +347,7 @@ type persistedRollingBucket struct {
 	VENWarningCount    int            `json:"ven_warning_count"`
 	VENErrorCount      int            `json:"ven_error_count"`
 	VENSuspendedCount  int            `json:"ven_suspended_count,omitempty"`
+	VENStoppedCount    *int           `json:"ven_stopped_count,omitempty"`
 	ModeIdleCount      int            `json:"mode_idle_count"`
 	ModeVisCount       int            `json:"mode_vis_count"`
 	ModeSelectiveCount int            `json:"mode_selective_count"`
@@ -505,17 +510,18 @@ type tamperingHistoryReconcileStatus struct {
 }
 
 type venDailySnapshot struct {
-	WarningMax       int `json:"warning_max"`
-	ErrorMax         int `json:"error_max"`
-	SuspendedMax     int `json:"suspended_max,omitempty"`
-	TamperingMax     int `json:"tampering_max,omitempty"`
-	RulesetsMax      int `json:"rulesets_max,omitempty"`
-	RulesMax         int `json:"rules_max,omitempty"`
-	ModeIdleMax      int `json:"mode_idle_max,omitempty"`
-	ModeVisMax       int `json:"mode_vis_max,omitempty"`
-	ModeSelectiveMax int `json:"mode_selective_max,omitempty"`
-	ModeFullMax      int `json:"mode_full_max,omitempty"`
-	ModeUnmanagedMax int `json:"mode_unmanaged_max,omitempty"`
+	WarningMax       int  `json:"warning_max"`
+	ErrorMax         int  `json:"error_max"`
+	SuspendedMax     int  `json:"suspended_max,omitempty"`
+	StoppedMax       *int `json:"stopped_max,omitempty"`
+	TamperingMax     int  `json:"tampering_max,omitempty"`
+	RulesetsMax      int  `json:"rulesets_max,omitempty"`
+	RulesMax         int  `json:"rules_max,omitempty"`
+	ModeIdleMax      int  `json:"mode_idle_max,omitempty"`
+	ModeVisMax       int  `json:"mode_vis_max,omitempty"`
+	ModeSelectiveMax int  `json:"mode_selective_max,omitempty"`
+	ModeFullMax      int  `json:"mode_full_max,omitempty"`
+	ModeUnmanagedMax int  `json:"mode_unmanaged_max,omitempty"`
 }
 
 type venDailyRecord struct {
@@ -523,6 +529,7 @@ type venDailyRecord struct {
 	WarningMax       int    `json:"warning_max"`
 	ErrorMax         int    `json:"error_max"`
 	SuspendedMax     int    `json:"suspended_max,omitempty"`
+	StoppedMax       *int   `json:"stopped_max,omitempty"`
 	TamperingMax     int    `json:"tampering_max,omitempty"`
 	RulesetsMax      int    `json:"rulesets_max,omitempty"`
 	RulesMax         int    `json:"rules_max,omitempty"`
@@ -999,6 +1006,7 @@ func initPendingStats() {
 	stats.Blocked.Targets = make([]BlockedTargetResult, 0)
 	pending := FetchStatus{Success: false, Error: "Initial collection in progress"}
 	stats.VENStatus.Status = pending
+	stats.VENStatus.StoppedStatus = pending
 	stats.Workloads.Status = pending
 	stats.Tampering.Status = pending
 	stats.Rules.Status = pending
@@ -1091,6 +1099,9 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 	if metric == "tampering" {
 		resp.ItemLastSeen = snapshot.Tampering.LastSeen
 	}
+	if metric == "ven_stopped" {
+		resp.Status = &snapshot.VENStatus.StoppedStatus
+	}
 	if metric == "policy_rulesets" {
 		_, targets := policyRulesetSummaryItems(time.Now().UTC())
 		resp.ItemTargets = targets
@@ -1103,75 +1114,25 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.TrendDaily = policyRulesetDailyTrendSeries(target, configuredHistoryDays())
 		resp.Trend = resp.TrendDaily
 	}
-	if metric == "ven_warning" {
+	if metric == "ven_warning" || metric == "ven_error" || metric == "ven_suspended" || metric == "ven_stopped" {
+		kind := strings.TrimPrefix(metric, "ven_")
 		window := configuredVENMAWindow()
 		dailyWindow := configuredDailyMAWindow()
 		pct := configuredVENAnomalyPct()
 		baselineSource := configuredVENAnomalyBaselineSource()
 		baselineDays := configuredVENAnomalyBaselineDays()
 		minCoverage := configuredVENAnomalyMinCoveragePct()
-		resp.Trend24h = venTrendSeries("warning")
-		resp.TrendDaily = venDailyTrendSeries("warning", configuredHistoryDays())
+		resp.Trend24h = venTrendSeries(kind)
+		resp.TrendDaily = venDailyTrendSeries(kind, configuredHistoryDays())
 		resp.AnomalySource = baselineSource
 		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
-		resp.Anomalous = eval.Anomalous
-		resp.AnomalyReason = eval.Reason
-		resp.AnomalyWindow = eval.Window
-		resp.AnomalyPct = pct
-		resp.AnomalyCoveragePct = eval.CoveragePct
-		resp.LatestValue = eval.Latest
-		resp.MovingAvgValue = eval.Baseline
-		resp.BlockedMAWindow = window
-		resp.BlockedAnomalyPct = pct
-		if baselineSource == "daily" {
-			resp.TrendMA24h = flatTrendLine(resp.Trend24h, eval.Baseline)
-			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
-		} else {
-			resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
-			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
+		if metric == "ven_stopped" {
+			eval, _ = stoppedVENAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
+			if !snapshot.VENStatus.StoppedStatus.Success {
+				eval.Anomalous = false
+				eval.Reason = "Stopped VEN collection unavailable; historical trends retained"
+			}
 		}
-		resp.Trend = resp.Trend24h
-	}
-	if metric == "ven_error" {
-		window := configuredVENMAWindow()
-		dailyWindow := configuredDailyMAWindow()
-		pct := configuredVENAnomalyPct()
-		baselineSource := configuredVENAnomalyBaselineSource()
-		baselineDays := configuredVENAnomalyBaselineDays()
-		minCoverage := configuredVENAnomalyMinCoveragePct()
-		resp.Trend24h = venTrendSeries("error")
-		resp.TrendDaily = venDailyTrendSeries("error", configuredHistoryDays())
-		resp.AnomalySource = baselineSource
-		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
-		resp.Anomalous = eval.Anomalous
-		resp.AnomalyReason = eval.Reason
-		resp.AnomalyWindow = eval.Window
-		resp.AnomalyPct = pct
-		resp.AnomalyCoveragePct = eval.CoveragePct
-		resp.LatestValue = eval.Latest
-		resp.MovingAvgValue = eval.Baseline
-		resp.BlockedMAWindow = window
-		resp.BlockedAnomalyPct = pct
-		if baselineSource == "daily" {
-			resp.TrendMA24h = flatTrendLine(resp.Trend24h, eval.Baseline)
-			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
-		} else {
-			resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
-			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
-		}
-		resp.Trend = resp.Trend24h
-	}
-	if metric == "ven_suspended" {
-		window := configuredVENMAWindow()
-		dailyWindow := configuredDailyMAWindow()
-		pct := configuredVENAnomalyPct()
-		baselineSource := configuredVENAnomalyBaselineSource()
-		baselineDays := configuredVENAnomalyBaselineDays()
-		minCoverage := configuredVENAnomalyMinCoveragePct()
-		resp.Trend24h = venTrendSeries("suspended")
-		resp.TrendDaily = venDailyTrendSeries("suspended", configuredHistoryDays())
-		resp.AnomalySource = baselineSource
-		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
 		resp.Anomalous = eval.Anomalous
 		resp.AnomalyReason = eval.Reason
 		resp.AnomalyWindow = eval.Window
@@ -1354,6 +1315,9 @@ func handleExportDrilldownCSV(w http.ResponseWriter, r *http.Request) {
 	} else if metric == "ven_suspended" {
 		trend24h = venTrendSeries("suspended")
 		trendDaily = venDailyTrendSeries("suspended", configuredHistoryDays())
+	} else if metric == "ven_stopped" {
+		trend24h = venTrendSeries("stopped")
+		trendDaily = venDailyTrendSeries("stopped", configuredHistoryDays())
 	} else if isEnforcementMetric(metric) {
 		mode := enforcementModeFromMetric(metric)
 		trend24h = modeTrendSeries(mode)
@@ -1406,7 +1370,14 @@ func handleExportDrilldownCSV(w http.ResponseWriter, r *http.Request) {
 	if !write("Title", title) {
 		return
 	}
-	if !write("Item Count", strconv.Itoa(len(items))) {
+	itemCount := strconv.Itoa(len(items))
+	if metric == "ven_stopped" && !snapshot.VENStatus.StoppedStatus.Success {
+		itemCount = "Unavailable"
+		if !write("Collection Status", "Incomplete", snapshot.VENStatus.StoppedStatus.Error) {
+			return
+		}
+	}
+	if !write("Item Count", itemCount) {
 		return
 	}
 	if !write() {
@@ -3453,6 +3424,10 @@ func processWebhookAlerts(stats DashboardStats) {
 	}
 
 	for _, m := range anomalyMetricSnapshots() {
+		if m.Metric == "ven_stopped" && (!stats.VENStatus.StoppedStatus.Success || !m.Ready) {
+			// Unknown/partial collection and baseline warmup are not recoveries.
+			continue
+		}
 		prev := prevMetricByKey[m.Key]
 		if m.Eval.Anomalous && !prev.Active {
 			reason := strings.TrimSpace(m.Eval.Reason)
@@ -3543,6 +3518,20 @@ func processWebhookAlerts(stats DashboardStats) {
 	configUpdateMu.Unlock()
 
 	for _, e := range events {
+		if e.scope == "metric" && e.history.Metric == "ven_stopped" {
+			e.payload = map[string]interface{}{
+				"event": e.history.Event, "state": e.eventType,
+				"timestamp": now.Format(time.RFC3339), "metric": e.history.Metric,
+				"target_name": e.name, "target_kind": "metric",
+				"latest_5m": e.history.Latest5m, "moving_avg_5m": e.history.MovingAvg5m,
+				"anomaly_threshold_pct": e.history.AnomalyThresholdPct,
+				"ma_window_points":      e.history.MAWindowPoints,
+				"anomaly_source":        e.history.AnomalySource,
+				"anomaly_coverage_pct":  e.history.AnomalyCoveragePct,
+				"reason":                e.history.Reason,
+				"dashboard_url":         baseURL + "/details?metric=ven_stopped",
+			}
+		}
 		if webhookEnabled && e.payload != nil {
 			if err := sendWebhookEvent(e.payload); err != nil {
 				log.Printf("[WEBHOOK] %s send failed for %s: %v", e.eventType, e.name, err)
@@ -3560,11 +3549,12 @@ type anomalyMetricSnapshot struct {
 	ThresholdPct float64
 	Window       int
 	Source       string
+	Ready        bool // Used by stopped VENs to preserve alerts during baseline warmup.
 }
 
 func anomalyMetricSnapshots() []anomalyMetricSnapshot {
 	keepDays := configuredHistoryDays()
-	snaps := make([]anomalyMetricSnapshot, 0, 3)
+	snaps := make([]anomalyMetricSnapshot, 0, 4)
 
 	venWindow := configuredVENMAWindow()
 	venPct := configuredVENAnomalyPct()
@@ -3608,6 +3598,13 @@ func anomalyMetricSnapshots() []anomalyMetricSnapshot {
 		ThresholdPct: venPct,
 		Window:       venWindow,
 		Source:       venSource,
+	})
+
+	stoppedEval, stoppedReady := stoppedVENAnomalyFromConfig(venTrendSeries("stopped"), venDailyTrendSeries("stopped", keepDays), venWindow, venPct, venSource, venDays, venMin)
+	snaps = append(snaps, anomalyMetricSnapshot{
+		Key: "ven_stopped", Display: "Stopped VENs", Metric: "ven_stopped", EventName: "ven_stopped_anomaly",
+		Eval: stoppedEval, Ready: stoppedReady,
+		ThresholdPct: venPct, Window: venWindow, Source: venSource,
 	})
 
 	tamperWindow := configuredTamperingMAWindow()
@@ -4064,6 +4061,8 @@ func drilldownData(metric, target string, stats DashboardStats) (string, []strin
 		return "VEN Errors", append([]string(nil), stats.VENStatus.Error...), venTrendSeries("error")
 	case "ven_suspended":
 		return "Suspended VENs", append([]string(nil), stats.VENStatus.Suspended...), venTrendSeries("suspended")
+	case "ven_stopped":
+		return "Stopped VENs", append([]string(nil), stats.VENStatus.Stopped...), venTrendSeries("stopped")
 	case "mode_idle":
 		return "Workloads in Idle Mode", append([]string(nil), stats.Workloads.ModeMembers["idle"]...), modeTrendSeries("idle")
 	case "mode_visibility_only":
@@ -4404,6 +4403,11 @@ func venTrendSeries(kind string) []TrendPoint {
 			v = b.VENErrorCount
 		} else if kind == "suspended" {
 			v = b.VENSuspendedCount
+		} else if kind == "stopped" {
+			if b.VENStoppedCount == nil {
+				continue
+			}
+			v = *b.VENStoppedCount
 		}
 		points = append(points, TrendPoint{
 			Timestamp: b.EndUTC,
@@ -4508,6 +4512,11 @@ func venDailyTrendSeries(kind string, keepDays int) []TrendPoint {
 			v = snap.ErrorMax
 		} else if kind == "suspended" {
 			v = snap.SuspendedMax
+		} else if kind == "stopped" {
+			if snap.StoppedMax == nil {
+				continue
+			}
+			v = *snap.StoppedMax
 		}
 		points = append(points, TrendPoint{
 			Timestamp: d.Add(12 * time.Hour).UTC(),
@@ -5197,6 +5206,23 @@ func flatTrendLine(points []TrendPoint, value float64) []TrendPointF {
 	return out
 }
 
+// Stopped counts can legitimately remain zero for months. A positive sample
+// above an established zero baseline is actionable, not a disabled comparison.
+func stoppedVENAnomalyFromConfig(series5m, seriesDaily []TrendPoint, window5m int, thresholdPct float64, source string, baselineDays int, minCoveragePct float64) (anomalyEvalResult, bool) {
+	eval := blockedAnomalyFromConfig(series5m, seriesDaily, window5m, thresholdPct, source, baselineDays, minCoveragePct)
+	ready := len(series5m) > 0
+	if eval.Source == "daily" {
+		ready = ready && len(seriesDaily) > 0 && eval.CoveragePct >= minCoveragePct
+	} else {
+		ready = ready && window5m > 0 && len(series5m) > window5m
+	}
+	if ready && eval.Baseline == 0 && eval.Latest > 0 {
+		eval.Anomalous = true
+		eval.Reason = "stopped VEN count increased above an established zero baseline"
+	}
+	return eval, ready
+}
+
 func blockedAnomalyFromConfig(series5m, seriesDaily []TrendPoint, window5m int, thresholdPct float64, source string, baselineDays int, minCoveragePct float64) anomalyEvalResult {
 	src := normalizeAnomalyBaselineSource(source)
 	if src == "daily" {
@@ -5465,22 +5491,56 @@ func getAllVENsByStatus(baseURL, status string) ([]map[string]interface{}, error
 		return nil, nil
 	}
 	rows, err := getAllVENsWithFilters(baseURL, map[string]string{"status": needle})
+	filterStopped := func(rows []map[string]interface{}) []map[string]interface{} {
+		out := make([]map[string]interface{}, 0, len(rows))
+		for _, v := range rows {
+			if venStatusMatches(v, "stopped") {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
 	if err == nil {
+		// The status field is optional in the VEN response schema. Trust a
+		// successful server-side filter when absent, but reject contradictions.
+		if needle == "stopped" {
+			out := make([]map[string]interface{}, 0, len(rows))
+			for _, v := range rows {
+				if state := venCurrentStatus(v); state == "" || strings.EqualFold(state, needle) {
+					out = append(out, v)
+				}
+			}
+			return out, nil
+		}
 		return rows, nil
 	}
 	firstErr := err
 	all, err := getAllVENs(baseURL)
 	if err != nil {
+		if needle == "stopped" {
+			partial := filterStopped(rows)
+			if fallbackPartial := filterStopped(all); len(fallbackPartial) > len(partial) {
+				partial = fallbackPartial
+			}
+			return partial, fmt.Errorf("filtered VEN query: %v; unfiltered fallback: %w", firstErr, err)
+		}
 		if firstErr != nil {
 			return nil, firstErr
 		}
 		return nil, err
 	}
 	out := make([]map[string]interface{}, 0, len(all))
+	unknownState := false
 	for _, v := range all {
+		if needle == "stopped" && venCurrentStatus(v) == "" {
+			unknownState = true
+		}
 		if venStatusMatches(v, needle) {
 			out = append(out, v)
 		}
+	}
+	if unknownState {
+		return out, fmt.Errorf("filtered stopped VEN query: %v; unfiltered fallback contains VENs without a current status", firstErr)
 	}
 	return out, nil
 }
@@ -5543,6 +5603,10 @@ func getAllVENsWithFilters(baseURL string, extraFilters map[string]string) ([]ma
 			if bulkErr == nil && len(bulk) > len(all) {
 				return bulk, nil
 			}
+			if bulkErr != nil {
+				return all, fmt.Errorf("partial VEN result: pagination did not advance and bulk fallback failed: %w", bulkErr)
+			}
+			return all, fmt.Errorf("partial VEN result: pagination did not advance and bulk fallback did not establish a complete result")
 		}
 		if len(batch) < pageSize || newCount == 0 {
 			break
@@ -5791,10 +5855,30 @@ func venStatusFromVEN(v map[string]interface{}) string {
 	return ""
 }
 
+func venCurrentStatus(v map[string]interface{}) string {
+	for _, path := range [][]string{
+		{"status"}, {"status", "agent_status"}, {"status", "status"},
+		{"status", "state"}, {"status", "name"}, {"status", "status_code"},
+		{"agent_status"}, {"ven_status"}, {"ven_status", "status"},
+		{"ven_status", "state"}, {"ven", "status"}, {"agent", "status"},
+		{"lifecycle", "status"}, {"lifecycle", "state"},
+	} {
+		if current := strings.TrimSpace(stringFromMap(v, path...)); current != "" {
+			return current
+		}
+	}
+	return ""
+}
+
 func venStatusMatches(v map[string]interface{}, status string) bool {
 	needle := strings.TrimSpace(strings.ToLower(status))
 	if needle == "" {
 		return false
+	}
+	if needle == "stopped" {
+		// A stopped process or historical condition is not the VEN's current
+		// lifecycle state. Prefer the current status fields, not free-text reasons.
+		return strings.EqualFold(venCurrentStatus(v), needle)
 	}
 	contains := func(s string) bool {
 		s = strings.TrimSpace(strings.ToLower(s))
@@ -6034,6 +6118,19 @@ func getIllumioStats() DashboardStats {
 	warningVENs, warnErr := getAllVENsByHealth(baseURL, "warning")
 	errorVENs, errErr := getAllVENsByHealth(baseURL, "error")
 	suspendedVENs, suspendedErr := getAllVENsByStatus(baseURL, "suspended")
+	stoppedVENs, stoppedErr := getAllVENsByStatus(baseURL, "stopped")
+	stats.VENStatus.StoppedStatus = FetchStatus{Success: stoppedErr == nil}
+	var stoppedCount *int
+	if stoppedErr == nil {
+		count := len(stoppedVENs)
+		stoppedCount = &count
+	} else {
+		stats.VENStatus.StoppedStatus.Error = "Stopped VEN query: " + stoppedErr.Error()
+	}
+	for _, v := range stoppedVENs {
+		stats.VENStatus.Stopped = append(stats.VENStatus.Stopped, venDisplayName(v))
+	}
+	log.Printf("[COLLECTOR] VEN stopped=%d err=%v", len(stoppedVENs), stoppedErr)
 	log.Printf("[COLLECTOR] VEN warning=%d error=%d suspended=%d warnErr=%v errErr=%v suspendedErr=%v", len(warningVENs), len(errorVENs), len(suspendedVENs), warnErr, errErr, suspendedErr)
 	for _, v := range warningVENs {
 		stats.VENStatus.Warning = append(stats.VENStatus.Warning, venDisplayWithReason(v))
@@ -6044,8 +6141,8 @@ func getIllumioStats() DashboardStats {
 	for _, v := range suspendedVENs {
 		stats.VENStatus.Suspended = append(stats.VENStatus.Suspended, venDisplayName(v))
 	}
-	if warnErr != nil || errErr != nil || suspendedErr != nil {
-		errs := make([]string, 0, 3)
+	if warnErr != nil || errErr != nil || suspendedErr != nil || stoppedErr != nil {
+		errs := make([]string, 0, 4)
 		if warnErr != nil {
 			errs = append(errs, "warning query: "+warnErr.Error())
 		}
@@ -6054,6 +6151,9 @@ func getIllumioStats() DashboardStats {
 		}
 		if suspendedErr != nil {
 			errs = append(errs, "suspended query: "+suspendedErr.Error())
+		}
+		if stoppedErr != nil {
+			errs = append(errs, "stopped query: "+stoppedErr.Error())
 		}
 		stats.VENStatus.Status = FetchStatus{Success: false, Error: "VENs partial: " + strings.Join(errs, " | ")}
 	} else {
@@ -6152,6 +6252,7 @@ func getIllumioStats() DashboardStats {
 		len(stats.VENStatus.Warning),
 		len(stats.VENStatus.Error),
 		len(stats.VENStatus.Suspended),
+		stoppedCount,
 		stats.Workloads.EnforcementModes["idle"],
 		stats.Workloads.EnforcementModes["visibility_only"],
 		stats.Workloads.EnforcementModes["selective"],
@@ -6170,6 +6271,7 @@ func getIllumioStats() DashboardStats {
 		len(stats.VENStatus.Warning),
 		len(stats.VENStatus.Error),
 		len(stats.VENStatus.Suspended),
+		stoppedCount,
 		tamperingTodayCount,
 		stats.Workloads.EnforcementModes["idle"],
 		stats.Workloads.EnforcementModes["visibility_only"],
@@ -6610,6 +6712,7 @@ func updateRollingAndBuildView(
 	venWarningCount int,
 	venErrorCount int,
 	venSuspendedCount int,
+	venStoppedCount *int,
 	modeIdleCount int,
 	modeVisCount int,
 	modeSelectiveCount int,
@@ -6663,6 +6766,7 @@ func updateRollingAndBuildView(
 			VENWarningCount:    venWarningCount,
 			VENErrorCount:      venErrorCount,
 			VENSuspendedCount:  venSuspendedCount,
+			VENStoppedCount:    venStoppedCount,
 			ModeIdleCount:      modeIdleCount,
 			ModeVisCount:       modeVisCount,
 			ModeSelectiveCount: modeSelectiveCount,
@@ -6679,6 +6783,7 @@ func updateRollingAndBuildView(
 			VENWarningCount:    venWarningCount,
 			VENErrorCount:      venErrorCount,
 			VENSuspendedCount:  venSuspendedCount,
+			VENStoppedCount:    venStoppedCount,
 			ModeIdleCount:      modeIdleCount,
 			ModeVisCount:       modeVisCount,
 			ModeSelectiveCount: modeSelectiveCount,
@@ -12300,6 +12405,7 @@ func loadVENHistory() {
 			WarningMax:       rec.WarningMax,
 			ErrorMax:         rec.ErrorMax,
 			SuspendedMax:     rec.SuspendedMax,
+			StoppedMax:       rec.StoppedMax,
 			TamperingMax:     rec.TamperingMax,
 			RulesetsMax:      rec.RulesetsMax,
 			RulesMax:         rec.RulesMax,
@@ -12404,6 +12510,7 @@ func loadRollingState() {
 			VENWarningCount:    b.VENWarningCount,
 			VENErrorCount:      b.VENErrorCount,
 			VENSuspendedCount:  b.VENSuspendedCount,
+			VENStoppedCount:    b.VENStoppedCount,
 			ModeIdleCount:      b.ModeIdleCount,
 			ModeVisCount:       b.ModeVisCount,
 			ModeSelectiveCount: b.ModeSelectiveCount,
@@ -12505,6 +12612,7 @@ func saveRollingState() {
 			VENWarningCount:    b.VENWarningCount,
 			VENErrorCount:      b.VENErrorCount,
 			VENSuspendedCount:  b.VENSuspendedCount,
+			VENStoppedCount:    b.VENStoppedCount,
 			ModeIdleCount:      b.ModeIdleCount,
 			ModeVisCount:       b.ModeVisCount,
 			ModeSelectiveCount: b.ModeSelectiveCount,
@@ -13008,6 +13116,7 @@ func saveVENHistory() {
 			WarningMax:       snap.WarningMax,
 			ErrorMax:         snap.ErrorMax,
 			SuspendedMax:     snap.SuspendedMax,
+			StoppedMax:       snap.StoppedMax,
 			TamperingMax:     snap.TamperingMax,
 			RulesetsMax:      snap.RulesetsMax,
 			RulesMax:         snap.RulesMax,
@@ -13037,6 +13146,7 @@ func updateVENDailyHistory(
 	warningCount int,
 	errorCount int,
 	suspendedCount int,
+	stoppedCount *int,
 	tamperingCount int,
 	modeIdle int,
 	modeVisibility int,
@@ -13059,6 +13169,11 @@ func updateVENDailyHistory(
 	}
 	if suspendedCount > prev.SuspendedMax {
 		prev.SuspendedMax = suspendedCount
+		changed = true
+	}
+	if stoppedCount != nil && (prev.StoppedMax == nil || *stoppedCount > *prev.StoppedMax) {
+		count := *stoppedCount
+		prev.StoppedMax = &count
 		changed = true
 	}
 	if tamperingCount != prev.TamperingMax {
@@ -13250,6 +13365,16 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 	if !writeRow("Suspended VENs", strconv.Itoa(len(snapshot.VENStatus.Suspended))) {
 		return
 	}
+	stoppedCount := "Unavailable"
+	if snapshot.VENStatus.StoppedStatus.Success {
+		stoppedCount = strconv.Itoa(len(snapshot.VENStatus.Stopped))
+	}
+	if !writeRow("Stopped VENs", stoppedCount) {
+		return
+	}
+	if !snapshot.VENStatus.StoppedStatus.Success && !writeRow("Stopped VEN Collection Status", "Incomplete", snapshot.VENStatus.StoppedStatus.Error) {
+		return
+	}
 	tamperedCount := len(snapshot.Tampering.Workloads)
 	if tamperedCount == 0 {
 		tamperedCount = snapshot.Tampering.Count
@@ -13287,6 +13412,11 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	for _, n := range snapshot.VENStatus.Stopped {
+		if !writeRow("Stopped VEN", n, "") {
+			return
+		}
+	}
 	for _, n := range snapshot.Tampering.Workloads {
 		if !writeRow("Tampered VEN/Workload", n, formatTamperingTimestamp(snapshot.Tampering.LastSeen[n])) {
 			return
@@ -13316,6 +13446,16 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, p := range venDailyTrendSeries("error", configuredHistoryDays()) {
 		if !writeRow("VEN Error Daily", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
+			return
+		}
+	}
+	for _, p := range venTrendSeries("stopped") {
+		if !writeRow("VEN Stopped 24h (5m)", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
+			return
+		}
+	}
+	for _, p := range venDailyTrendSeries("stopped", configuredHistoryDays()) {
+		if !writeRow("VEN Stopped Daily", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
 			return
 		}
 	}

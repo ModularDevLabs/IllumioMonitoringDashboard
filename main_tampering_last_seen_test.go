@@ -73,7 +73,7 @@ func TestTamperingActualTimestampParsingAndLatestDeduplication(t *testing.T) {
 }
 
 func updateTamperingFixture(now time.Time, baseline bool, result tamperingWindowResult) []string {
-	_, names, _, _, _, _, _ := updateRollingAndBuildView(now, baseline, 2, 3, 0, 4, 5, 6, 7, 8,
+	_, names, _, _, _, _, _ := updateRollingAndBuildView(now, baseline, 2, 3, 0, nil, 4, 5, 6, 7, 8,
 		result, map[string]int{"Payments": 2}, map[string]int{}, []TrafficTarget{{Name: "Payments"}})
 	return names
 }

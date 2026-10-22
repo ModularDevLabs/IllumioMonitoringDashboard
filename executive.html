@@ -249,7 +249,7 @@
         </div>
         <div class="panel">
             <h2>Action Queue</h2>
-            <div class="muted">Prioritized from current anomaly/warning/error signals.</div>
+            <div class="muted">Prioritized from current anomaly, warning, error, and stopped VEN signals.</div>
             <ul class="list" id="actions-list"></ul>
         </div>
     </div>
@@ -440,7 +440,10 @@
         if (anomalous.length) out.push(`Investigate ${anomalous.length} anomalous blocked target(s): ${anomalous.slice(0, 3).map((t) => t.name).join(', ')}.`);
         const warn = (stats.ven_status?.warning || []).length;
         const err = (stats.ven_status?.error || []).length;
+        const stopped = UICommon.stoppedVENStatus(stats.ven_status);
         if (err > 0) out.push(`Review ${err} VEN error state workload(s) and reasons.`);
+        if (stopped.count > 0) out.push(`Review ${stopped.count} stopped VEN workload(s) and confirm whether the agents should be running${stopped.complete ? '.' : ' (collection incomplete).'}`);
+        if (!stopped.complete) out.push('Check stopped VEN collection; its current count is unavailable or incomplete.');
         if (warn > 0) out.push(`Review ${warn} VEN warning state workload(s).`);
         const tampered = (stats.tampering?.workloads || []).length;
         if (tampered > 0) out.push(`Validate ${tampered} tampered VEN/workload indicator(s).`);
@@ -483,7 +486,10 @@
         const err = (stats.ven_status?.error || []).length;
         const warn = (stats.ven_status?.warning || []).length;
         const tampered = (stats.tampering?.workloads || []).length;
+        const stopped = UICommon.stoppedVENStatus(stats.ven_status);
         if (err > 0) risks.push(`${err} VEN error state workload(s).`);
+        if (stopped.count > 0) risks.push(`${stopped.display} stopped VEN workload(s).`);
+        if (!stopped.complete) risks.push(stopped.description + '.');
         if (warn > 0) risks.push(`${warn} VEN warning state workload(s).`);
         if (tampered > 0) risks.push(`${tampered} tampered VEN/workload indicator(s) in 24h.`);
         if (targets.blocked_port_daily_enabled === false) risks.push('Blocked-port daily aggregation is disabled.');
@@ -559,6 +565,7 @@
         const anomalous = blockedTargets.filter((t) => t.anomalous).length;
         const venWarn = (stats.ven_status?.warning || []).length;
         const venErr = (stats.ven_status?.error || []).length;
+        const venStopped = UICommon.stoppedVENStatus(stats.ven_status);
         const tampered = (stats.tampering?.workloads || []).length;
         const pipelineBad = [stats.workloads?.status, stats.ven_status?.status, stats.tampering?.status, stats.blocked?.status].filter((s) => s && !s.success).length;
 
@@ -567,7 +574,7 @@
         lines.push('');
         lines.push(`Protection outcomes: ${fmt(blocked24h)} blocked flows in the last 24h; ${fmt(blockedPeriod)} blocked flows across the selected ${periodDays}-day window (${blockedDeltaPeriod >= 0 ? '+' : ''}${blockedDeltaPeriod.toFixed(1)}% vs prior ${periodDays}-day window).`);
         lines.push(`Top protected targets (24h): ${topTargets.length ? topTargets.join(', ') : 'n/a'}.`);
-        lines.push(`Risk signals: ${anomalous} anomalous blocked targets, ${venWarn} VEN warnings, ${venErr} VEN errors, ${tampered} tampered VENs in the last 24h.`);
+        lines.push(`Current risk signals: ${anomalous} anomalous blocked targets, ${venWarn} VEN warnings, ${venErr} VEN errors, stopped VENs: ${venStopped.complete || venStopped.count ? venStopped.display : 'unavailable'}; ${tampered} tampered VENs in the last 24h.`);
         if (stats.rules?.enabled) {
             lines.push(`Policy growth: ${fmt(stats.rules.rulesets)} rulesets and ${fmt(stats.rules.rules)} rules (daily policy trend enabled).`);
         }
@@ -657,12 +664,14 @@
         const anomalous = blockedTargets.filter((t) => t.anomalous).length;
         const venWarn = (stats.ven_status?.warning || []).length;
         const venErr = (stats.ven_status?.error || []).length;
+        const venStopped = UICommon.stoppedVENStatus(stats.ven_status);
         const tampered = (stats.tampering?.workloads || []).length;
         const pipelineBad = [stats.workloads?.status, stats.ven_status?.status, stats.tampering?.status, stats.blocked?.status].filter((s) => s && !s.success).length;
 
         addKPI(risk, 'Anomalous Targets', fmt(anomalous), 'Triggered by configured anomaly baselines', anomalous > 0 ? 'risk-bad' : 'risk-good');
         addKPI(risk, 'VEN Warnings', fmt(venWarn), 'Current warning health states', venWarn > 0 ? 'risk-warn' : 'risk-good');
         addKPI(risk, 'VEN Errors', fmt(venErr), 'Current error health states', venErr > 0 ? 'risk-bad' : 'risk-good');
+        addKPI(risk, 'Stopped VENs', venStopped.display, venStopped.description, venStopped.count > 0 ? 'risk-bad' : (venStopped.complete ? 'risk-good' : 'risk-warn'));
         addKPI(risk, 'Tampered VENs', fmt(tampered), 'Unique impacted names (24h)', tampered > 0 ? 'risk-bad' : 'risk-good');
         addKPI(risk, 'Pipeline Confidence', pipelineBad === 0 ? 'Healthy' : `${pipelineBad} failing stage(s)`, 'Collector/API stage status', pipelineBad === 0 ? 'risk-good' : 'risk-warn');
         addKPI(risk, 'Blocked Port Daily', targets.blocked_port_daily_enabled === false ? 'Disabled' : 'Enabled', 'Controls blocked-port daily aggregation', targets.blocked_port_daily_enabled === false ? 'risk-warn' : 'risk-good');

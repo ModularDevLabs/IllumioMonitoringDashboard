@@ -524,7 +524,7 @@
         });
     }
 
-    function renderAnomalyOutcomes(stats, warnDD, errDD, tampDD, historyResp) {
+    function renderAnomalyOutcomes(stats, warnDD, errDD, stoppedDD, tampDD, historyResp) {
         const box = document.getElementById('anomaly-outcomes');
         const notes = document.getElementById('anomaly-notes');
         if (!box) return;
@@ -541,7 +541,7 @@
         const triggeredPeriod = Number(summary.triggered_period || 0);
         const resolvedPeriod = Number(summary.resolved_period || 0);
         const activeBlockedServer = Number(summary.active_blocked_targets || activeBlockedTargets.length);
-        const activeMetricCount = [!!warnDD?.anomalous, !!errDD?.anomalous, !!tampDD?.anomalous].filter(Boolean).length;
+        const activeMetricCount = [!!warnDD?.anomalous, !!errDD?.anomalous, stoppedDD?.status?.success === true && !!stoppedDD?.anomalous, !!tampDD?.anomalous].filter(Boolean).length;
         addSummaryItem(box, 'Active Blocked Target Anomalies', activeBlockedTargets.length);
         addSummaryItem(box, 'Active Metric Anomalies', activeMetricCount);
         addSummaryItem(box, 'Active Blocked Targets (Server)', activeBlockedServer);
@@ -562,6 +562,24 @@
                 ? `Recent transitions: ${recent.join(' | ')}`
                 : 'No persisted anomaly transitions found for the selected period.';
         }
+    }
+
+    function renderVENHealthCharts(warnDD, errDD, stoppedDD) {
+        [
+            { title: 'VEN Warnings', data: warnDD, color: '#f59f00', dailyColor: '#ffbf66' },
+            { title: 'VEN Errors', data: errDD, color: '#dc3545', dailyColor: '#ff6b6b' },
+            { title: 'Stopped VENs', data: stoppedDD, color: '#9c36b5', dailyColor: '#be72ce' }
+        ].forEach(({ title, data, color, dailyColor }) => {
+            if (!data) return;
+            renderLineChart(
+                `${title} (24h, 5m)`, data.trend_24h || data.trend || [], color, 'charts-ven',
+                [{ label: `MA (${Number(data.anomaly_window || blockedMAWindow || 12)})`, points: data.trend_ma_24h || [], color: '#17a2b8' }]
+            );
+            renderLineChart(
+                `${title} (Daily)`, filterDaily(data.trend_daily || []), dailyColor, 'charts-ven',
+                [{ label: `MA (${Number(data.anomaly_window || blockedMAWindow || 12)})`, points: filterDaily(data.trend_ma_daily || []), color: '#17a2b8' }]
+            );
+        });
     }
 
     async function fetchJSON(url) {
@@ -633,6 +651,9 @@
         addSummaryItem(summary, 'Full', stats.workloads.enforcement_modes?.full || 0);
         addSummaryItem(summary, 'VEN Warnings', (stats.ven_status.warning || []).length);
         addSummaryItem(summary, 'VEN Errors', (stats.ven_status.error || []).length);
+        const stopped = UICommon.stoppedVENStatus(stats.ven_status);
+        addSummaryItem(summary, 'Stopped VENs', stopped.display);
+        if (!stopped.complete) addSummaryItem(summary, 'Stopped VEN Collection', stopped.description);
         addSummaryItem(summary, 'Tampered VENs (Deduped)', tamperedCount);
         if (stats.rules?.enabled) {
             addSummaryItem(summary, 'Policy Rulesets (Today)', Number(stats.rules.rulesets || 0));
@@ -641,41 +662,15 @@
         addSummaryItem(summary, `Anomalous Blocked Targets (${blockedAnomalyPct}% over MA)`, anomalousTargets.length);
         (stats.blocked.targets || []).forEach((t) => addSummaryItem(summary, `Blocked ${t.name} (24h)`, t.count || 0));
 
-        const [warnDD, errDD, tampDD, anomalyHistory] = await Promise.all([
+        const [warnDD, errDD, stoppedDD, tampDD, anomalyHistory] = await Promise.all([
             fetchJSON('/api/drilldown?metric=ven_warning'),
             fetchJSON('/api/drilldown?metric=ven_error'),
+            fetchJSON('/api/drilldown?metric=ven_stopped'),
             fetchJSON('/api/drilldown?metric=tampering').catch(() => null),
             fetchJSON(`/api/anomalies/history?days=${dayRange}&limit=200`).catch(() => null)
         ]);
-        renderAnomalyOutcomes(stats, warnDD, errDD, tampDD, anomalyHistory);
-        renderLineChart(
-            'VEN Warnings (24h, 5m)',
-            warnDD.trend_24h || warnDD.trend || [],
-            '#f59f00',
-            'charts-ven',
-            [{ label: `MA (${Number(warnDD.anomaly_window || blockedMAWindow || 12)})`, points: warnDD.trend_ma_24h || [], color: '#17a2b8' }]
-        );
-        renderLineChart(
-            'VEN Errors (24h, 5m)',
-            errDD.trend_24h || errDD.trend || [],
-            '#dc3545',
-            'charts-ven',
-            [{ label: `MA (${Number(errDD.anomaly_window || blockedMAWindow || 12)})`, points: errDD.trend_ma_24h || [], color: '#17a2b8' }]
-        );
-        renderLineChart(
-            'VEN Warnings (Daily)',
-            filterDaily(warnDD.trend_daily || []),
-            '#ffbf66',
-            'charts-ven',
-            [{ label: `MA (${Number(warnDD.anomaly_window || blockedMAWindow || 12)})`, points: filterDaily(warnDD.trend_ma_daily || []), color: '#17a2b8' }]
-        );
-        renderLineChart(
-            'VEN Errors (Daily)',
-            filterDaily(errDD.trend_daily || []),
-            '#ff6b6b',
-            'charts-ven',
-            [{ label: `MA (${Number(errDD.anomaly_window || blockedMAWindow || 12)})`, points: filterDaily(errDD.trend_ma_daily || []), color: '#17a2b8' }]
-        );
+        renderAnomalyOutcomes(stats, warnDD, errDD, stoppedDD, tampDD, anomalyHistory);
+        renderVENHealthCharts(warnDD, errDD, stoppedDD);
         if (tampDD) {
             renderLineChart(
                 'Tampered VENs (24h, 5m)',

@@ -34,6 +34,7 @@
       'm-unmanaged': 'Workloads without active/managed VEN association.',
       'v-warn': 'Count of VENs from /vens?health=warning.',
       'v-err': 'Count of VENs from /vens?health=error.',
+      'v-stopped': 'Count of VENs currently in the stopped state. Click for workload names, 24-hour and daily trends, shared VEN anomaly baselines, and exports. Unavailable or incomplete collection is not treated as zero.',
       'v-suspended': 'Count of VENs whose status is suspended.',
       'tamp': 'Unique deduped VEN/workload names with agent.tampering events in the last 24 hours as of the latest collection. Click to view the latest tampering event time for each workload.'
     };
@@ -45,6 +46,19 @@
       var el = document.getElementById(id);
       if (el) el.title = map[id];
     });
+  }
+
+  function stoppedVENStatus(venStatus) {
+    var status = venStatus || {};
+    var count = Array.isArray(status.stopped) ? status.stopped.length : 0;
+    var complete = status.stopped_status?.success === true;
+    return {
+      count: count,
+      complete: complete,
+      display: complete ? String(count) : (count ? String(count) + ' (incomplete)' : '—'),
+      description: complete ? 'Current stopped VEN states' : (count ? 'Partial results; stopped VEN collection incomplete' : 'Stopped VEN status unavailable'),
+      error: String(status.stopped_status?.error || '')
+    };
   }
 
   function applyTheme(themeKey, btnId, rerenderFn) {
@@ -198,6 +212,7 @@
     formatStaleness: formatStaleness,
     nextRefreshText: nextRefreshText,
     applyMetricTooltips: applyMetricTooltips,
+    stoppedVENStatus: stoppedVENStatus,
     applyTheme: applyTheme,
     setTheme: setTheme,
     makeChartZoomable: makeChartZoomable

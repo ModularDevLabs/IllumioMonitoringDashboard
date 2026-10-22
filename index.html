@@ -354,29 +354,36 @@
             </div>
         </div>
 
-        <div class="row">
-            <div class="col-md-3">
+        <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-5">
+            <div class="col">
                 <div class="card p-3 text-center metric-link" data-metric="ven_warning">
                     <h6>VEN Warnings</h6>
                     <h2 class="text-warning" id="v-warn">0</h2>
                     <div id="v-warn-list" class="small text-muted">Click to view workload names</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="card p-3 text-center metric-link" data-metric="ven_error">
                     <h6>VEN Errors</h6>
                     <h2 class="text-danger" id="v-err">0</h2>
                     <div id="v-err-list" class="small text-muted">Click to view workload names</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
+                <div class="card p-3 text-center metric-link" data-metric="ven_stopped">
+                    <h6>Stopped VENs</h6>
+                    <h2 class="text-danger" id="v-stopped">—</h2>
+                    <div id="v-stopped-list" class="small text-muted">Waiting for stopped VEN status</div>
+                </div>
+            </div>
+            <div class="col">
                 <div class="card p-3 text-center metric-link" data-metric="ven_suspended">
                     <h6>Suspended VENs</h6>
                     <h2 class="text-secondary" id="v-suspended">0</h2>
                     <div id="v-suspended-list" class="small text-muted">Click to view workload names</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="card p-3 text-center metric-link" data-metric="tampering">
                     <h6>Tampered VENs</h6>
                     <h2 class="text-dark" id="tamp">0</h2>
@@ -496,6 +503,17 @@
         function statusText(statusObj) {
             if (!statusObj) return 'Unknown';
             return statusObj.success ? 'OK' : `Warning: ${statusObj.error || 'Failed'}`;
+        }
+
+        function renderStoppedVENStatus(venStatus) {
+            const stopped = UICommon.stoppedVENStatus(venStatus);
+            const count = document.getElementById('v-stopped');
+            const detail = document.getElementById('v-stopped-list');
+            count.innerText = stopped.display;
+            count.classList.toggle('text-danger', stopped.count > 0);
+            count.classList.toggle('text-secondary', stopped.count === 0);
+            detail.innerText = stopped.complete ? 'Click to view workload names' : stopped.description;
+            detail.title = stopped.error;
         }
 
         function escHTML(v) {
@@ -630,6 +648,7 @@
                 document.getElementById('v-warn-list').innerText = 'Click to view workload names';
                 document.getElementById('v-err').innerText = d.ven_status.error?.length || 0;
                 document.getElementById('v-err-list').innerText = 'Click to view workload names';
+                renderStoppedVENStatus(d.ven_status);
                 document.getElementById('v-suspended').innerText = d.ven_status.suspended?.length || 0;
                 document.getElementById('v-suspended-list').innerText = 'Click to view workload names';
                 document.getElementById('tamp').innerText = d.tampering.workloads?.length || d.tampering.count || 0;

@@ -230,6 +230,7 @@
         let trendBaseline = 0;
         let trendBaselineCaptured = null;
         let currentMetric = '';
+        let stoppedDataAvailable = false;
         let trend24h = [];
         let trendDaily = [];
         let trendDaily5mCaptured = [];
@@ -320,9 +321,13 @@
             document.getElementById('btn-pdf').addEventListener('click', () => window.print());
         }
 
+        function isVENHealthMetric(metric) {
+            return metric === 'ven_warning' || metric === 'ven_error' || metric === 'ven_stopped';
+        }
+
         function valuesForMode(points) {
             const raw = points.map((p) => p.value || 0);
-            if (currentMetric === 'ven_warning' || currentMetric === 'ven_error') {
+            if (isVENHealthMetric(currentMetric)) {
                 return raw;
             }
             return raw;
@@ -355,8 +360,7 @@
             const list = document.getElementById('items');
             const controls = document.getElementById('trend-controls');
             const range = document.getElementById('range-controls');
-            const forceZeroChart = currentMetric === 'ven_warning' ||
-                currentMetric === 'ven_error' ||
+            const forceZeroChart = (isVENHealthMetric(currentMetric) && (currentMetric !== 'ven_stopped' || stoppedDataAvailable)) ||
                 currentMetric === 'tampering' ||
                 String(currentMetric || '').startsWith('mode_') ||
                 currentMetric === 'blocked_target';
@@ -766,7 +770,9 @@
                 li.className = 'list-group-item text-muted';
                 li.innerText = tampering
                     ? 'No workloads with tampering events in the last 24 hours as of the latest collection.'
-                    : 'No results for this metric in the latest collection cycle.';
+                    : (data.metric === 'ven_stopped' && data.status?.success !== true
+                        ? 'Stopped VEN status is unavailable. A successful collection is needed before reporting zero stopped VENs.'
+                        : 'No results for this metric in the latest collection cycle.');
                 list.appendChild(li);
                 return;
             }
@@ -822,6 +828,7 @@
                 return;
             }
             const d = await r.json();
+            stoppedDataAvailable = d.metric === 'ven_stopped' && d.status?.success === true;
             try {
                 const s = await fetch('/api/stats?ts=' + Date.now(), { cache: 'no-store' });
                 if (s.ok) {
@@ -875,7 +882,7 @@
             trendDaily5mCaptured = [];
             renderBlockedPortsTable();
             renderBlockedHostsTable();
-            if (d.metric === 'ven_warning' || d.metric === 'ven_error' || d.metric === 'ven_suspended') {
+            if (isVENHealthMetric(d.metric) || d.metric === 'ven_suspended') {
                 document.getElementById('trend-raw').innerText = '24h (5m)';
                 document.getElementById('trend-sum').innerText = 'Daily';
             }
@@ -888,7 +895,7 @@
                 document.getElementById('count').innerText = `${d.count} workload(s)`;
             }
             renderDrilldownItems(d);
-            if (d.metric === 'ven_warning' || d.metric === 'ven_error' || d.metric === 'ven_suspended' || String(d.metric || '').startsWith('mode_')) {
+            if (isVENHealthMetric(d.metric) || d.metric === 'ven_suspended' || String(d.metric || '').startsWith('mode_')) {
                 trend24h = d.trend_24h || d.trend || [];
                 trendDaily = d.trend_daily || [];
                 trendMA24h = d.trend_ma_24h || [];
@@ -900,10 +907,18 @@
                 trendPoints = trend24h;
                 document.getElementById('trend-raw').innerText = '24h (5m)';
                 document.getElementById('trend-sum').innerText = 'Daily';
+                if (d.metric === 'ven_stopped' && !stoppedDataAvailable && !trend24h.length && trendDaily.length) {
+                    trendMode = 'sum';
+                    trendPoints = trendDaily;
+                }
                 const anomalyText = d.anomaly_reason
                     ? ` | Anomaly: ${d.anomaly_reason}`
                     : (d.anomalous ? ' | Anomaly: triggered' : '');
                 document.getElementById('count').innerText = `${d.count} workload(s)${anomalyText}`;
+                if (d.metric === 'ven_stopped' && !stoppedDataAvailable) {
+                    const stopped = UICommon.stoppedVENStatus({ stopped: d.items, stopped_status: d.status });
+                    document.getElementById('count').innerText = `${stopped.display} · ${stopped.description}${stopped.error ? `: ${stopped.error}` : ''}. Historical trends are shown where available.`;
+                }
                 renderTrend(trendPoints, d.title, { hideList: false, showControls: true });
             } else if (d.metric === 'tampering') {
                 trend24h = d.trend_24h || d.trend || [];

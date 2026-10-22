@@ -1,5 +1,20 @@
 # Release Notes
 
+## v1.3.0-rc.10 - 2026-10-22
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; this does not replace the stable release.
+
+### Stopped VEN monitoring
+
+- Added a Stopped VENs card and workload drilldown on the main monitoring dashboard, using the PCE's current stopped status rather than inferring it from connectivity or historical events.
+- Added rolling 24-hour/five-minute trends, retained daily maximum counts, moving-average overlays, shared VEN anomaly settings, and CSV/PDF report coverage. Stopped VENs also appear in executive health summaries and risk/actions.
+- Added persisted stopped anomaly transitions and trigger/recovery notifications through the configured generic, Slack, or Teams webhook. Baseline warmup and collection failures do not falsely resolve active alerts.
+- History begins with the first successful stopped collection after upgrade. Legacy history and failed/partial queries are not converted to zero; incomplete results are clearly marked in the UI and CSV exports.
+- A rise above an established zero stopped-VEN baseline triggers an anomaly; insufficient baseline history does not falsely resolve an existing alert.
+- VEN pagination that cannot advance now reports an incomplete result instead of silently treating a truncated list as complete.
+
+Versioned binaries are provided for Windows amd64, Linux amd64, Intel macOS, and Apple Silicon macOS. The executable name and in-app version identify `v1.3.0-rc.10`.
+
 ## v1.3.0-rc.9 - 2026-10-15
 
 Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; this does not replace the stable release.

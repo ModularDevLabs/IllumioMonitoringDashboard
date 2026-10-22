@@ -24,9 +24,12 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 - VEN health visibility:
   - Warning-state workloads
   - Error-state workloads
+  - Stopped VENs: current count and workload names, collected with the PCE's `/vens?status=stopped` filter (distinct from offline or unhealthy VENs)
   - VEN health is collected from paginated `/vens?health=warning` and `/vens?health=error` API calls
   - No fixed page cap; pagination continues until no more rows, with a per-query timeout safeguard
-  - VEN warning/error trend charts now include moving-average overlays and anomaly detection (using configured MA window and anomaly threshold)
+  - VEN warning/error/stopped trend charts include moving-average overlays and anomaly detection (using configured VEN MA window and anomaly threshold)
+  - Stopped VEN history includes five-minute snapshots and daily maximum counts, persisted across restarts. Earlier dates and failed collections remain unknown, not zero; stopped monitoring starts with the first successful collection after upgrade.
+  - Stopped VEN anomaly triggers and recoveries use the configured generic, Slack, or Teams webhook, with persisted alert state and anomaly history. Alerts wait for sufficient baseline history; failed queries do not clear an active alert.
 - Workload inventory:
   - Total workloads
   - Enforcement mode breakdown for managed workloads (`idle`, `visibility_only`, `selective`, `full`)
@@ -73,7 +76,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Test webhook button in `/settings`
   - Dedicated UI page: `/settings`
 - Drilldown pages:
-  - VEN warnings/errors
+  - VEN warnings/errors/stopped/suspended
   - Each enforcement mode (including unmanaged workloads) with 24h trend lines
   - Tampering deduped workloads
 - UI target management:
@@ -101,7 +104,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 ## Binaries
 
-The `v1.3.0-rc.9` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for per-workload last-tamper timestamps, accurate rolling 24-hour expiry, and the included analysis view persistence, large-CSV import, and extraction recovery improvements.
+The `v1.3.0-rc.10` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for Stopped VEN monitoring, charting, history, and alerts, alongside per-workload last-tamper timestamps and the included analysis view persistence, large-CSV import, and extraction recovery improvements.
 
 For source builds, use Go 1.26 or newer; the module pins Go 1.26.8. The rebuild script creates the following compatibility filenames in its selected build directory:
 
@@ -305,8 +308,8 @@ Webhook delivery does not follow redirects or use environment-configured HTTP pr
 | `blocked_anomaly_baseline` | Baseline source for blocked anomaly detection | `5m` | `5m` compares latest 5m to 5m MA; `daily` compares latest 5m to N-day baseline |
 | `blocked_anomaly_days` | Daily baseline lookback days (when baseline=`daily`) | `7` | Range `1..3650`; averages last N daily totals, then compares latest 5m value vs that daily baseline |
 | `blocked_anomaly_min_coverage_pct` | Minimum daily baseline coverage before anomaly alerts are allowed | `70` | Range `1..100`; lower coverage stays in warmup/suppressed state |
-| `ven_ma_window` | VEN warning/error MA window points | blocked MA fallback | Range `2..288` |
-| `ven_anomaly_pct` | VEN warning/error anomaly threshold percent | blocked threshold fallback | Range `1..10000` |
+| `ven_ma_window` | VEN warning/error/stopped/suspended MA window points | blocked MA fallback | Range `2..288` |
+| `ven_anomaly_pct` | VEN warning/error/stopped/suspended anomaly threshold percent | blocked threshold fallback | Range `1..10000` |
 | `ven_anomaly_baseline` | VEN anomaly baseline source | `5m` | `5m` compares latest 5m to 5m MA; `daily` compares latest 5m to N-day baseline |
 | `ven_anomaly_days` | VEN daily baseline lookback days (when baseline=`daily`) | blocked days fallback | Range `1..3650` |
 | `ven_anomaly_min_coverage_pct` | VEN minimum daily baseline coverage before anomaly checks | blocked min coverage fallback | Range `1..100` |
@@ -447,11 +450,12 @@ Click these cards/badges to open detailed lists:
 - VEN Warnings
 - VEN Errors
 - Suspended VENs (status-based)
+- Stopped VENs (current PCE status; not simply offline)
 - Enforcement mode blocks (Idle/Visibility/Selective/Full)
 - Tampered VENs (deduped VEN/workload names)
 - Any blocked traffic target tile (5-minute line trend for that environment/target)
-- VEN warning/error/suspended drilldowns also show a 24h trend line (while keeping workload name lists)
-  - VEN warning/error/suspended drilldowns include toggle:
+- VEN warning/error/stopped/suspended drilldowns also show a 24h trend line (while keeping workload name lists)
+  - VEN warning/error/stopped/suspended drilldowns include toggle:
     - `24h (5m)` recent trend
     - `Daily` retained trend (bounded by `history_days`)
   - Enforcement mode drilldowns include toggle:
@@ -601,7 +605,7 @@ Use `/settings` to manage webhook alerting:
   - Sends blocked daily reconcile summary immediately for the previous local-day window using current stored daily blocked totals
 - `GET /api/anomalies/history`:
   - Returns persisted anomaly trigger/resolved transitions
-  - Includes blocked target, VEN warning/error, and tampering anomaly transitions
+  - Includes blocked target, VEN warning/error/stopped, and tampering anomaly transitions
   - Query params: `days` (default `7`), `limit` (default `200`)
 - `GET /api/diagnostics/perf`:
   - Disabled by default; requires `diagnostics_enabled=true`
@@ -616,7 +620,7 @@ Use `/settings` to manage webhook alerting:
 - `GET /executive`:
   - Executive summary view with:
     - protection outcomes (blocked value/volume metrics)
-    - risk signals (anomalies, VEN warning/error, tampering, pipeline health)
+    - risk signals (anomalies, VEN warning/error/stopped, tampering, pipeline health)
     - business value ranking by target (24h, selected period totals, contribution share, risk context)
     - narrative summary generator with copy/download for status updates
     - action queue with direct operational guidance
