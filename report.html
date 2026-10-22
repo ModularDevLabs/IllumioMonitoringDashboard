@@ -541,9 +541,11 @@
         const triggeredPeriod = Number(summary.triggered_period || 0);
         const resolvedPeriod = Number(summary.resolved_period || 0);
         const activeBlockedServer = Number(summary.active_blocked_targets || activeBlockedTargets.length);
-        const activeMetricCount = [!!warnDD?.anomalous, !!errDD?.anomalous, stoppedDD?.status?.success === true && !!stoppedDD?.anomalous, !!tampDD?.anomalous].filter(Boolean).length;
+        const tampering = UICommon.tamperingStatus({ workloads: tampDD?.items, count: tampDD?.count, status: tampDD?.status, partial: tampDD?.partial });
+        const incompleteMetricCoverage = !tampering.complete || stoppedDD?.status?.success !== true;
+        const activeMetricCount = [!!warnDD?.anomalous, !!errDD?.anomalous, stoppedDD?.status?.success === true && !!stoppedDD?.anomalous, tampering.complete && !!tampDD?.anomalous].filter(Boolean).length;
         addSummaryItem(box, 'Active Blocked Target Anomalies', activeBlockedTargets.length);
-        addSummaryItem(box, 'Active Metric Anomalies', activeMetricCount);
+        addSummaryItem(box, 'Active Metric Anomalies', incompleteMetricCoverage ? `${activeMetricCount} confirmed (incomplete coverage)` : activeMetricCount);
         addSummaryItem(box, 'Active Blocked Targets (Server)', activeBlockedServer);
         addSummaryItem(box, 'Triggered (24h)', triggered24);
         addSummaryItem(box, 'Resolved (24h)', resolved24);
@@ -558,9 +560,10 @@
                 const name = String(ev?.target_name || 'unknown target');
                 return `${ts}: ${st} ${name}`;
             });
-            notes.textContent = recent.length
+            const transitions = recent.length
                 ? `Recent transitions: ${recent.join(' | ')}`
                 : 'No persisted anomaly transitions found for the selected period.';
+            notes.textContent = (incompleteMetricCoverage ? 'Some current metric anomaly checks are unavailable; historical transitions do not establish a current all-clear. ' : '') + transitions;
         }
     }
 
@@ -634,7 +637,7 @@
         blockedMAWindow = Number(cfg.blocked_ma_window || blockedMAWindow || 12);
         blockedAnomalyPct = Number(cfg.blocked_anomaly_pct || blockedAnomalyPct || 50);
         const summary = document.getElementById('summary');
-        const tamperedCount = (stats.tampering?.workloads || []).length || Number(stats.tampering?.count || 0);
+        const tampering = UICommon.tamperingStatus(stats.tampering);
         const anomalousTargets = (stats.blocked.targets || []).filter((t) => t.anomalous);
         nextRefreshAt = Date.now() + 300000;
         updateNextRefreshBadge();
@@ -654,7 +657,8 @@
         const stopped = UICommon.stoppedVENStatus(stats.ven_status);
         addSummaryItem(summary, 'Stopped VENs', stopped.display);
         if (!stopped.complete) addSummaryItem(summary, 'Stopped VEN Collection', stopped.description);
-        addSummaryItem(summary, 'Tampered VENs (Deduped)', tamperedCount);
+        addSummaryItem(summary, 'Tampered VENs (Deduped)', tampering.display);
+        if (!tampering.complete) addSummaryItem(summary, 'Tampering Collection', tampering.description);
         if (stats.rules?.enabled) {
             addSummaryItem(summary, 'Policy Rulesets (Today)', Number(stats.rules.rulesets || 0));
             addSummaryItem(summary, 'Policy Rules (Today)', Number(stats.rules.rules || 0));

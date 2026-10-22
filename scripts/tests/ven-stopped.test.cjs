@@ -168,7 +168,7 @@ test('reports include stopped summaries, both trend frequencies and confirmed st
   assert.deepEqual(Array.from(stoppedCharts[1][4][0].points).map(point => point.value), [0.75]);
   items.length = 0;
   app.context.renderAnomalyOutcomes(stats([], false), {}, {}, drilldown({ status: { success: false } }), {}, {});
-  assert.ok(items.some(item => item.label === 'Active Metric Anomalies' && item.value === 0));
+  assert.ok(items.some(item => item.label === 'Active Metric Anomalies' && item.value === '0 confirmed (incomplete coverage)'));
 });
 
 test('executive actions, board risks, narrative and KPI distinguish stopped risks from unavailable collection', async () => {

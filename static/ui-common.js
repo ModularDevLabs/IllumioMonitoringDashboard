@@ -61,6 +61,31 @@
     };
   }
 
+  function tamperingStatus(tampering) {
+    var data = tampering || {};
+    var suppliedCount = Number(data.count);
+    var count = Array.isArray(data.workloads) ? data.workloads.length : (Number.isFinite(suppliedCount) && suppliedCount >= 0 ? suppliedCount : 0);
+    var error = String(data.status?.error || '').trim();
+    var complete = data.status?.success === true && data.partial !== true && !error;
+    var partial = data.partial === true || (!complete && count > 0) || (data.status?.success === true && !!error);
+    return {
+      count: count, complete: complete, partial: partial, error: error,
+      display: complete ? String(count) : (count ? String(count) + ' (incomplete)' : '—'),
+      description: complete ? 'Unique impacted names in the last 24 hours' : (partial ? 'Tampering collection incomplete; known workloads only' : 'Tampering status unavailable')
+    };
+  }
+
+  function pipelineStatus(stats) {
+    var failed = 0;
+    var partial = 0;
+    ['workloads', 'ven_status', 'tampering', 'blocked'].forEach(function (key) {
+      var stage = stats?.[key] || {};
+      if (stage.partial === true || (stage.status?.success === true && String(stage.status?.error || '').trim())) partial++;
+      else if (stage.status?.success !== true) failed++;
+    });
+    return { failed: failed, partial: partial, issues: failed + partial };
+  }
+
   function applyTheme(themeKey, btnId, rerenderFn) {
     var t = localStorage.getItem(themeKey) || 'light';
     setTheme(t, themeKey, btnId, rerenderFn);
@@ -213,6 +238,8 @@
     nextRefreshText: nextRefreshText,
     applyMetricTooltips: applyMetricTooltips,
     stoppedVENStatus: stoppedVENStatus,
+    tamperingStatus: tamperingStatus,
+    pipelineStatus: pipelineStatus,
     applyTheme: applyTheme,
     setTheme: setTheme,
     makeChartZoomable: makeChartZoomable

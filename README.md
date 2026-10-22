@@ -36,11 +36,13 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Unmanaged workload count
 - Tampering monitoring:
   - Unique tampered VEN/workload names with `agent.tampering` events (last 24h)
-  - Event counts in 5m/24h windows are deduped by stable event signature before trend aggregation
-  - Daily tampering chart uses deduped today-so-far workload set input and retains max-only daily behavior
+  - Each five-minute chart sample counts unique workloads with events in the five minutes ending at collection time. Repeated events for a workload count once in that sample; the main card deduplicates across the full rolling 24 hours, rather than adding sample counts.
+  - Uses supported event timestamp filters and asynchronous event collections, with smaller time-window fallback for synchronous PCE responses; there is no application-imposed 50-workload limit.
+  - Daily tampering counts represent unique workloads seen in the configured local calendar day; completed-day reconciliation retrieves that day's events directly.
+  - Partial collection preserves known workloads and their timestamps, shows an amber incomplete indicator, and never creates a false zero or clears an active anomaly. An unavailable collection shows as unavailable.
   - Deduped names for drilldown, with each workload's latest observed tampering event time shown in the browser's local timezone
   - Last-tamper timestamps survive restarts and control expiry from the rolling 24-hour list; they are event times, not collection times
-  - Upgrades retrieve missing timestamps from a tampering-only 24-hour query without resetting traffic history; legacy entries show unavailable until that query succeeds
+  - Upgrades retrieve the rolling 24-hour set using the corrected event filters without resetting traffic or other VEN history. Unverified legacy tampering samples are excluded from charts; daily reconciliation rebuilds daily history and anomaly baselines warm up from verified samples.
   - Switching between 24h and Daily charts does not change the workload list's 24-hour window
   - Tampering trend charts include moving-average overlays and anomaly detection (24h/5m series)
 - Blocked traffic analytics:
@@ -104,7 +106,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 ## Binaries
 
-The `v1.3.0-rc.10` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for Stopped VEN monitoring, charting, history, and alerts, alongside per-workload last-tamper timestamps and the included analysis view persistence, large-CSV import, and extraction recovery improvements.
+The `v1.3.0-rc.11` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for corrected tampering event retrieval, five-minute and rolling 24-hour deduplication, and clear partial-data warnings. Stopped VEN monitoring, per-workload last-tamper timestamps, analysis view persistence, large-CSV import, and extraction recovery improvements remain included.
 
 For source builds, use Go 1.26 or newer; the module pins Go 1.26.8. The rebuild script creates the following compatibility filenames in its selected build directory:
 

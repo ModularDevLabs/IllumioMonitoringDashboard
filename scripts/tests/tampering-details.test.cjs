@@ -110,7 +110,7 @@ test('missing, invalid, inherited and legacy timestamps remain unavailable inste
 
 test('tampering empty state states the last-24-hour window, while other metrics retain existing copy and names', () => {
   const { context, list, caption } = renderer();
-  context.renderDrilldownItems({ metric: 'tampering', items: [] });
+  context.renderDrilldownItems({ metric: 'tampering', items: [], status: { success: true } });
   assert.match(list.children[0].textContent, /last 24 hours as of the latest collection/);
   assert.doesNotMatch(list.children[0].textContent, /latest collection cycle/);
   context.renderDrilldownItems({ metric: 'ven_warning', items: ['warning-01'], item_last_seen: { 'warning-01': '2026-10-15T18:04:05Z' } });
@@ -144,7 +144,7 @@ test('card, tooltip and drilldown explain the fixed list window independently of
   assert.match(index, /Last 24h · Click for impacted workloads and last tamper time/);
   assert.match(shared, /agent\.tampering events in the last 24 hours as of the latest collection/);
   assert.match(details, /Changing the chart range does not change this list\./);
-  assert.match(details, /\$\{d\.count\} workload\(s\) with tampering events in the last 24 hours/);
+  assert.match(details, /\$\{tampering\.display\} workload\(s\) with tampering events in the last 24 hours/);
   assert.match(details, /\.tampering-workload-item \{[^}]*flex-wrap: wrap/);
   assert.match(details, /detail\.className = 'tampering-last-seen text-muted'/);
   for (const script of scriptBodies(details)) {

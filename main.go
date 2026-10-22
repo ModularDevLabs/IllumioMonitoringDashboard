@@ -71,7 +71,8 @@ const stateKeyBlockedHistoryReconcile = "blocked_history_reconcile_v1"
 const blockedHistoryReconcileFileName = "blocked_history_reconcile.json"
 const stateKeyTamperingHistoryReconcile = "tampering_history_reconcile_v1"
 const tamperingHistoryReconcileFileName = "tampering_history_reconcile.json"
-const tamperingReconcileMethodVersion = "daily_unique_workloads_v2"
+const tamperingReconcileMethodVersion = "daily_unique_workloads_v3_timestamp_filters"
+const tamperingCollectionMethodVersion = "timestamp_filters_v1"
 
 const pceTimeFormat = "2006-01-02T15:04:05.000Z"
 const maxHistoryDays = 3650
@@ -205,6 +206,7 @@ type DashboardStats struct {
 		Workloads []string             `json:"workloads,omitempty"`
 		LastSeen  map[string]time.Time `json:"last_seen,omitempty"`
 		Status    FetchStatus          `json:"status"`
+		Partial   bool                 `json:"partial"`
 	} `json:"tampering"`
 	Rules struct {
 		Enabled  bool        `json:"enabled"`
@@ -239,6 +241,7 @@ type DrilldownResponse struct {
 	Count                   int                  `json:"count"`
 	Items                   []string             `json:"items"`
 	Status                  *FetchStatus         `json:"status,omitempty"`
+	Partial                 bool                 `json:"partial,omitempty"`
 	ItemLastSeen            map[string]time.Time `json:"item_last_seen,omitempty"`
 	ItemTargets             []string             `json:"item_targets,omitempty"`
 	Trend                   []TrendPoint         `json:"trend,omitempty"`
@@ -313,6 +316,7 @@ type rollingBucket struct {
 	ModeFullCount      int
 	ModeUnmanagedCount int
 	TamperingCount     int
+	TamperingComplete  *bool
 	TamperingWorkloads map[string]struct{}
 	BlockedByTarget    map[string]int
 }
@@ -321,15 +325,16 @@ type rollingState struct {
 	Initialized bool
 	LastCycle   time.Time
 
-	BaselineCapturedUTC       time.Time
-	BaselineTampering         int
-	BaselineWorkloads         map[string]struct{}
-	TamperingLastSeen         map[string]time.Time
-	TamperingTimestampsReady  bool
-	TamperingBackfillPending  bool
-	BaselineBlocked           map[string]targetBaseline
-	ServiceFilterFingerprints map[string]string
-	ServiceHistoryPending     map[string]string
+	BaselineCapturedUTC        time.Time
+	BaselineTampering          int
+	BaselineWorkloads          map[string]struct{}
+	TamperingLastSeen          map[string]time.Time
+	TamperingTimestampsReady   bool
+	TamperingBackfillPending   bool
+	TamperingCollectionVersion string
+	BaselineBlocked            map[string]targetBaseline
+	ServiceFilterFingerprints  map[string]string
+	ServiceHistoryPending      map[string]string
 
 	Buckets []rollingBucket
 
@@ -354,24 +359,26 @@ type persistedRollingBucket struct {
 	ModeFullCount      int            `json:"mode_full_count"`
 	ModeUnmanagedCount int            `json:"mode_unmanaged_count"`
 	TamperingCount     int            `json:"tampering_count"`
+	TamperingComplete  *bool          `json:"tampering_complete,omitempty"`
 	TamperingWorkloads []string       `json:"tampering_workloads,omitempty"`
 	BlockedByTarget    map[string]int `json:"blocked_by_target,omitempty"`
 }
 
 type persistedRollingState struct {
-	SchemaVersion             int                                `json:"schema_version"`
-	Initialized               bool                               `json:"initialized"`
-	LastCycle                 time.Time                          `json:"last_cycle"`
-	BaselineCapturedUTC       time.Time                          `json:"baseline_captured_utc"`
-	BaselineTampering         int                                `json:"baseline_tampering"`
-	BaselineWorkloads         []string                           `json:"baseline_workloads,omitempty"`
-	TamperingLastSeen         map[string]time.Time               `json:"tampering_last_seen,omitempty"`
-	TamperingTimestampsReady  bool                               `json:"tampering_timestamps_ready,omitempty"`
-	TamperingBackfillPending  bool                               `json:"tampering_backfill_pending,omitempty"`
-	BaselineBlocked           map[string]persistedTargetBaseline `json:"baseline_blocked,omitempty"`
-	ServiceFilterFingerprints map[string]string                  `json:"service_filter_fingerprints,omitempty"`
-	ServiceHistoryPending     map[string]string                  `json:"service_history_pending,omitempty"`
-	Buckets                   []persistedRollingBucket           `json:"buckets,omitempty"`
+	SchemaVersion              int                                `json:"schema_version"`
+	Initialized                bool                               `json:"initialized"`
+	LastCycle                  time.Time                          `json:"last_cycle"`
+	BaselineCapturedUTC        time.Time                          `json:"baseline_captured_utc"`
+	BaselineTampering          int                                `json:"baseline_tampering"`
+	BaselineWorkloads          []string                           `json:"baseline_workloads,omitempty"`
+	TamperingLastSeen          map[string]time.Time               `json:"tampering_last_seen,omitempty"`
+	TamperingTimestampsReady   bool                               `json:"tampering_timestamps_ready,omitempty"`
+	TamperingBackfillPending   bool                               `json:"tampering_backfill_pending,omitempty"`
+	TamperingCollectionVersion string                             `json:"tampering_collection_version,omitempty"`
+	BaselineBlocked            map[string]persistedTargetBaseline `json:"baseline_blocked,omitempty"`
+	ServiceFilterFingerprints  map[string]string                  `json:"service_filter_fingerprints,omitempty"`
+	ServiceHistoryPending      map[string]string                  `json:"service_history_pending,omitempty"`
+	Buckets                    []persistedRollingBucket           `json:"buckets,omitempty"`
 }
 
 type targetBaseline struct {
@@ -510,34 +517,36 @@ type tamperingHistoryReconcileStatus struct {
 }
 
 type venDailySnapshot struct {
-	WarningMax       int  `json:"warning_max"`
-	ErrorMax         int  `json:"error_max"`
-	SuspendedMax     int  `json:"suspended_max,omitempty"`
-	StoppedMax       *int `json:"stopped_max,omitempty"`
-	TamperingMax     int  `json:"tampering_max,omitempty"`
-	RulesetsMax      int  `json:"rulesets_max,omitempty"`
-	RulesMax         int  `json:"rules_max,omitempty"`
-	ModeIdleMax      int  `json:"mode_idle_max,omitempty"`
-	ModeVisMax       int  `json:"mode_vis_max,omitempty"`
-	ModeSelectiveMax int  `json:"mode_selective_max,omitempty"`
-	ModeFullMax      int  `json:"mode_full_max,omitempty"`
-	ModeUnmanagedMax int  `json:"mode_unmanaged_max,omitempty"`
+	WarningMax        int   `json:"warning_max"`
+	ErrorMax          int   `json:"error_max"`
+	SuspendedMax      int   `json:"suspended_max,omitempty"`
+	StoppedMax        *int  `json:"stopped_max,omitempty"`
+	TamperingMax      int   `json:"tampering_max,omitempty"`
+	TamperingComplete *bool `json:"tampering_complete,omitempty"`
+	RulesetsMax       int   `json:"rulesets_max,omitempty"`
+	RulesMax          int   `json:"rules_max,omitempty"`
+	ModeIdleMax       int   `json:"mode_idle_max,omitempty"`
+	ModeVisMax        int   `json:"mode_vis_max,omitempty"`
+	ModeSelectiveMax  int   `json:"mode_selective_max,omitempty"`
+	ModeFullMax       int   `json:"mode_full_max,omitempty"`
+	ModeUnmanagedMax  int   `json:"mode_unmanaged_max,omitempty"`
 }
 
 type venDailyRecord struct {
-	Day              string `json:"day"`
-	WarningMax       int    `json:"warning_max"`
-	ErrorMax         int    `json:"error_max"`
-	SuspendedMax     int    `json:"suspended_max,omitempty"`
-	StoppedMax       *int   `json:"stopped_max,omitempty"`
-	TamperingMax     int    `json:"tampering_max,omitempty"`
-	RulesetsMax      int    `json:"rulesets_max,omitempty"`
-	RulesMax         int    `json:"rules_max,omitempty"`
-	ModeIdleMax      int    `json:"mode_idle_max,omitempty"`
-	ModeVisMax       int    `json:"mode_vis_max,omitempty"`
-	ModeSelectiveMax int    `json:"mode_selective_max,omitempty"`
-	ModeFullMax      int    `json:"mode_full_max,omitempty"`
-	ModeUnmanagedMax int    `json:"mode_unmanaged_max,omitempty"`
+	Day               string `json:"day"`
+	WarningMax        int    `json:"warning_max"`
+	ErrorMax          int    `json:"error_max"`
+	SuspendedMax      int    `json:"suspended_max,omitempty"`
+	StoppedMax        *int   `json:"stopped_max,omitempty"`
+	TamperingMax      int    `json:"tampering_max,omitempty"`
+	TamperingComplete *bool  `json:"tampering_complete,omitempty"`
+	RulesetsMax       int    `json:"rulesets_max,omitempty"`
+	RulesMax          int    `json:"rules_max,omitempty"`
+	ModeIdleMax       int    `json:"mode_idle_max,omitempty"`
+	ModeVisMax        int    `json:"mode_vis_max,omitempty"`
+	ModeSelectiveMax  int    `json:"mode_selective_max,omitempty"`
+	ModeFullMax       int    `json:"mode_full_max,omitempty"`
+	ModeUnmanagedMax  int    `json:"mode_unmanaged_max,omitempty"`
 }
 
 type alertTargetState struct {
@@ -1021,10 +1030,21 @@ func initPendingStats() {
 }
 
 func backgroundCollector() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	runScheduledCollection(ticker.C, runCollectionCycle)
+}
+
+// Collect immediately, then on a steady start-to-start cadence. Running the
+// callback synchronously prevents overlap; the ticker drops excess ticks when
+// a collection overruns instead of building an unbounded catch-up queue.
+func runScheduledCollection(ticks <-chan time.Time, collect func()) {
 	for {
-		runCollectionCycle()
-		log.Println("[COLLECTOR] Waiting 5 minutes.")
-		time.Sleep(5 * time.Minute)
+		collect()
+		log.Println("[COLLECTOR] Waiting for the next 5-minute collection tick.")
+		if _, ok := <-ticks; !ok {
+			return
+		}
 	}
 }
 
@@ -1098,6 +1118,8 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 	resp := DrilldownResponse{Metric: metric, Target: target, Title: title, Count: len(items), Items: items, Trend: trend}
 	if metric == "tampering" {
 		resp.ItemLastSeen = snapshot.Tampering.LastSeen
+		resp.Status = &snapshot.Tampering.Status
+		resp.Partial = snapshot.Tampering.Partial
 	}
 	if metric == "ven_stopped" {
 		resp.Status = &snapshot.VENStatus.StoppedStatus
@@ -1164,7 +1186,11 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.Trend24h = tamperingTrendSeries()
 		resp.TrendDaily = tamperingDailyTrendSeries(configuredHistoryDays())
 		resp.AnomalySource = baselineSource
-		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
+		eval, _ := tamperingAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
+		if !snapshot.Tampering.Status.Success || snapshot.Tampering.Partial || snapshot.Tampering.Status.Error != "" {
+			eval.Anomalous = false
+			eval.Reason = "Tampering collection incomplete; historical trends retained"
+		}
 		resp.Anomalous = eval.Anomalous
 		resp.AnomalyReason = eval.Reason
 		resp.AnomalyWindow = eval.Window
@@ -1371,6 +1397,15 @@ func handleExportDrilldownCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	itemCount := strconv.Itoa(len(items))
+	if metric == "tampering" && (!snapshot.Tampering.Status.Success || snapshot.Tampering.Partial || snapshot.Tampering.Status.Error != "") {
+		itemCount += " (incomplete)"
+		if len(items) == 0 {
+			itemCount = "Unavailable"
+		}
+		if !write("Collection Status", "Incomplete", snapshot.Tampering.Status.Error) {
+			return
+		}
+	}
 	if metric == "ven_stopped" && !snapshot.VENStatus.StoppedStatus.Success {
 		itemCount = "Unavailable"
 		if !write("Collection Status", "Incomplete", snapshot.VENStatus.StoppedStatus.Error) {
@@ -2933,7 +2968,7 @@ func reconcileStoredTamperingHistory(baseURL string, dayKeys []string) (int, int
 			continue
 		}
 		dayEndLocal := dayStartLocal.AddDate(0, 0, 1)
-		_, workloads, err := getTamperingWindow(baseURL, dayStartLocal.UTC(), dayEndLocal.UTC(), true)
+		_, workloads, err := getTamperingWindow(baseURL, dayStartLocal.UTC(), dayEndLocal.UTC().Add(-time.Nanosecond), true)
 		if err != nil {
 			failed++
 			log.Printf("[TAMPER-HISTORY] reconcile failed day=%s: %v", dayKey, err)
@@ -2942,6 +2977,8 @@ func reconcileStoredTamperingHistory(baseURL string, dayKeys []string) (int, int
 		venHistoryMu.Lock()
 		snap := venDaily[dayKey]
 		snap.TamperingMax = len(workloads)
+		complete := true
+		snap.TamperingComplete = &complete
 		venDaily[dayKey] = snap
 		venHistoryMu.Unlock()
 		updated++
@@ -3424,6 +3461,9 @@ func processWebhookAlerts(stats DashboardStats) {
 	}
 
 	for _, m := range anomalyMetricSnapshots() {
+		if m.Metric == "tampering" && (!stats.Tampering.Status.Success || stats.Tampering.Partial || stats.Tampering.Status.Error != "" || !m.Ready) {
+			continue
+		}
 		if m.Metric == "ven_stopped" && (!stats.VENStatus.StoppedStatus.Success || !m.Ready) {
 			// Unknown/partial collection and baseline warmup are not recoveries.
 			continue
@@ -3549,7 +3589,7 @@ type anomalyMetricSnapshot struct {
 	ThresholdPct float64
 	Window       int
 	Source       string
-	Ready        bool // Used by stopped VENs to preserve alerts during baseline warmup.
+	Ready        bool // Preserves stopped VEN/tampering alerts during baseline warmup.
 }
 
 func anomalyMetricSnapshots() []anomalyMetricSnapshot {
@@ -3615,7 +3655,7 @@ func anomalyMetricSnapshots() []anomalyMetricSnapshot {
 	if tamperSource == "daily" {
 		tamperPct = configuredTamperingDailyAnomalyPct()
 	}
-	tamperEval := blockedAnomalyFromConfig(
+	tamperEval, tamperReady := tamperingAnomalyFromConfig(
 		tamperingTrendSeries(),
 		tamperingDailyTrendSeries(keepDays),
 		tamperWindow,
@@ -3630,6 +3670,7 @@ func anomalyMetricSnapshots() []anomalyMetricSnapshot {
 		Metric:       "tampering",
 		EventName:    "tampering_anomaly",
 		Eval:         tamperEval,
+		Ready:        tamperReady,
 		ThresholdPct: tamperPct,
 		Window:       tamperWindow,
 		Source:       tamperSource,
@@ -4452,7 +4493,7 @@ func tamperingTrendSeries() []TrendPoint {
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
 	points := make([]TrendPoint, 0)
 	for _, b := range rollingCache.Buckets {
-		if !b.EndUTC.After(cutoff) {
+		if !b.EndUTC.After(cutoff) || b.TamperingComplete == nil || !*b.TamperingComplete {
 			continue
 		}
 		points = append(points, TrendPoint{
@@ -4574,7 +4615,7 @@ func tamperingDailyTrendSeries(keepDays int) []TrendPoint {
 	points := make([]TrendPoint, 0, len(venDaily))
 	for day, snap := range venDaily {
 		d, err := parseDayKeyInLocation(day, loc)
-		if err != nil || d.Before(cutoff) {
+		if err != nil || d.Before(cutoff) || snap.TamperingComplete == nil || !*snap.TamperingComplete {
 			continue
 		}
 		points = append(points, TrendPoint{
@@ -5209,6 +5250,14 @@ func flatTrendLine(points []TrendPoint, value float64) []TrendPointF {
 // Stopped counts can legitimately remain zero for months. A positive sample
 // above an established zero baseline is actionable, not a disabled comparison.
 func stoppedVENAnomalyFromConfig(series5m, seriesDaily []TrendPoint, window5m int, thresholdPct float64, source string, baselineDays int, minCoveragePct float64) (anomalyEvalResult, bool) {
+	return countAnomalyFromConfig(series5m, seriesDaily, window5m, thresholdPct, source, baselineDays, minCoveragePct, "stopped VEN")
+}
+
+func tamperingAnomalyFromConfig(series5m, seriesDaily []TrendPoint, window5m int, thresholdPct float64, source string, baselineDays int, minCoveragePct float64) (anomalyEvalResult, bool) {
+	return countAnomalyFromConfig(series5m, seriesDaily, window5m, thresholdPct, source, baselineDays, minCoveragePct, "tampered workload")
+}
+
+func countAnomalyFromConfig(series5m, seriesDaily []TrendPoint, window5m int, thresholdPct float64, source string, baselineDays int, minCoveragePct float64, metricName string) (anomalyEvalResult, bool) {
 	eval := blockedAnomalyFromConfig(series5m, seriesDaily, window5m, thresholdPct, source, baselineDays, minCoveragePct)
 	ready := len(series5m) > 0
 	if eval.Source == "daily" {
@@ -5218,7 +5267,7 @@ func stoppedVENAnomalyFromConfig(series5m, seriesDaily []TrendPoint, window5m in
 	}
 	if ready && eval.Baseline == 0 && eval.Latest > 0 {
 		eval.Anomalous = true
-		eval.Reason = "stopped VEN count increased above an established zero baseline"
+		eval.Reason = metricName + " count increased above an established zero baseline"
 	}
 	return eval, ready
 }
@@ -6166,12 +6215,10 @@ func getIllumioStats() DashboardStats {
 	tamperStart, tamperEnd, tamperBackfill := tamperingCollectionWindow(nowUTC, windowStart, windowEnd, baseline)
 	tampering, tErr := getTamperingWindowDetails(baseURL, tamperStart, tamperEnd, tamperBackfill)
 	tampering.FullWindow = tamperBackfill
-	tampering.IntervalStart = windowStart
+	tampering.IntervalStart = nowUTC.Add(-5 * time.Minute)
 	log.Printf("[COLLECTOR] Tampering count=%d workloads=%d backfill=%v err=%v", tampering.EventCount, len(tampering.Names), tamperBackfill, tErr)
-	if tErr != nil && tampering.EventCount == 0 {
+	if tErr != nil {
 		stats.Tampering.Status = FetchStatus{Success: false, Error: "Events: " + tErr.Error()}
-	} else if tErr != nil {
-		stats.Tampering.Status = FetchStatus{Success: true, Error: "Events partial: " + tErr.Error()}
 	} else {
 		stats.Tampering.Status = FetchStatus{Success: true}
 	}
@@ -6266,7 +6313,12 @@ func getIllumioStats() DashboardStats {
 	stats.Tampering.Workloads = rollingWorkloads
 	stats.Tampering.Count = len(rollingWorkloads)
 	stats.Tampering.LastSeen = rollingTamperingLastSeen(nowUTC)
-	tamperingTodayCount := tamperingTodaySoFarUniqueCount(nowUTC)
+	stats.Tampering.Partial = !tampering.Complete && (len(rollingWorkloads) > 0 || tampering.EventCount > 0)
+	var tamperingTodayCount *int
+	if tampering.Complete {
+		count := tamperingTodaySoFarUniqueCount(nowUTC)
+		tamperingTodayCount = &count
+	}
 	updateVENDailyHistory(nowUTC,
 		len(stats.VENStatus.Warning),
 		len(stats.VENStatus.Error),
@@ -6426,10 +6478,15 @@ func collectionWindow(nowUTC time.Time) (time.Time, time.Time, bool) {
 // not reset the shared blocked/VEN history or turn 24h of events into a 5m spike.
 func tamperingCollectionWindow(nowUTC, startUTC, endUTC time.Time, baseline bool) (time.Time, time.Time, bool) {
 	rollingMu.Lock()
-	backfill := baseline || !rollingCache.TamperingTimestampsReady || rollingCache.TamperingBackfillPending || nowUTC.Sub(rollingCache.LastCycle) > 30*time.Minute
+	backfill := baseline || !rollingCache.TamperingTimestampsReady || rollingCache.TamperingBackfillPending || rollingCache.TamperingCollectionVersion != tamperingCollectionMethodVersion || nowUTC.Sub(rollingCache.LastCycle) > 30*time.Minute
 	rollingMu.Unlock()
 	if backfill {
 		return nowUTC.Add(-24 * time.Hour), endUTC, true
+	}
+	// Catch up since the prior cycle while always covering the latest full
+	// five-minute chart interval, including manually requested early refreshes.
+	if latestFiveMinutes := nowUTC.Add(-5 * time.Minute); startUTC.After(latestFiveMinutes) {
+		startUTC = latestFiveMinutes
 	}
 	return startUTC, endUTC, false
 }
@@ -6729,27 +6786,30 @@ func updateRollingAndBuildView(
 	}
 	rollingMu.Lock()
 	defer rollingMu.Unlock()
-	tamperingNames := tamperingNamesSince(tampering.LastSeen, tampering.IntervalStart, nowUTC)
+	intervalStart := nowUTC.Add(-5 * time.Minute)
+	tamperingNames := tamperingNamesSince(tampering.LastSeen, intervalStart, nowUTC)
 
 	if baseline || !rollingCache.Initialized {
 		previousTampering := rollingCache.TamperingLastSeen
 		previousTamperingReady := rollingCache.TamperingTimestampsReady
+		previousTamperingVersion := rollingCache.TamperingCollectionVersion
 		serviceHistoryPending := make(map[string]string, len(rollingCache.ServiceHistoryPending))
 		for name, fingerprint := range rollingCache.ServiceHistoryPending {
 			serviceHistoryPending[name] = fingerprint
 		}
 		rollingCache = rollingState{
-			Initialized:               true,
-			LastCycle:                 nowUTC,
-			BaselineCapturedUTC:       nowUTC,
-			BaselineWorkloads:         map[string]struct{}{},
-			TamperingLastSeen:         previousTampering,
-			TamperingTimestampsReady:  previousTamperingReady,
-			BaselineBlocked:           map[string]targetBaseline{},
-			ServiceFilterFingerprints: serviceFilterFingerprints,
-			ServiceHistoryPending:     serviceHistoryPending,
-			Buckets:                   []rollingBucket{},
-			BlockedFlowLastSeen:       map[string]map[string]blockedFlowSeenState{},
+			Initialized:                true,
+			LastCycle:                  nowUTC,
+			BaselineCapturedUTC:        nowUTC,
+			BaselineWorkloads:          map[string]struct{}{},
+			TamperingLastSeen:          previousTampering,
+			TamperingTimestampsReady:   previousTamperingReady,
+			TamperingCollectionVersion: previousTamperingVersion,
+			BaselineBlocked:            map[string]targetBaseline{},
+			ServiceFilterFingerprints:  serviceFilterFingerprints,
+			ServiceHistoryPending:      serviceHistoryPending,
+			Buckets:                    []rollingBucket{},
+			BlockedFlowLastSeen:        map[string]map[string]blockedFlowSeenState{},
 		}
 		resetBlockedFlowDedupeLocked(targets)
 		if tampering.Complete {
@@ -6793,18 +6853,25 @@ func updateRollingAndBuildView(
 			TamperingWorkloads: map[string]struct{}{},
 			BlockedByTarget:    map[string]int{},
 		}
-		if tampering.Complete {
-			bucket.TamperingCount = len(tamperingNames)
-			for _, n := range tamperingNames {
-				bucket.TamperingWorkloads[n] = struct{}{}
-			}
-		}
 		for k, v := range blockedCurrent {
 			bucket.BlockedByTarget[k] = v
 		}
 		rollingCache.Buckets = append(rollingCache.Buckets, bucket)
 		for name, count := range blockedBaseline {
 			rollingCache.BaselineBlocked[name] = targetBaseline{Count: count, CapturedUTC: nowUTC}
+		}
+	}
+	// Every point represents only (now-5m, now], even on startup or recovery.
+	// Preserve a real zero, but never chart a failed query as zero activity.
+	if len(rollingCache.Buckets) > 0 {
+		bucket := &rollingCache.Buckets[len(rollingCache.Buckets)-1]
+		complete := tampering.Complete
+		bucket.TamperingComplete = &complete
+		if complete {
+			bucket.TamperingCount = len(tamperingNames)
+			for _, name := range tamperingNames {
+				bucket.TamperingWorkloads[name] = struct{}{}
+			}
 		}
 	}
 	updateTamperingLastSeenLocked(nowUTC, tampering)
@@ -6883,7 +6950,7 @@ func formatTamperingTimestamp(at time.Time) string {
 func tamperingNamesSince(lastSeen map[string]time.Time, start, end time.Time) []string {
 	names := make([]string, 0, len(lastSeen))
 	for name, at := range lastSeen {
-		if !at.IsZero() && !at.Before(start) && !at.After(end) {
+		if !at.IsZero() && at.After(start) && !at.After(end) {
 			names = append(names, name)
 		}
 	}
@@ -6894,7 +6961,11 @@ func tamperingNamesSince(lastSeen map[string]time.Time, start, end time.Time) []
 // Caller holds rollingMu. Event timestamps, never polling timestamps, determine
 // a workload's age. Partial/failing reads may add evidence but never erase it.
 func updateTamperingLastSeenLocked(nowUTC time.Time, result tamperingWindowResult) {
-	if rollingCache.TamperingLastSeen == nil {
+	// A successful method migration is authoritative: do not promote names
+	// attributed by the old, incorrectly filtered collector to complete data.
+	// Ordinary recovery under the current method still preserves prior evidence.
+	migrating := result.Complete && result.FullWindow && rollingCache.TamperingCollectionVersion != tamperingCollectionMethodVersion
+	if rollingCache.TamperingLastSeen == nil || migrating {
 		rollingCache.TamperingLastSeen = map[string]time.Time{}
 	}
 	for name, at := range result.LastSeen {
@@ -6912,6 +6983,7 @@ func updateTamperingLastSeenLocked(nowUTC time.Time, result tamperingWindowResul
 	if result.Complete && result.FullWindow {
 		rollingCache.TamperingTimestampsReady = true
 		rollingCache.TamperingBackfillPending = false
+		rollingCache.TamperingCollectionVersion = tamperingCollectionMethodVersion
 	}
 	// Before the legacy backfill succeeds, keep timestamps (including expired
 	// ones) to distinguish known-expired entries from names with no timestamp.
@@ -6987,17 +7059,9 @@ func getTamperingWindowDetails(baseURL string, startUTC, endUTC time.Time, basel
 		events []map[string]interface{}
 		err    error
 	)
-	if baseline {
-		// Startup baseline should mirror a single direct 24h query path first.
-		events, err = fetchTamperingSlice(baseURL, startUTC, endUTC, client)
-		if err != nil {
-			fallback, fallbackErr := fetchTamperingEventsPaged(baseURL, startUTC, endUTC, client)
-			events = append(events, fallback...)
-			err = fallbackErr
-		}
-	} else {
-		events, err = fetchTamperingEventsPaged(baseURL, startUTC, endUTC, client)
-	}
+	// The event retriever handles supported async requests and synchronous
+	// time-slice fallback under one deadline, including startup/backfill.
+	events, err = fetchTamperingEventsPaged(baseURL, startUTC, endUTC, client)
 	if len(events) == 0 && err != nil {
 		return tamperingWindowResult{}, err
 	}
@@ -7055,190 +7119,6 @@ func filterTamperingEventsInWindow(events []map[string]interface{}, startUTC, en
 	return filtered
 }
 
-func fetchTamperingEventsPaged(baseURL string, startUTC, endUTC time.Time, client *http.Client) ([]map[string]interface{}, error) {
-	const pageSize = 1000
-	all := make([]map[string]interface{}, 0, pageSize)
-	started := time.Now()
-	lastPageSig := ""
-	hadSuccessfulPage := false
-
-	for page := 0; ; page++ {
-		if time.Since(started) > tamperingQueryMaxDuration {
-			return all, fmt.Errorf("partial tampering result: timed out after %d pages", page)
-		}
-		q := url.Values{}
-		q.Set("event_type", "agent.tampering")
-		q.Set("start_date", startUTC.Format(pceTimeFormat))
-		q.Set("end_date", endUTC.Format(pceTimeFormat))
-		q.Set("max_results", strconv.Itoa(pageSize))
-		q.Set("skip", strconv.Itoa(page*pageSize))
-		batch, err := fetchCollectionPageWithClient(client, baseURL+"/events?"+q.Encode())
-		if err != nil {
-			q2 := url.Values{}
-			q2.Set("event_type", "agent.tampering")
-			q2.Set("start_time", startUTC.Format(pceTimeFormat))
-			q2.Set("end_time", endUTC.Format(pceTimeFormat))
-			q2.Set("max_results", strconv.Itoa(pageSize))
-			q2.Set("skip", strconv.Itoa(page*pageSize))
-			batch, err = fetchCollectionPageWithClient(client, baseURL+"/events?"+q2.Encode())
-			if err != nil {
-				if page == 0 {
-					return fetchTamperingEventsBySlices(baseURL, startUTC, endUTC, time.Hour, client)
-				}
-				return all, fmt.Errorf("partial tampering result: page %d: %w", page+1, err)
-			}
-		}
-		hadSuccessfulPage = true
-		if len(batch) == 0 {
-			if page == 0 {
-				// Empty first page is a valid empty result, not an error needing expensive fallback.
-				return all, nil
-			}
-			break
-		}
-
-		pageSig := tamperingPageSignature(batch)
-		if page > 0 && pageSig != "" && pageSig == lastPageSig {
-			return all, fmt.Errorf("partial tampering result: PCE repeated page %d", page+1)
-		}
-		lastPageSig = pageSig
-
-		inWindow := 0
-		oldest := time.Now().UTC()
-		oldestSet := false
-		for _, evt := range batch {
-			ts, ok := eventTimestampUTC(evt)
-			if ok {
-				if !oldestSet || ts.Before(oldest) {
-					oldest = ts
-					oldestSet = true
-				}
-				if ts.Before(startUTC) || ts.After(endUTC) {
-					continue
-				}
-			}
-			inWindow++
-			all = append(all, evt)
-		}
-		if inWindow == 0 && oldestSet && oldest.Before(startUTC) {
-			break
-		}
-		if len(batch) < pageSize {
-			break
-		}
-	}
-	if len(all) == 0 {
-		if hadSuccessfulPage {
-			return all, nil
-		}
-		return fetchTamperingEventsBySlices(baseURL, startUTC, endUTC, time.Hour, client)
-	}
-	return all, nil
-}
-
-func fetchTamperingEventsBySlices(baseURL string, startUTC, endUTC time.Time, step time.Duration, client *http.Client) ([]map[string]interface{}, error) {
-	if step <= 0 {
-		step = time.Hour
-	}
-	all := make([]map[string]interface{}, 0, 2000)
-	seen := map[string]struct{}{}
-	for cur := startUTC; cur.Before(endUTC); cur = cur.Add(step) {
-		next := cur.Add(step)
-		if next.After(endUTC) {
-			next = endUTC
-		}
-		batch, err := fetchTamperingSlice(baseURL, cur, next, client)
-		for _, evt := range batch {
-			sig := tamperingEventSignature(evt)
-			if _, ok := seen[sig]; ok {
-				continue
-			}
-			seen[sig] = struct{}{}
-			all = append(all, evt)
-		}
-		if err != nil {
-			return all, fmt.Errorf("partial tampering slice result: %w", err)
-		}
-	}
-	return all, nil
-}
-
-func fetchTamperingSlice(baseURL string, startUTC, endUTC time.Time, client *http.Client) ([]map[string]interface{}, error) {
-	const pageSize = 1000
-	fetchPaged := func(useTimeParams bool) ([]map[string]interface{}, error) {
-		all := make([]map[string]interface{}, 0, pageSize)
-		seen := make(map[string]struct{}, pageSize)
-		started := time.Now()
-		lastPageSig := ""
-		stagnantPages := 0
-		for page := 0; ; page++ {
-			if time.Since(started) > tamperingQueryMaxDuration {
-				if len(all) == 0 {
-					return nil, fmt.Errorf("tampering slice timed out after %d pages", page)
-				}
-				return all, fmt.Errorf("partial tampering slice: timed out after %d pages", page)
-			}
-			q := url.Values{}
-			q.Set("event_type", "agent.tampering")
-			if useTimeParams {
-				q.Set("start_time", startUTC.Format(pceTimeFormat))
-				q.Set("end_time", endUTC.Format(pceTimeFormat))
-			} else {
-				q.Set("start_date", startUTC.Format(pceTimeFormat))
-				q.Set("end_date", endUTC.Format(pceTimeFormat))
-			}
-			q.Set("max_results", strconv.Itoa(pageSize))
-			q.Set("skip", strconv.Itoa(page*pageSize))
-			batch, err := fetchCollectionPageWithClient(client, baseURL+"/events?"+q.Encode())
-			if err != nil {
-				if page == 0 {
-					return nil, err
-				}
-				return all, fmt.Errorf("partial tampering slice: page %d: %w", page+1, err)
-			}
-			if len(batch) == 0 {
-				break
-			}
-			pageSig := tamperingPageSignature(batch)
-			if page > 0 && pageSig != "" && pageSig == lastPageSig {
-				return all, fmt.Errorf("partial tampering slice: PCE repeated page %d", page+1)
-			}
-			lastPageSig = pageSig
-			added := 0
-			for _, evt := range batch {
-				sig := tamperingEventSignature(evt)
-				if strings.TrimSpace(sig) != "" {
-					if _, ok := seen[sig]; ok {
-						continue
-					}
-					seen[sig] = struct{}{}
-				}
-				all = append(all, evt)
-				added++
-			}
-			if added == 0 {
-				stagnantPages++
-				if stagnantPages >= 3 {
-					return all, fmt.Errorf("partial tampering slice: PCE pagination stopped advancing")
-				}
-			} else {
-				stagnantPages = 0
-			}
-			if len(batch) < pageSize {
-				break
-			}
-		}
-		return all, nil
-	}
-
-	batch, err := fetchPaged(false)
-	if err == nil {
-		return batch, nil
-	}
-	fallback, fallbackErr := fetchPaged(true)
-	return append(batch, fallback...), fallbackErr
-}
-
 func tamperingEventSignature(event map[string]interface{}) string {
 	return strings.Join([]string{
 		mapString(event, "href"),
@@ -7246,17 +7126,6 @@ func tamperingEventSignature(event map[string]interface{}) string {
 		findTimestampString(event),
 		extractEventWorkloadName(event),
 	}, "|")
-}
-
-func tamperingPageSignature(batch []map[string]interface{}) string {
-	if len(batch) == 0 {
-		return ""
-	}
-	first := batch[0]
-	last := batch[len(batch)-1]
-	f := tamperingEventSignature(first)
-	l := tamperingEventSignature(last)
-	return f + "->" + l
 }
 
 func mapString(m map[string]interface{}, key string) string {
@@ -10975,36 +10844,38 @@ func statusMessage(status map[string]interface{}) string {
 }
 
 func extractEventWorkloadName(event map[string]interface{}) string {
-	for _, key := range []string{"workload", "affected_workload", "src_workload", "dst_workload"} {
-		if nested, ok := event[key].(map[string]interface{}); ok {
-			if name := mapName(nested); name != "" {
-				return name
-			}
-		}
-	}
-	if name := findNameRecursive(event); name != "" {
+	// Events can also contain user, label and service names. Only explicit
+	// workload/VEN objects identify the affected endpoint; map iteration order
+	// must never decide which object becomes a deduplication key.
+	if name := findEventWorkloadName(event); name != "" {
 		return name
 	}
-	if name := mapName(event); name != "" {
-		return name
-	}
-	return ""
+	return mapName(event) // Legacy flattened event payloads.
 }
 
-func findNameRecursive(v interface{}) string {
+func findEventWorkloadName(v interface{}) string {
 	switch t := v.(type) {
 	case map[string]interface{}:
-		if n := mapName(t); n != "" {
-			return n
+		for _, key := range []string{"workload", "affected_workload", "agent", "ven", "src_workload", "dst_workload"} {
+			if nested, ok := t[key].(map[string]interface{}); ok {
+				if name := mapName(nested); name != "" {
+					return name
+				}
+			}
 		}
-		for _, val := range t {
-			if n := findNameRecursive(val); n != "" {
+		keys := make([]string, 0, len(t))
+		for key := range t {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if n := findEventWorkloadName(t[key]); n != "" {
 				return n
 			}
 		}
 	case []interface{}:
 		for _, val := range t {
-			if n := findNameRecursive(val); n != "" {
+			if n := findEventWorkloadName(val); n != "" {
 				return n
 			}
 		}
@@ -12402,18 +12273,19 @@ func loadVENHistory() {
 			continue
 		}
 		venDaily[day] = venDailySnapshot{
-			WarningMax:       rec.WarningMax,
-			ErrorMax:         rec.ErrorMax,
-			SuspendedMax:     rec.SuspendedMax,
-			StoppedMax:       rec.StoppedMax,
-			TamperingMax:     rec.TamperingMax,
-			RulesetsMax:      rec.RulesetsMax,
-			RulesMax:         rec.RulesMax,
-			ModeIdleMax:      rec.ModeIdleMax,
-			ModeVisMax:       rec.ModeVisMax,
-			ModeSelectiveMax: rec.ModeSelectiveMax,
-			ModeFullMax:      rec.ModeFullMax,
-			ModeUnmanagedMax: rec.ModeUnmanagedMax,
+			WarningMax:        rec.WarningMax,
+			ErrorMax:          rec.ErrorMax,
+			SuspendedMax:      rec.SuspendedMax,
+			StoppedMax:        rec.StoppedMax,
+			TamperingMax:      rec.TamperingMax,
+			TamperingComplete: rec.TamperingComplete,
+			RulesetsMax:       rec.RulesetsMax,
+			RulesMax:          rec.RulesMax,
+			ModeIdleMax:       rec.ModeIdleMax,
+			ModeVisMax:        rec.ModeVisMax,
+			ModeSelectiveMax:  rec.ModeSelectiveMax,
+			ModeFullMax:       rec.ModeFullMax,
+			ModeUnmanagedMax:  rec.ModeUnmanagedMax,
 		}
 	}
 }
@@ -12452,19 +12324,20 @@ func loadRollingState() {
 	}
 
 	loaded := rollingState{
-		Initialized:               persisted.Initialized,
-		LastCycle:                 persisted.LastCycle.UTC(),
-		BaselineCapturedUTC:       persisted.BaselineCapturedUTC.UTC(),
-		BaselineTampering:         persisted.BaselineTampering,
-		BaselineWorkloads:         map[string]struct{}{},
-		TamperingLastSeen:         map[string]time.Time{},
-		TamperingTimestampsReady:  persisted.TamperingTimestampsReady,
-		TamperingBackfillPending:  persisted.TamperingBackfillPending,
-		BaselineBlocked:           map[string]targetBaseline{},
-		ServiceFilterFingerprints: map[string]string{},
-		ServiceHistoryPending:     map[string]string{},
-		Buckets:                   make([]rollingBucket, 0, len(persisted.Buckets)),
-		BlockedFlowLastSeen:       map[string]map[string]blockedFlowSeenState{},
+		Initialized:                persisted.Initialized,
+		LastCycle:                  persisted.LastCycle.UTC(),
+		BaselineCapturedUTC:        persisted.BaselineCapturedUTC.UTC(),
+		BaselineTampering:          persisted.BaselineTampering,
+		BaselineWorkloads:          map[string]struct{}{},
+		TamperingLastSeen:          map[string]time.Time{},
+		TamperingTimestampsReady:   persisted.TamperingTimestampsReady,
+		TamperingBackfillPending:   persisted.TamperingBackfillPending,
+		TamperingCollectionVersion: persisted.TamperingCollectionVersion,
+		BaselineBlocked:            map[string]targetBaseline{},
+		ServiceFilterFingerprints:  map[string]string{},
+		ServiceHistoryPending:      map[string]string{},
+		Buckets:                    make([]rollingBucket, 0, len(persisted.Buckets)),
+		BlockedFlowLastSeen:        map[string]map[string]blockedFlowSeenState{},
 	}
 	for _, n := range persisted.BaselineWorkloads {
 		n = strings.TrimSpace(n)
@@ -12517,6 +12390,7 @@ func loadRollingState() {
 			ModeFullCount:      b.ModeFullCount,
 			ModeUnmanagedCount: b.ModeUnmanagedCount,
 			TamperingCount:     b.TamperingCount,
+			TamperingComplete:  b.TamperingComplete,
 			TamperingWorkloads: map[string]struct{}{},
 			BlockedByTarget:    map[string]int{},
 		}
@@ -12555,19 +12429,20 @@ func saveRollingState() {
 	defer rollingSaveMu.Unlock()
 	rollingMu.Lock()
 	persisted := persistedRollingState{
-		SchemaVersion:             rollingStateSchemaVersion,
-		Initialized:               rollingCache.Initialized,
-		LastCycle:                 rollingCache.LastCycle.UTC(),
-		BaselineCapturedUTC:       rollingCache.BaselineCapturedUTC.UTC(),
-		BaselineTampering:         rollingCache.BaselineTampering,
-		BaselineWorkloads:         make([]string, 0, len(rollingCache.BaselineWorkloads)),
-		TamperingLastSeen:         make(map[string]time.Time, len(rollingCache.TamperingLastSeen)),
-		TamperingTimestampsReady:  rollingCache.TamperingTimestampsReady,
-		TamperingBackfillPending:  rollingCache.TamperingBackfillPending,
-		BaselineBlocked:           make(map[string]persistedTargetBaseline, len(rollingCache.BaselineBlocked)),
-		ServiceFilterFingerprints: make(map[string]string, len(rollingCache.ServiceFilterFingerprints)),
-		ServiceHistoryPending:     make(map[string]string, len(rollingCache.ServiceHistoryPending)),
-		Buckets:                   make([]persistedRollingBucket, 0, len(rollingCache.Buckets)),
+		SchemaVersion:              rollingStateSchemaVersion,
+		Initialized:                rollingCache.Initialized,
+		LastCycle:                  rollingCache.LastCycle.UTC(),
+		BaselineCapturedUTC:        rollingCache.BaselineCapturedUTC.UTC(),
+		BaselineTampering:          rollingCache.BaselineTampering,
+		BaselineWorkloads:          make([]string, 0, len(rollingCache.BaselineWorkloads)),
+		TamperingLastSeen:          make(map[string]time.Time, len(rollingCache.TamperingLastSeen)),
+		TamperingTimestampsReady:   rollingCache.TamperingTimestampsReady,
+		TamperingBackfillPending:   rollingCache.TamperingBackfillPending,
+		TamperingCollectionVersion: rollingCache.TamperingCollectionVersion,
+		BaselineBlocked:            make(map[string]persistedTargetBaseline, len(rollingCache.BaselineBlocked)),
+		ServiceFilterFingerprints:  make(map[string]string, len(rollingCache.ServiceFilterFingerprints)),
+		ServiceHistoryPending:      make(map[string]string, len(rollingCache.ServiceHistoryPending)),
+		Buckets:                    make([]persistedRollingBucket, 0, len(rollingCache.Buckets)),
 	}
 	for n := range rollingCache.BaselineWorkloads {
 		if strings.TrimSpace(n) == "" {
@@ -12619,6 +12494,7 @@ func saveRollingState() {
 			ModeFullCount:      b.ModeFullCount,
 			ModeUnmanagedCount: b.ModeUnmanagedCount,
 			TamperingCount:     b.TamperingCount,
+			TamperingComplete:  b.TamperingComplete,
 			TamperingWorkloads: make([]string, 0, len(b.TamperingWorkloads)),
 			BlockedByTarget:    make(map[string]int, len(b.BlockedByTarget)),
 		}
@@ -13112,19 +12988,20 @@ func saveVENHistory() {
 	records := make([]venDailyRecord, 0, len(venDaily))
 	for day, snap := range venDaily {
 		records = append(records, venDailyRecord{
-			Day:              day,
-			WarningMax:       snap.WarningMax,
-			ErrorMax:         snap.ErrorMax,
-			SuspendedMax:     snap.SuspendedMax,
-			StoppedMax:       snap.StoppedMax,
-			TamperingMax:     snap.TamperingMax,
-			RulesetsMax:      snap.RulesetsMax,
-			RulesMax:         snap.RulesMax,
-			ModeIdleMax:      snap.ModeIdleMax,
-			ModeVisMax:       snap.ModeVisMax,
-			ModeSelectiveMax: snap.ModeSelectiveMax,
-			ModeFullMax:      snap.ModeFullMax,
-			ModeUnmanagedMax: snap.ModeUnmanagedMax,
+			Day:               day,
+			WarningMax:        snap.WarningMax,
+			ErrorMax:          snap.ErrorMax,
+			SuspendedMax:      snap.SuspendedMax,
+			StoppedMax:        snap.StoppedMax,
+			TamperingMax:      snap.TamperingMax,
+			TamperingComplete: snap.TamperingComplete,
+			RulesetsMax:       snap.RulesetsMax,
+			RulesMax:          snap.RulesMax,
+			ModeIdleMax:       snap.ModeIdleMax,
+			ModeVisMax:        snap.ModeVisMax,
+			ModeSelectiveMax:  snap.ModeSelectiveMax,
+			ModeFullMax:       snap.ModeFullMax,
+			ModeUnmanagedMax:  snap.ModeUnmanagedMax,
 		})
 	}
 	venHistoryMu.Unlock()
@@ -13147,7 +13024,7 @@ func updateVENDailyHistory(
 	errorCount int,
 	suspendedCount int,
 	stoppedCount *int,
-	tamperingCount int,
+	tamperingCount *int,
 	modeIdle int,
 	modeVisibility int,
 	modeSelective int,
@@ -13176,8 +13053,13 @@ func updateVENDailyHistory(
 		prev.StoppedMax = &count
 		changed = true
 	}
-	if tamperingCount != prev.TamperingMax {
-		prev.TamperingMax = tamperingCount
+	tamperingComplete := tamperingCount != nil
+	if prev.TamperingComplete == nil || *prev.TamperingComplete != tamperingComplete {
+		prev.TamperingComplete = &tamperingComplete
+		changed = true
+	}
+	if tamperingCount != nil && *tamperingCount != prev.TamperingMax {
+		prev.TamperingMax = *tamperingCount
 		changed = true
 	}
 	if modeIdle > prev.ModeIdleMax {
@@ -13379,7 +13261,17 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 	if tamperedCount == 0 {
 		tamperedCount = snapshot.Tampering.Count
 	}
-	if !writeRow("Tampered VENs (Deduped)", strconv.Itoa(tamperedCount)) {
+	tamperedDisplay := strconv.Itoa(tamperedCount)
+	if !snapshot.Tampering.Status.Success || snapshot.Tampering.Partial || snapshot.Tampering.Status.Error != "" {
+		tamperedDisplay += " (incomplete)"
+		if tamperedCount == 0 {
+			tamperedDisplay = "Unavailable"
+		}
+		if !writeRow("Tampering Collection Status", "Incomplete", snapshot.Tampering.Status.Error) {
+			return
+		}
+	}
+	if !writeRow("Tampered VENs (Deduped)", tamperedDisplay) {
 		return
 	}
 	if snapshot.Rules.Enabled {

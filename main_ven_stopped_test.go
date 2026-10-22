@@ -271,7 +271,7 @@ func testStoppedVENPersistence(t *testing.T) {
 func testStoppedVENDailyMax(t *testing.T) {
 	now := time.Now().UTC()
 	for _, sample := range []*int{stoppedInt(2), stoppedInt(0), nil, stoppedInt(5), stoppedInt(1)} {
-		updateVENDailyHistory(now, 4, 3, 2, sample, 1, 0, 0, 0, 0, 0)
+		updateVENDailyHistory(now, 4, 3, 2, sample, stoppedInt(1), 0, 0, 0, 0, 0)
 	}
 	snapshot := venDaily[now.Format("2006-01-02")]
 	if snapshot.StoppedMax == nil || *snapshot.StoppedMax != 5 {
@@ -281,11 +281,11 @@ func testStoppedVENDailyMax(t *testing.T) {
 		t.Fatal("stopped daily sampling changed other VEN daily maxima")
 	}
 	yesterday := now.AddDate(0, 0, -1)
-	updateVENDailyHistory(yesterday, 1, 0, 0, nil, 0, 0, 0, 0, 0, 0)
+	updateVENDailyHistory(yesterday, 1, 0, 0, nil, stoppedInt(0), 0, 0, 0, 0, 0)
 	if venDaily[yesterday.Format("2006-01-02")].StoppedMax != nil {
 		t.Fatal("failed-only day acquired an artificial zero baseline")
 	}
-	updateVENDailyHistory(yesterday, 1, 0, 0, stoppedInt(0), 0, 0, 0, 0, 0, 0)
+	updateVENDailyHistory(yesterday, 1, 0, 0, stoppedInt(0), stoppedInt(0), 0, 0, 0, 0, 0)
 	if got := venDaily[yesterday.Format("2006-01-02")].StoppedMax; got == nil || *got != 0 {
 		t.Fatal("genuine zero sample was not recorded")
 	}
@@ -387,7 +387,7 @@ func testStoppedVENAPIAndExports(t *testing.T) {
 	} {
 		recorder := httptest.NewRecorder()
 		endpoint.handler(recorder, httptest.NewRequest(http.MethodGet, endpoint.path, nil))
-		if !strings.Contains(recorder.Body.String(), endpoint.zeroRow) || strings.Contains(recorder.Body.String(), "Unavailable") {
+		if !strings.Contains(recorder.Body.String(), endpoint.zeroRow) || strings.Contains(recorder.Body.String(), "Stopped VENs,Unavailable") || strings.Contains(recorder.Body.String(), "Item Count,Unavailable") {
 			t.Fatalf("genuine zero exported as unavailable: %s", recorder.Body.String())
 		}
 	}

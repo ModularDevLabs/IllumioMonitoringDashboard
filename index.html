@@ -154,6 +154,12 @@
         .mode-badge { font-size: 0.77rem; padding: 5px 10px; border-radius: 12px; letter-spacing: 0.01em; }
         .metric-link { cursor: pointer; }
         .metric-link:hover { background: var(--tile-hover); }
+        #tamp.tampering-incomplete {
+            font-size: 1.1rem;
+            line-height: 1.5;
+            overflow-wrap: normal;
+            word-break: normal;
+        }
         .blocked-summary {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -386,8 +392,8 @@
             <div class="col">
                 <div class="card p-3 text-center metric-link" data-metric="tampering">
                     <h6>Tampered VENs</h6>
-                    <h2 class="text-dark" id="tamp">0</h2>
-                    <div class="small text-muted">Last 24h · Click for impacted workloads and last tamper time</div>
+                    <h2 class="text-dark" id="tamp">—</h2>
+                    <div id="tamp-list" class="small text-muted">Last 24h · Click for impacted workloads and last tamper time</div>
                 </div>
             </div>
         </div>
@@ -465,15 +471,18 @@
             });
         }
 
-        function updateStatusIndicator(id, statusObj, warningText = '') {
+        function updateStatusIndicator(id, statusObj, warningText = '', partial = false) {
             const el = document.getElementById(id);
             if (!el) return;
             const dot = el.querySelector('.status-dot');
             const warn = el.querySelector('.status-warn');
-            if (statusObj && statusObj.success) {
-                dot.className = 'status-dot dot-green';
+            warningText = warningText || (statusObj?.success ? statusObj.error || '' : '');
+            const incomplete = partial || (statusObj?.success && !!warningText);
+            if ((statusObj && statusObj.success) || incomplete) {
+                dot.className = incomplete ? 'status-dot dot-yellow' : 'status-dot dot-green';
                 el.classList.remove('text-danger');
-                if (warningText) {
+                if (incomplete) {
+                    warningText = warningText || statusObj?.error || 'Collection incomplete';
                     if (warn) {
                         warn.classList.remove('d-none');
                         warn.title = warningText;
@@ -514,6 +523,16 @@
             count.classList.toggle('text-secondary', stopped.count === 0);
             detail.innerText = stopped.complete ? 'Click to view workload names' : stopped.description;
             detail.title = stopped.error;
+        }
+
+        function renderTamperingStatus(data) {
+            const state = UICommon.tamperingStatus(data);
+            const count = document.getElementById('tamp');
+            count.innerText = state.display;
+            count.classList.toggle('tampering-incomplete', !state.complete && state.count > 0);
+            const detail = document.getElementById('tamp-list');
+            detail.innerText = state.complete ? 'Last 24h · Click for impacted workloads and last tamper time' : `${state.description}. Click to inspect available results.`;
+            detail.title = state.error;
         }
 
         function escHTML(v) {
@@ -601,9 +620,7 @@
         function updateConfidenceBadge(stats) {
             const pill = document.getElementById('confidence-pill');
             if (!pill) return;
-            const statuses = [stats?.workloads?.status, stats?.ven_status?.status, stats?.tampering?.status, stats?.blocked?.status];
-            const failed = statuses.filter((s) => !(s && s.success)).length;
-            const partial = stats?.blocked?.partial ? 1 : 0;
+            const { failed, partial } = UICommon.pipelineStatus(stats);
             const tsMs = UICommon.parseTS(stats?.timestamp);
             const staleSecs = tsMs ? Math.max(0, Math.floor((Date.now() - tsMs) / 1000)) : 999999;
             let label = 'LOW';
@@ -634,8 +651,8 @@
 
                 updateStatusIndicator('stat-workloads', d.workloads.status, d.workloads.status?.success ? (d.workloads.status?.error || '') : '');
                 updateStatusIndicator('stat-ven', d.ven_status.status);
-                updateStatusIndicator('stat-tampering', d.tampering.status, d.tampering.status?.success ? (d.tampering.status?.error || '') : '');
-                updateStatusIndicator('stat-blocked', d.blocked.status, d.blocked.partial ? (d.blocked.warning || d.blocked.status.error || 'Blocked traffic partially successful') : '');
+                updateStatusIndicator('stat-tampering', d.tampering.status, d.tampering.status?.error || '', d.tampering.partial === true);
+                updateStatusIndicator('stat-blocked', d.blocked.status, d.blocked.partial ? (d.blocked.warning || d.blocked.status.error || 'Blocked traffic partially successful') : '', d.blocked.partial === true);
 
                 document.getElementById('w-total').innerText = d.workloads.total || 0;
                 document.getElementById('m-idle').innerText = d.workloads.enforcement_modes?.idle || 0;
@@ -651,7 +668,7 @@
                 renderStoppedVENStatus(d.ven_status);
                 document.getElementById('v-suspended').innerText = d.ven_status.suspended?.length || 0;
                 document.getElementById('v-suspended-list').innerText = 'Click to view workload names';
-                document.getElementById('tamp').innerText = d.tampering.workloads?.length || d.tampering.count || 0;
+                renderTamperingStatus(d.tampering);
                 const policyRow = document.getElementById('policy-overview-row');
                 const policyEnabled = d.rules?.enabled === true;
                 if (policyRow) {

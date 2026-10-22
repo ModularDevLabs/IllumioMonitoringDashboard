@@ -1,5 +1,20 @@
 # Release Notes
 
+## v1.3.0-rc.11 - 2026-10-22
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; this does not replace the stable release. All RC10 improvements remain included.
+
+### Tampering collection and reporting
+
+- Replaced unsupported event offset pagination with the PCE's documented timestamp filters and asynchronous collection workflow. Synchronous fallback splits saturated time windows, preserves retrieved evidence, and explicitly reports cases where completeness cannot be established.
+- Five-minute tampering samples count distinct affected workloads in the latest five minutes. The dashboard card and workload list deduplicate across the rolling 24 hours, retaining each workload's latest event timestamp and expiring it by event time.
+- Partial collection now shows an amber pipeline indicator and incomplete count across the dashboard, drilldown, reports, executive view, and CSV exports. Failures retain known evidence without generating false zero samples or resolving active anomalies.
+- Upgrades recheck the rolling tampering window and reconcile daily history with the corrected filters. Unverified legacy tampering samples are not reused as complete anomaly baselines; unrelated monitoring history remains unchanged.
+- Event workload-name extraction no longer accidentally chooses an unrelated user, label, or service name based on map traversal order.
+- Background monitoring now uses a five-minute start-to-start cadence instead of adding a five-minute wait after each collection. Slow cycles remain serialized; recovery retrieves missed events for the 24-hour aggregate without inventing chart samples for the gap.
+
+Versioned binaries are provided for Windows amd64, Linux amd64, Intel macOS, and Apple Silicon macOS. The executable name and in-app version identify `v1.3.0-rc.11`. Validation includes large synthetic event collections, end-to-end five-minute/24-hour deduplication checks, the Go test suite and race/static checks, 89 frontend tests, and browser checks. Live customer-PCE validation remains part of release-candidate testing.
+
 ## v1.3.0-rc.10 - 2026-10-22
 
 Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; this does not replace the stable release.

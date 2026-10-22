@@ -231,6 +231,7 @@
         let trendBaselineCaptured = null;
         let currentMetric = '';
         let stoppedDataAvailable = false;
+        let tamperingDataAvailable = false;
         let trend24h = [];
         let trendDaily = [];
         let trendDaily5mCaptured = [];
@@ -361,7 +362,7 @@
             const controls = document.getElementById('trend-controls');
             const range = document.getElementById('range-controls');
             const forceZeroChart = (isVENHealthMetric(currentMetric) && (currentMetric !== 'ven_stopped' || stoppedDataAvailable)) ||
-                currentMetric === 'tampering' ||
+                (currentMetric === 'tampering' && tamperingDataAvailable) ||
                 String(currentMetric || '').startsWith('mode_') ||
                 currentMetric === 'blocked_target';
             if ((!points || points.length === 0) && currentMetric === 'blocked_target' && trendBaseline > 0) {
@@ -769,7 +770,9 @@
                 const li = document.createElement('li');
                 li.className = 'list-group-item text-muted';
                 li.innerText = tampering
-                    ? 'No workloads with tampering events in the last 24 hours as of the latest collection.'
+                    ? (data.status?.success === true && !data.partial && !data.status?.error
+                        ? 'No workloads with tampering events in the last 24 hours as of the latest collection.'
+                        : 'Tampering collection is incomplete or unavailable. No known workloads were returned; this does not confirm zero tampering events.')
                     : (data.metric === 'ven_stopped' && data.status?.success !== true
                         ? 'Stopped VEN status is unavailable. A successful collection is needed before reporting zero stopped VENs.'
                         : 'No results for this metric in the latest collection cycle.');
@@ -829,6 +832,7 @@
             }
             const d = await r.json();
             stoppedDataAvailable = d.metric === 'ven_stopped' && d.status?.success === true;
+            tamperingDataAvailable = d.metric === 'tampering' && UICommon.tamperingStatus({ workloads: d.items, count: d.count, status: d.status, partial: d.partial }).complete;
             try {
                 const s = await fetch('/api/stats?ts=' + Date.now(), { cache: 'no-store' });
                 if (s.ok) {
@@ -930,10 +934,17 @@
                 blockedAnomalySource = String(d.anomaly_source || '5m').toLowerCase() === 'daily' ? 'daily' : '5m';
                 trendMode = 'raw';
                 trendPoints = trend24h;
+                if (!tamperingDataAvailable && !trend24h.length && trendDaily.length) {
+                    trendMode = 'sum';
+                    trendPoints = trendDaily;
+                }
                 const anomalyText = d.anomaly_reason
                     ? ` | Anomaly: ${d.anomaly_reason}`
                     : (d.anomalous ? ' | Anomaly: triggered' : '');
-                document.getElementById('count').innerText = `${d.count} workload(s) with tampering events in the last 24 hours${anomalyText}`;
+                const tampering = UICommon.tamperingStatus({ workloads: d.items, count: d.count, status: d.status, partial: d.partial });
+                document.getElementById('count').innerText = tampering.complete
+                    ? `${tampering.display} workload(s) with tampering events in the last 24 hours${anomalyText}`
+                    : `${tampering.display} · ${tampering.description}${tampering.error ? `: ${tampering.error}` : ''}. Historical trends and alert context remain visible; this is not a current all-clear.${anomalyText}`;
                 document.getElementById('trend-raw').innerText = '24h (5m)';
                 document.getElementById('trend-sum').innerText = 'Daily';
                 renderTrend(trendPoints, d.title, { hideList: false, showControls: true });

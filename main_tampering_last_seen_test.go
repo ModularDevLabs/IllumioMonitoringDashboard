@@ -117,7 +117,8 @@ func TestTamperingFailurePreservesEvidenceAndRequestsRecoveryBackfill(t *testing
 	isolateTamperingState(t)
 	now := time.Date(2026, 10, 15, 18, 0, 0, 0, time.UTC)
 	rollingCache = rollingState{Initialized: true, LastCycle: now.Add(-5 * time.Minute), TamperingTimestampsReady: true,
-		TamperingLastSeen: map[string]time.Time{"known": now.Add(-time.Hour)}, BaselineBlocked: map[string]targetBaseline{}}
+		TamperingCollectionVersion: tamperingCollectionMethodVersion,
+		TamperingLastSeen:          map[string]time.Time{"known": now.Add(-time.Hour)}, BaselineBlocked: map[string]targetBaseline{}}
 	result := tamperingWindowResult{Complete: false, IntervalStart: now.Add(-5 * time.Minute), LastSeen: map[string]time.Time{"partial": now.Add(-time.Minute)}}
 	if names := updateTamperingFixture(now, false, result); !reflect.DeepEqual(names, []string{"known", "partial"}) {
 		t.Fatalf("partial read lost known events: %v", names)
@@ -238,46 +239,21 @@ func TestTamperingAPIAndCSVExposeLastSeenWithoutChangingOtherMetrics(t *testing.
 }
 
 func TestTamperingPaginationPartialErrorsAndFlexiblePageIdentity(t *testing.T) {
-	isolateTamperingState(t)
-	now := time.Date(2026, 10, 15, 18, 0, 0, 0, time.UTC)
-	for _, scenario := range []string{"page-error", "repeat", "flexible-timestamps"} {
-		t.Run(scenario, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				skip := r.URL.Query().Get("skip")
-				if scenario == "page-error" && (skip != "0" || r.URL.Query().Has("start_time")) {
-					http.Error(w, "fixture page error", http.StatusBadRequest)
-					return
-				}
-				count := 1000
-				if scenario == "flexible-timestamps" && skip != "0" {
-					count = 1
-				}
-				batch := make([]map[string]interface{}, count)
-				for i := range batch {
-					name := fmt.Sprintf("host-%d", i)
-					if scenario == "flexible-timestamps" {
-						name = skip + "-" + name
-					}
-					batch[i] = tamperEvent(name, "event_timestamp", now.Add(-time.Minute).Format(time.RFC3339))
-				}
-				_ = json.NewEncoder(w).Encode(batch)
-			}))
-			defer server.Close()
-			useTestPCEOrigin(t, server.URL)
-			batch, err := fetchTamperingEventsPaged(server.URL, now.Add(-time.Hour), now, server.Client())
-			if scenario == "flexible-timestamps" {
-				if err != nil || len(batch) != 1001 {
-					t.Fatalf("distinct flexible timestamp pages truncated: %d %v", len(batch), err)
-				}
-			} else {
-				if err == nil || len(batch) != 1000 {
-					t.Fatalf("known partial result marked complete: %d %v", len(batch), err)
-				}
-				sliced, sliceErr := fetchTamperingSlice(server.URL, now.Add(-time.Hour), now, server.Client())
-				if sliceErr == nil || len(sliced) < 1000 {
-					t.Fatalf("slice fallback lost partial evidence: %d %v", len(sliced), sliceErr)
-				}
-			}
-		})
+	isolateTamperingRetrieval(t)
+	start := time.Date(2026, 10, 15, 16, 0, 0, 0, time.UTC)
+	events := tamperingRetrievalFixture(1601, start, false)
+	// Distinct events without hrefs still use flexible timestamps and names.
+	for i, event := range events {
+		delete(event, "href")
+		event["workload"] = map[string]interface{}{"hostname": fmt.Sprintf("host-%d", i)}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		serveTamperingSyncFixture(t, w, req, events)
+	}))
+	defer server.Close()
+	useTestPCEOrigin(t, server.URL)
+	batch, err := fetchTamperingEventsPaged(server.URL+"/api/v2/orgs/1", start, start.Add(time.Hour), server.Client())
+	if err != nil || len(batch) != len(events) {
+		t.Fatalf("documented filters/flexible event identity lost events: %d, %v", len(batch), err)
 	}
 }
