@@ -937,7 +937,7 @@ func main() {
 	maybeStartStartupBlockedHistoryReconcile()
 	maybeStartStartupTamperingHistoryReconcile()
 	go backgroundCollector()
-	extractorHandler, err := extractor.NewHandler(context.Background(), "dashboard-dev-"+dashboardVersionLabel())
+	extractorHandler, err := extractor.NewHandler(context.Background(), dashboardVersionLabel())
 	if err != nil {
 		log.Fatalf("initialize blocked traffic extractor: %v", err)
 	}

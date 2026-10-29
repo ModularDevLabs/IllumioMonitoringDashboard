@@ -1,17 +1,17 @@
 # Illumio Monitoring Dashboard
 
-A standalone Go dashboard for Illumio PCE health and security metrics.
+A standalone Go application combining Illumio PCE health and security monitoring with traffic extraction, analysis, and reporting.
 
-This fork is an experiment for rolling-window collection behavior:
+Continuous monitoring uses rolling-window collection:
 
 - First successful cycle: pulls a 24-hour baseline.
-- Subsequent cycles (every 5 minutes): pull only the last 5 minutes and keep a rolling view.
+- Subsequent cycles run on a five-minute cadence, collect the new interval, and maintain a rolling view with recovery for collection gaps.
 
 It serves a web UI on port `18443` by default, with configurable bind/public URL settings for network hosting.
 
 ## Features
 
-- Integrated Blocked Traffic Extractor development preview:
+- Integrated Traffic Extractor:
   - Available within the dashboard at `/blocked-traffic/`
   - Uses one PCE-inspired application shell across monitoring and extractor pages, with grouped/collapsible left navigation and a responsive mobile drawer
   - Shares a persistent light/dark preference and active-page context across both functions
@@ -60,7 +60,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Daily blocked history is accumulated from 5-minute deltas (counts and ports), reducing separate daily snapshot query pressure
   - Counts combine blocked source + blocked destination queries per target
   - Uses `max_results: 200000` for blocked traffic queries
-  - Partial-success handling (green + warning badge)
+  - Partial-success handling with explicit warning indicators
   - Configurable moving-average/anomaly detection for blocked 5m trends:
     - `blocked_ma_window` (default `12`)
     - `blocked_anomaly_pct` (default `50`)
@@ -106,7 +106,7 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
 
 ## Binaries
 
-The `v1.3.0-rc.11` testing prerelease includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown in the application. See [Release Notes](RELEASE_NOTES.md) for corrected tampering event retrieval, five-minute and rolling 24-hour deduplication, and clear partial-data warnings. Stopped VEN monitoring, per-workload last-tamper timestamps, analysis view persistence, large-CSV import, and extraction recovery improvements remain included.
+The stable [`v1.3.0` release](https://github.com/ModularDevLabs/IllumioMonitoringDashboard/releases/tag/v1.3.0) includes versioned binaries for Windows, Linux, Intel macOS, and Apple Silicon macOS. The version is also shown throughout the application. This promotes the tested RC11 functionality to the mainline release, including integrated traffic extraction and analytics, Stopped VEN monitoring, corrected tampering collection, and large-file and partial-result recovery. See [Release Notes](RELEASE_NOTES.md) for the full release highlights and upgrade notes.
 
 For source builds, use Go 1.26 or newer; the module pins Go 1.26.8. The rebuild script creates the following compatibility filenames in its selected build directory:
 
@@ -122,11 +122,11 @@ For source builds, use Go 1.26 or newer; the module pins Go 1.26.8. The rebuild 
 3. Save config when prompted.
 4. Open `http://localhost:18443`.
 5. Go to `/settings` to configure traffic targets, retention, and optional alerting.
-6. Open `/blocked-traffic/` to use the integrated Blocked Traffic Extractor with its own PCE profile and API credentials.
+6. Open `/blocked-traffic/` to use the integrated Traffic Extractor with its own PCE profile and API credentials.
 
-## Blocked Traffic Extractor Integration
+## Traffic Extractor Integration
 
-This development build embeds the Blocked Traffic Extractor as an isolated module in the dashboard executable. The dashboard and extractor share the HTTP listener and navigation only; they do not share API credentials, profiles, request state, or saved analysis data. Extractor routes continue to require a localhost host name or loopback address.
+The stable dashboard embeds the Traffic Extractor as an isolated module in the same executable. The dashboard and extractor share the HTTP listener and navigation only; they do not share API credentials, profiles, request state, or saved analysis data. Extractor routes continue to require a localhost host name or loopback address.
 
 - Dashboard credentials remain in `config.json` and drive continuous monitoring collection.
 - Extractor credentials remain in the platform user configuration directory under `illumio-monitoring-dashboard-extractor/pce_profiles.json` and drive only extractor requests.
@@ -207,14 +207,11 @@ illumiodashboard.local {
 }
 ```
 
-## Rollback
+## Upgrade and Rollback
 
-- Stable baseline directory: `/home/ted/Codex/IllumioDashboard`
-- Experimental rolling directory: `/home/ted/Codex/IllumioDashboard-rolling`
-- UI hardening fork: `/home/ted/Codex/IllumioDashboard-rolling-uihardening`
-- UI hardening v2 fork: `/home/ted/Codex/IllumioDashboard-rolling-uihardening-v2`
+Before upgrading, stop the running application and back up `config.json`, the dashboard data directory, and the integrated extractor's configuration directory. Keep the prior executable alongside its matching backup. The new binary reuses the existing configuration and storage locations; dashboard and extractor credentials remain separate.
 
-To roll back, run binaries from the stable directory and ignore/remove this fork.
+To roll back, stop the new application, restore the matching pre-upgrade configuration and data backup, and run the prior release's executable. Do not run old and new copies against the same state directories concurrently, especially when scheduled reports are enabled.
 
 ## Configuration
 

@@ -1,5 +1,36 @@
 # Release Notes
 
+## v1.3.0 - 2026-10-29
+
+Stable mainline release of the combined Monitoring Dashboard and Traffic Extractor, promoting the functionality tested through `v1.3.0-rc.11`. This replaces `v1.2.11` as the latest stable dashboard release. Promotion changes release documentation and version labeling, not the tested collection or analysis behavior.
+
+### Unified monitoring and traffic analysis
+
+- Integrated traffic extraction, multi-CSV analysis, configurable label dimensions, heatmaps, month-over-month service trends, saved datasets, executive summaries, and HTML/PDF/image exports.
+- A shared PCE-inspired interface with grouped, collapsible left navigation, consistent headers, and shared light/dark themes. Analysis filters, chart selections, and report drafts persist while navigating the same analysis.
+- Reusable report templates, scheduling, run history, comparisons, and delivery integrations including Slack, Teams, generic webhooks, email, shared folders, and SFTP; supported artifact delivery depends on the selected destination.
+- Dashboard monitoring and traffic extraction run independently with separate API keys, profiles, request state, and storage. The extractor remains localhost-only even when monitoring pages are network-hosted.
+
+### Traffic reliability and exclusions
+
+- Extract blocked-only or all-policy-decision traffic, preserving policy decisions in CSV exports. Source, destination, and service exclusions are available in extraction profiles and templates.
+- Global and per-target monitoring service exclusions also apply to monitoring queries, retained history, baselines, and alerting.
+- Large downloads and CSV imports stream without the former 256 MiB download and 64 MiB upload caps. Truncated query windows automatically split; failed or cancelled runs preserve completed windows as marked partial CSVs with coverage details.
+- Clearer progress, output-path validation, and actionable import/extraction errors. Available memory and disk space still apply; incomplete activity is not presented as zero.
+
+### VEN monitoring and data confidence
+
+- Stopped VENs now have a dashboard card, workload drilldown, five-minute and daily trends, moving averages, anomaly tracking, webhook alerts, and report coverage.
+- Tampering retrieval uses supported timestamp filters and asynchronous collection, fixing repeated-page truncation. Five-minute samples count distinct affected workloads, while the main card deduplicates across the full rolling 24 hours and shows each workload's last event timestamp.
+- Partial results show warning indicators and incomplete counts. Failed collections preserve known evidence without creating false zero samples or resolving active anomalies.
+- Five-minute start-to-start monitoring cadence, clearer reconciliation status, saved-origin/redirect safeguards, protected artifact paths, and updated Go/SSH dependencies.
+
+### Upgrade and downloads
+
+Stop the previous application and back up `config.json`, dashboard history/state, and the integrated extractor configuration directory before replacing the executable. Existing storage locations and separate credentials are retained. Do not run old and new copies against the same state directories concurrently. Upgrades from older releases refresh the tampering window and rebuild daily history using the corrected filters; unverified legacy tampering samples are not treated as complete anomaly baselines.
+
+Versioned binaries are provided for Windows amd64, Linux amd64, Intel macOS, and Apple Silicon macOS. Both monitoring and extractor views identify `v1.3.0`. Validation includes the full Go test suite, race/static checks, all 89 frontend tests, and built-application checks with a simulated PCE.
+
 ## v1.3.0-rc.11 - 2026-10-22
 
 Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; this does not replace the stable release. All RC10 improvements remain included.
