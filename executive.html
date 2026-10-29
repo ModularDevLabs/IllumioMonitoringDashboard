@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/product-shell.css">
+    <script src="/static/product-shell.js" defer></script>
     <style>
         :root {
             --illumio-orange: rgb(250, 102, 36);
@@ -172,6 +174,7 @@
             </span>
             <a class="btn btn-light btn-sm" id="btn-board" href="/executive?board=1">Board PDF View</a>
             <a class="btn btn-light btn-sm" href="/report?live=1">Trend View</a>
+            <a class="btn btn-light btn-sm" href="/blocked-traffic/">Traffic Extractor</a>
             <a class="btn btn-light btn-sm" href="/">Back to Dashboard</a>
         </span>
     </div>
@@ -246,7 +249,7 @@
         </div>
         <div class="panel">
             <h2>Action Queue</h2>
-            <div class="muted">Prioritized from current anomaly/warning/error signals.</div>
+            <div class="muted">Prioritized from current anomaly, warning, error, and stopped VEN signals.</div>
             <ul class="list" id="actions-list"></ul>
         </div>
     </div>
@@ -437,14 +440,18 @@
         if (anomalous.length) out.push(`Investigate ${anomalous.length} anomalous blocked target(s): ${anomalous.slice(0, 3).map((t) => t.name).join(', ')}.`);
         const warn = (stats.ven_status?.warning || []).length;
         const err = (stats.ven_status?.error || []).length;
+        const stopped = UICommon.stoppedVENStatus(stats.ven_status);
         if (err > 0) out.push(`Review ${err} VEN error state workload(s) and reasons.`);
+        if (stopped.count > 0) out.push(`Review ${stopped.count} stopped VEN workload(s) and confirm whether the agents should be running${stopped.complete ? '.' : ' (collection incomplete).'}`);
+        if (!stopped.complete) out.push('Check stopped VEN collection; its current count is unavailable or incomplete.');
         if (warn > 0) out.push(`Review ${warn} VEN warning state workload(s).`);
-        const tampered = (stats.tampering?.workloads || []).length;
-        if (tampered > 0) out.push(`Validate ${tampered} tampered VEN/workload indicator(s).`);
+        const tampering = UICommon.tamperingStatus(stats.tampering);
+        if (!tampering.complete) out.unshift('Restore complete tampering collection before treating the count or anomaly status as an all-clear.');
+        if (tampering.count > 0) out.push(`Validate ${tampering.display} tampered VEN/workload indicator(s).`);
         const blockedChange = comparePeriods(blockedSeries, periodDays);
         if (blockedChange > 50) out.push(`Blocked flows increased ${blockedChange.toFixed(0)}% vs prior ${periodDays}-day window; confirm expected policy/value behavior.`);
         const tamperChange = comparePeriods(tamperDaily || [], periodDays);
-        if (tamperChange > 20) out.push(`Tampering trend increased ${tamperChange.toFixed(0)}% vs prior ${periodDays}-day window.`);
+        if (tampering.complete && tamperChange > 20) out.push(`Tampering trend increased ${tamperChange.toFixed(0)}% vs prior ${periodDays}-day window.`);
         if (!out.length) out.push('No immediate risk actions: posture appears stable. Continue monitoring anomaly triggers and pipeline health.');
         return out;
     }
@@ -479,10 +486,14 @@
         if (anomalous.length) risks.push(`${anomalous.length} blocked-target anomaly trigger(s) active.`);
         const err = (stats.ven_status?.error || []).length;
         const warn = (stats.ven_status?.warning || []).length;
-        const tampered = (stats.tampering?.workloads || []).length;
+        const tampering = UICommon.tamperingStatus(stats.tampering);
+        const stopped = UICommon.stoppedVENStatus(stats.ven_status);
         if (err > 0) risks.push(`${err} VEN error state workload(s).`);
+        if (stopped.count > 0) risks.push(`${stopped.display} stopped VEN workload(s).`);
+        if (!stopped.complete) risks.push(stopped.description + '.');
         if (warn > 0) risks.push(`${warn} VEN warning state workload(s).`);
-        if (tampered > 0) risks.push(`${tampered} tampered VEN/workload indicator(s) in 24h.`);
+        if (!tampering.complete) risks.unshift(tampering.description + '; no current all-clear.');
+        if (tampering.count > 0) risks.push(`${tampering.display} tampered VEN/workload indicator(s) in 24h.`);
         if (targets.blocked_port_daily_enabled === false) risks.push('Blocked-port daily aggregation is disabled.');
         setList('board-wins', wins, 'No notable protection wins yet in current window.');
         setList('board-risks', risks, 'No material risk signals detected in current snapshot.');
@@ -556,19 +567,21 @@
         const anomalous = blockedTargets.filter((t) => t.anomalous).length;
         const venWarn = (stats.ven_status?.warning || []).length;
         const venErr = (stats.ven_status?.error || []).length;
-        const tampered = (stats.tampering?.workloads || []).length;
-        const pipelineBad = [stats.workloads?.status, stats.ven_status?.status, stats.tampering?.status, stats.blocked?.status].filter((s) => s && !s.success).length;
+        const venStopped = UICommon.stoppedVENStatus(stats.ven_status);
+        const tampering = UICommon.tamperingStatus(stats.tampering);
+        const pipeline = UICommon.pipelineStatus(stats);
 
         const lines = [];
         lines.push(`Illumio Monitoring Dashboard Executive Summary (${nowText})`);
         lines.push('');
         lines.push(`Protection outcomes: ${fmt(blocked24h)} blocked flows in the last 24h; ${fmt(blockedPeriod)} blocked flows across the selected ${periodDays}-day window (${blockedDeltaPeriod >= 0 ? '+' : ''}${blockedDeltaPeriod.toFixed(1)}% vs prior ${periodDays}-day window).`);
         lines.push(`Top protected targets (24h): ${topTargets.length ? topTargets.join(', ') : 'n/a'}.`);
-        lines.push(`Risk signals: ${anomalous} anomalous blocked targets, ${venWarn} VEN warnings, ${venErr} VEN errors, ${tampered} tampered VENs in the last 24h.`);
+        lines.push(`Current risk signals: ${anomalous} anomalous blocked targets, ${venWarn} VEN warnings, ${venErr} VEN errors, stopped VENs: ${venStopped.complete || venStopped.count ? venStopped.display : 'unavailable'}; tampered VENs in the last 24h: ${tampering.complete || tampering.count ? tampering.display : 'unavailable'}.`);
+        if (!tampering.complete) lines.push(`${tampering.description}. Historical alert transitions do not establish a current all-clear.`);
         if (stats.rules?.enabled) {
             lines.push(`Policy growth: ${fmt(stats.rules.rulesets)} rulesets and ${fmt(stats.rules.rules)} rules (daily policy trend enabled).`);
         }
-        lines.push(`Pipeline confidence: ${pipelineBad === 0 ? 'healthy' : `${pipelineBad} collector stage(s) failing or partial`}.`);
+        lines.push(`Pipeline confidence: ${pipeline.issues === 0 ? 'healthy' : `${pipeline.failed} failed, ${pipeline.partial} partial collector stage(s)`}.`);
         lines.push('');
         lines.push('Recommended actions:');
         (actions && actions.length ? actions.slice(0, 3) : ['No immediate actions required.']).forEach((a, i) => {
@@ -654,14 +667,16 @@
         const anomalous = blockedTargets.filter((t) => t.anomalous).length;
         const venWarn = (stats.ven_status?.warning || []).length;
         const venErr = (stats.ven_status?.error || []).length;
-        const tampered = (stats.tampering?.workloads || []).length;
-        const pipelineBad = [stats.workloads?.status, stats.ven_status?.status, stats.tampering?.status, stats.blocked?.status].filter((s) => s && !s.success).length;
+        const venStopped = UICommon.stoppedVENStatus(stats.ven_status);
+        const tampering = UICommon.tamperingStatus(stats.tampering);
+        const pipeline = UICommon.pipelineStatus(stats);
 
         addKPI(risk, 'Anomalous Targets', fmt(anomalous), 'Triggered by configured anomaly baselines', anomalous > 0 ? 'risk-bad' : 'risk-good');
         addKPI(risk, 'VEN Warnings', fmt(venWarn), 'Current warning health states', venWarn > 0 ? 'risk-warn' : 'risk-good');
         addKPI(risk, 'VEN Errors', fmt(venErr), 'Current error health states', venErr > 0 ? 'risk-bad' : 'risk-good');
-        addKPI(risk, 'Tampered VENs', fmt(tampered), 'Unique impacted names (24h)', tampered > 0 ? 'risk-bad' : 'risk-good');
-        addKPI(risk, 'Pipeline Confidence', pipelineBad === 0 ? 'Healthy' : `${pipelineBad} failing stage(s)`, 'Collector/API stage status', pipelineBad === 0 ? 'risk-good' : 'risk-warn');
+        addKPI(risk, 'Stopped VENs', venStopped.display, venStopped.description, venStopped.count > 0 ? 'risk-bad' : (venStopped.complete ? 'risk-good' : 'risk-warn'));
+        addKPI(risk, 'Tampered VENs', tampering.display, tampering.description, tampering.count > 0 ? 'risk-bad' : (tampering.complete ? 'risk-good' : 'risk-warn'));
+        addKPI(risk, 'Pipeline Confidence', pipeline.issues === 0 ? 'Healthy' : `${pipeline.failed} failed / ${pipeline.partial} partial`, 'Collector/API stage status', pipeline.issues === 0 ? 'risk-good' : 'risk-warn');
         addKPI(risk, 'Blocked Port Daily', targets.blocked_port_daily_enabled === false ? 'Disabled' : 'Enabled', 'Controls blocked-port daily aggregation', targets.blocked_port_daily_enabled === false ? 'risk-warn' : 'risk-good');
         if (stats.rules?.enabled) {
             addKPI(risk, 'Policy Metrics', stats.rules?.status?.success ? 'Enabled' : 'Fetch Error', stats.rules?.status?.error || 'Daily policy growth tracking', stats.rules?.status?.success ? 'risk-good' : 'risk-warn');

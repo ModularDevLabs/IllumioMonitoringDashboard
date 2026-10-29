@@ -1,5 +1,149 @@
 # Release Notes
 
+## v1.3.0 - 2026-10-29
+
+Stable mainline release of the combined Monitoring Dashboard and Traffic Extractor, promoting the functionality tested through `v1.3.0-rc.11`. This replaces `v1.2.11` as the latest stable dashboard release. Promotion changes release documentation and version labeling, not the tested collection or analysis behavior.
+
+### Unified monitoring and traffic analysis
+
+- Integrated traffic extraction, multi-CSV analysis, configurable label dimensions, heatmaps, month-over-month service trends, saved datasets, executive summaries, and HTML/PDF/image exports.
+- A shared PCE-inspired interface with grouped, collapsible left navigation, consistent headers, and shared light/dark themes. Analysis filters, chart selections, and report drafts persist while navigating the same analysis.
+- Reusable report templates, scheduling, run history, comparisons, and delivery integrations including Slack, Teams, generic webhooks, email, shared folders, and SFTP; supported artifact delivery depends on the selected destination.
+- Dashboard monitoring and traffic extraction run independently with separate API keys, profiles, request state, and storage. The extractor remains localhost-only even when monitoring pages are network-hosted.
+
+### Traffic reliability and exclusions
+
+- Extract blocked-only or all-policy-decision traffic, preserving policy decisions in CSV exports. Source, destination, and service exclusions are available in extraction profiles and templates.
+- Global and per-target monitoring service exclusions also apply to monitoring queries, retained history, baselines, and alerting.
+- Large downloads and CSV imports stream without the former 256 MiB download and 64 MiB upload caps. Truncated query windows automatically split; failed or cancelled runs preserve completed windows as marked partial CSVs with coverage details.
+- Clearer progress, output-path validation, and actionable import/extraction errors. Available memory and disk space still apply; incomplete activity is not presented as zero.
+
+### VEN monitoring and data confidence
+
+- Stopped VENs now have a dashboard card, workload drilldown, five-minute and daily trends, moving averages, anomaly tracking, webhook alerts, and report coverage.
+- Tampering retrieval uses supported timestamp filters and asynchronous collection, fixing repeated-page truncation. Five-minute samples count distinct affected workloads, while the main card deduplicates across the full rolling 24 hours and shows each workload's last event timestamp.
+- Partial results show warning indicators and incomplete counts. Failed collections preserve known evidence without creating false zero samples or resolving active anomalies.
+- Five-minute start-to-start monitoring cadence, clearer reconciliation status, saved-origin/redirect safeguards, protected artifact paths, and updated Go/SSH dependencies.
+
+### Upgrade and downloads
+
+Stop the previous application and back up `config.json`, dashboard history/state, and the integrated extractor configuration directory before replacing the executable. Existing storage locations and separate credentials are retained. Do not run old and new copies against the same state directories concurrently. Upgrades from older releases refresh the tampering window and rebuild daily history using the corrected filters; unverified legacy tampering samples are not treated as complete anomaly baselines.
+
+Versioned binaries are provided for Windows amd64, Linux amd64, Intel macOS, and Apple Silicon macOS. Both monitoring and extractor views identify `v1.3.0`. Validation includes the full Go test suite, race/static checks, all 89 frontend tests, and built-application checks with a simulated PCE.
+
+## v1.3.0-rc.11 - 2026-10-22
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; this does not replace the stable release. All RC10 improvements remain included.
+
+### Tampering collection and reporting
+
+- Replaced unsupported event offset pagination with the PCE's documented timestamp filters and asynchronous collection workflow. Synchronous fallback splits saturated time windows, preserves retrieved evidence, and explicitly reports cases where completeness cannot be established.
+- Five-minute tampering samples count distinct affected workloads in the latest five minutes. The dashboard card and workload list deduplicate across the rolling 24 hours, retaining each workload's latest event timestamp and expiring it by event time.
+- Partial collection now shows an amber pipeline indicator and incomplete count across the dashboard, drilldown, reports, executive view, and CSV exports. Failures retain known evidence without generating false zero samples or resolving active anomalies.
+- Upgrades recheck the rolling tampering window and reconcile daily history with the corrected filters. Unverified legacy tampering samples are not reused as complete anomaly baselines; unrelated monitoring history remains unchanged.
+- Event workload-name extraction no longer accidentally chooses an unrelated user, label, or service name based on map traversal order.
+- Background monitoring now uses a five-minute start-to-start cadence instead of adding a five-minute wait after each collection. Slow cycles remain serialized; recovery retrieves missed events for the 24-hour aggregate without inventing chart samples for the gap.
+
+Versioned binaries are provided for Windows amd64, Linux amd64, Intel macOS, and Apple Silicon macOS. The executable name and in-app version identify `v1.3.0-rc.11`. Validation includes large synthetic event collections, end-to-end five-minute/24-hour deduplication checks, the Go test suite and race/static checks, 89 frontend tests, and browser checks. Live customer-PCE validation remains part of release-candidate testing.
+
+## v1.3.0-rc.10 - 2026-10-22
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; this does not replace the stable release.
+
+### Stopped VEN monitoring
+
+- Added a Stopped VENs card and workload drilldown on the main monitoring dashboard, using the PCE's current stopped status rather than inferring it from connectivity or historical events.
+- Added rolling 24-hour/five-minute trends, retained daily maximum counts, moving-average overlays, shared VEN anomaly settings, and CSV/PDF report coverage. Stopped VENs also appear in executive health summaries and risk/actions.
+- Added persisted stopped anomaly transitions and trigger/recovery notifications through the configured generic, Slack, or Teams webhook. Baseline warmup and collection failures do not falsely resolve active alerts.
+- History begins with the first successful stopped collection after upgrade. Legacy history and failed/partial queries are not converted to zero; incomplete results are clearly marked in the UI and CSV exports.
+- A rise above an established zero stopped-VEN baseline triggers an anomaly; insufficient baseline history does not falsely resolve an existing alert.
+- VEN pagination that cannot advance now reports an incomplete result instead of silently treating a truncated list as complete.
+
+Versioned binaries are provided for Windows amd64, Linux amd64, Intel macOS, and Apple Silicon macOS. The executable name and in-app version identify `v1.3.0-rc.10`.
+
+## v1.3.0-rc.9 - 2026-10-15
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; this does not replace the stable release.
+
+### Added
+
+- Tampered VENs/Workloads now shows the latest observed tampering event timestamp beside each workload, including the browser's local timezone. Missing timestamps display as unavailable instead of a misleading date.
+- Last-tamper timestamps persist across restarts and are included in tampering drilldown and full-report CSV exports in UTC.
+
+### Fixed
+
+- The tampering list now expires entries using their actual event timestamps, including the initial 24-hour baseline. Older saved state retrieves missing timestamps without resetting unrelated monitoring history.
+- Tampering captions distinguish the rolling 24-hour workload list from the separately selectable 5-minute and daily charts.
+- Recovery after failed queries or collection gaps retrieves tampering events without turning the 24-hour backfill into a false five-minute spike. Partial responses retain known event timestamps and report incomplete pagination.
+
+On upgrade, the next successful tampering collection retrieves timestamps for older saved entries. Until then, entries without a recorded event time show unavailable. The timestamp indicates the latest observed tampering event, not proof that a workload is currently tampered with.
+
+## v1.3.0-rc.8 - 2026-10-08
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; the stable release and integration branch status are unchanged.
+
+### Changed
+
+- Heatmaps retain dimension-specific filters, selected cells, protocol and port drilldowns, search text, and hide-empty choices across navigation and refresh.
+- Analytics pivot selections, executive chart ranges and selections, comparison months, export-section choices, report drafts, and collapsed analysis sections are retained for the current analysis within the browser tab's session.
+- A successful CSV import, explicit saved-dataset reload, or completed extraction starts a fresh analysis view, even when filenames are unchanged. Failed imports, report-setting saves, and ordinary refreshes do not reset view choices. Theme preferences remain separate.
+- Downloaded executive HTML captures current chart selections and unsaved report edits without sharing live browser state.
+
+### Fixed
+
+- Port identifiers no longer use thousands separators in heatmap drilldowns, analytics pivots, or executive service cards; flow and connection counts retain numeric formatting.
+- Drilldown controls remain available when their filter combination matches no rows.
+- Invalid stored preferences recover safely, and older overlapping refresh responses cannot replace a newer analysis.
+
+View choices are not permanent saved views and end with the browser tab's session. Save Report Settings continues to retain report metadata with saved datasets. This release includes RC7's large-CSV import improvements and prior traffic recovery fixes.
+
+## v1.3.0-rc.7 - 2026-10-07
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. This keeps the separate dashboard and extractor API credentials and does not replace the stable release.
+
+### Fixed
+
+- Removed the 64 MiB combined CSV upload cap. Large imports remain disk-backed and parse raw CSV rows incrementally to reduce peak memory use.
+- Both CSV import screens now show file counts, total size, upload progress, and the server-analysis phase, with actionable connection, response, and upload errors.
+- Concurrent duplicate imports are prevented. Interrupted uploads clean up temporary files, and invalid imports leave the previous analytics intact.
+- Added regression coverage for a three-file import containing a 91 MB CSV, preserving cross-file deduplication and monthly totals.
+
+Available temporary disk space and memory for derived analytics still apply. The existing 60-file batch limit remains; dashboard collection and traffic extraction continue independently of CSV imports.
+
+## v1.3.0-rc.6 - 2026-10-07
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. Dashboard and extractor API credentials remain separate; extractor access remains localhost-only.
+
+### Fixed
+- Traffic-result downloads now stream without the previous 256 MiB total-size cutoff and log downloaded bytes and parsed rows. PCE-truncated queries automatically split into smaller windows while preserving their filters.
+- Failed, cancelled, or timed-out extractions preserve successfully completed windows in marked partial CSVs and record missing windows in a companion coverage file. Remaining chunks continue after an individual failure; incomplete data is clearly identified in analytics and scheduled-run history rather than reported as success.
+- Reconciliation status omits unset timestamps instead of displaying year 0001, and identifies automatic startup runs, manual requests, and traffic service exclusion changes.
+- Saved history completion checkpoints are distinguished from run details in the current session; a new run no longer inherits the preceding run's finish time or counters.
+- Tampering history controls and status now appear in Tampering Settings & History, separate from traffic targets and exclusions. Status refreshes while Settings is open and after saving traffic changes.
+
+### Security and Reliability
+- Updated the Go build toolchain and SSH/SFTP dependency to include the security fixes used in the standalone extractor build.
+- Added regression checks proving streaming downloads and cleanup retain saved-origin restrictions and reject cross-origin redirects before sending credentials.
+- Failed coverage-file writes are cleaned up without discarding an already saved CSV.
+- Executive report fallback labels no longer describe all-traffic data as blocked-only traffic.
+
+## v1.3.0-rc.5 - 2026-10-02
+
+### Added
+- Global and per-target monitoring service exclusions for direct protocol/port selectors and active PCE policy service object names.
+- Exclusions apply at query time across live totals, port/host detail, retained history, baselines, anomalies, and alerting.
+- Effective filter changes reset affected rolling state and trigger retained-history reconciliation while preserving and hiding prior daily data until the rebuild succeeds.
+- Named exclusions are validated against the complete active-service catalog (including the PCE asynchronous collection path beyond 500 objects) before settings are saved; missing or ambiguous service names fail safely.
+
+### Fixed
+- Extractor runs now validate the required absolute target folder and filename before querying the PCE, and the UI reports the actual output error instead of ending with a generic no-output message.
+- Failed blocked-traffic target queries no longer resolve an active anomaly alert as if traffic had recovered.
+- Service-exclusion changes, PCE credential updates, collector commits, retained-history writes, and alert transitions are serialized so superseded traffic cannot re-enter baselines or trigger stale notifications.
+- Direct config-file reloads reject duplicate case-insensitive traffic target names that would otherwise collide in history and alert state.
+
+### Security Hardening
+- Added config-file-only `pce_allowed_origins` and `webhook_private_allowed_origins` trust lists. Web settings cannot expand them; PCE traffic is restricted to trusted HTTPS origins (with loopback HTTP for development), PCE redirects cannot leave their trusted origin, and private webhooks require exact-origin authorization with redirects, proxy use, link-local addresses, and cloud-metadata destinations blocked.
+
 ## v1.2.11 - 2026-04-17
 
 ### Fixed

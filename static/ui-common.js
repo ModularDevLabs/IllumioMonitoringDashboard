@@ -34,8 +34,9 @@
       'm-unmanaged': 'Workloads without active/managed VEN association.',
       'v-warn': 'Count of VENs from /vens?health=warning.',
       'v-err': 'Count of VENs from /vens?health=error.',
+      'v-stopped': 'Count of VENs currently in the stopped state. Click for workload names, 24-hour and daily trends, shared VEN anomaly baselines, and exports. Unavailable or incomplete collection is not treated as zero.',
       'v-suspended': 'Count of VENs whose status is suspended.',
-      'tamp': 'Unique deduped VEN/workload names with agent.tampering events in window.'
+      'tamp': 'Unique deduped VEN/workload names with agent.tampering events in the last 24 hours as of the latest collection. Click to view the latest tampering event time for each workload.'
     };
   }
 
@@ -45,6 +46,44 @@
       var el = document.getElementById(id);
       if (el) el.title = map[id];
     });
+  }
+
+  function stoppedVENStatus(venStatus) {
+    var status = venStatus || {};
+    var count = Array.isArray(status.stopped) ? status.stopped.length : 0;
+    var complete = status.stopped_status?.success === true;
+    return {
+      count: count,
+      complete: complete,
+      display: complete ? String(count) : (count ? String(count) + ' (incomplete)' : '—'),
+      description: complete ? 'Current stopped VEN states' : (count ? 'Partial results; stopped VEN collection incomplete' : 'Stopped VEN status unavailable'),
+      error: String(status.stopped_status?.error || '')
+    };
+  }
+
+  function tamperingStatus(tampering) {
+    var data = tampering || {};
+    var suppliedCount = Number(data.count);
+    var count = Array.isArray(data.workloads) ? data.workloads.length : (Number.isFinite(suppliedCount) && suppliedCount >= 0 ? suppliedCount : 0);
+    var error = String(data.status?.error || '').trim();
+    var complete = data.status?.success === true && data.partial !== true && !error;
+    var partial = data.partial === true || (!complete && count > 0) || (data.status?.success === true && !!error);
+    return {
+      count: count, complete: complete, partial: partial, error: error,
+      display: complete ? String(count) : (count ? String(count) + ' (incomplete)' : '—'),
+      description: complete ? 'Unique impacted names in the last 24 hours' : (partial ? 'Tampering collection incomplete; known workloads only' : 'Tampering status unavailable')
+    };
+  }
+
+  function pipelineStatus(stats) {
+    var failed = 0;
+    var partial = 0;
+    ['workloads', 'ven_status', 'tampering', 'blocked'].forEach(function (key) {
+      var stage = stats?.[key] || {};
+      if (stage.partial === true || (stage.status?.success === true && String(stage.status?.error || '').trim())) partial++;
+      else if (stage.status?.success !== true) failed++;
+    });
+    return { failed: failed, partial: partial, issues: failed + partial };
   }
 
   function applyTheme(themeKey, btnId, rerenderFn) {
@@ -198,6 +237,9 @@
     formatStaleness: formatStaleness,
     nextRefreshText: nextRefreshText,
     applyMetricTooltips: applyMetricTooltips,
+    stoppedVENStatus: stoppedVENStatus,
+    tamperingStatus: tamperingStatus,
+    pipelineStatus: pipelineStatus,
     applyTheme: applyTheme,
     setTheme: setTheme,
     makeChartZoomable: makeChartZoomable

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"embed"
@@ -28,6 +29,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"illumio-dash/internal/extractor"
+	extractorillumio "illumio-dash/internal/extractor/illumio"
 
 	_ "modernc.org/sqlite"
 )
@@ -67,7 +71,8 @@ const stateKeyBlockedHistoryReconcile = "blocked_history_reconcile_v1"
 const blockedHistoryReconcileFileName = "blocked_history_reconcile.json"
 const stateKeyTamperingHistoryReconcile = "tampering_history_reconcile_v1"
 const tamperingHistoryReconcileFileName = "tampering_history_reconcile.json"
-const tamperingReconcileMethodVersion = "daily_unique_workloads_v2"
+const tamperingReconcileMethodVersion = "daily_unique_workloads_v3_timestamp_filters"
+const tamperingCollectionMethodVersion = "timestamp_filters_v1"
 
 const pceTimeFormat = "2006-01-02T15:04:05.000Z"
 const maxHistoryDays = 3650
@@ -80,9 +85,11 @@ const defaultAPIBurst = 30
 const perfSampleWindowSize = 256
 const defaultLogFileName = "illumiomonitoringdashboard.log"
 const maxMultiLabelClauses = 2000
+const trafficServiceCatalogCacheTTL = 5 * time.Minute
 
 type Config struct {
 	PCEURL                       string          `json:"pce_url"`
+	PCEAllowedOrigins            []string        `json:"pce_allowed_origins,omitempty"`
 	APIKey                       string          `json:"api_key"`
 	APISecret                    string          `json:"api_secret"`
 	OrgID                        string          `json:"org_id"`
@@ -92,6 +99,7 @@ type Config struct {
 	DataDir                      string          `json:"data_dir,omitempty"`
 	TrafficTargets               []TrafficTarget `json:"traffic_targets,omitempty"`
 	SourceExclusions             []TrafficTarget `json:"traffic_source_exclusions,omitempty"`
+	TrafficServiceExclusions     []string        `json:"traffic_service_exclusions,omitempty"`
 	HistoryDays                  int             `json:"history_days,omitempty"`
 	BlockedPortDailyEnabled      *bool           `json:"blocked_port_daily_enabled,omitempty"`
 	BlockedMAWindow              int             `json:"blocked_ma_window,omitempty"`
@@ -113,6 +121,7 @@ type Config struct {
 	TamperingAnomalyMinPct       float64         `json:"tampering_anomaly_min_coverage_pct,omitempty"`
 	TamperingDailyAnomalyPct     float64         `json:"tampering_daily_anomaly_pct,omitempty"`
 	WebhookURL                   string          `json:"webhook_url,omitempty"`
+	WebhookPrivateAllowedOrigins []string        `json:"webhook_private_allowed_origins,omitempty"`
 	WebhookEnabled               bool            `json:"webhook_enabled,omitempty"`
 	WebhookProvider              string          `json:"webhook_provider,omitempty"`
 	WebhookSlackChannel          string          `json:"webhook_slack_channel,omitempty"`
@@ -136,12 +145,17 @@ type Config struct {
 }
 
 type TrafficTarget struct {
-	Name                  string  `json:"name"`
-	Kind                  string  `json:"kind"`
-	BlockedMAWindow       int     `json:"blocked_ma_window,omitempty"`
-	BlockedAnomalyPct     float64 `json:"blocked_anomaly_pct,omitempty"`
-	BlockedAlertEnabled   *bool   `json:"blocked_alert_enabled,omitempty"`
-	BlockedAlertMinLatest int     `json:"blocked_alert_min_latest,omitempty"`
+	Name                       string   `json:"name"`
+	Kind                       string   `json:"kind"`
+	ServiceExclusions          []string `json:"service_exclusions,omitempty"`
+	BlockedMAWindow            int      `json:"blocked_ma_window,omitempty"`
+	BlockedAnomalyPct          float64  `json:"blocked_anomaly_pct,omitempty"`
+	BlockedAlertEnabled        *bool    `json:"blocked_alert_enabled,omitempty"`
+	BlockedAlertMinLatest      int      `json:"blocked_alert_min_latest,omitempty"`
+	effectiveServiceExclusions []string
+	resolvedServiceExclusions  []trafficServiceFilter
+	resolvedServiceFingerprint string
+	serviceResolutionError     string
 }
 
 type FetchStatus struct {
@@ -173,10 +187,12 @@ type BlockedTargetResult struct {
 
 type DashboardStats struct {
 	VENStatus struct {
-		Warning   []string    `json:"warning"`
-		Error     []string    `json:"error"`
-		Suspended []string    `json:"suspended"`
-		Status    FetchStatus `json:"status"`
+		Warning       []string    `json:"warning"`
+		Error         []string    `json:"error"`
+		Suspended     []string    `json:"suspended"`
+		Stopped       []string    `json:"stopped"`
+		StoppedStatus FetchStatus `json:"stopped_status"`
+		Status        FetchStatus `json:"status"`
 	} `json:"ven_status"`
 	Workloads struct {
 		Total            int                 `json:"total"`
@@ -186,9 +202,11 @@ type DashboardStats struct {
 		Status           FetchStatus         `json:"status"`
 	} `json:"workloads"`
 	Tampering struct {
-		Count     int         `json:"count"`
-		Workloads []string    `json:"workloads,omitempty"`
-		Status    FetchStatus `json:"status"`
+		Count     int                  `json:"count"`
+		Workloads []string             `json:"workloads,omitempty"`
+		LastSeen  map[string]time.Time `json:"last_seen,omitempty"`
+		Status    FetchStatus          `json:"status"`
+		Partial   bool                 `json:"partial"`
 	} `json:"tampering"`
 	Rules struct {
 		Enabled  bool        `json:"enabled"`
@@ -212,43 +230,47 @@ type DashboardStats struct {
 		WindowEnd   time.Time `json:"window_end"`
 		Warmup      bool      `json:"warmup"`
 	} `json:"collection"`
-	Timestamp time.Time `json:"timestamp"`
+	Timestamp                     time.Time `json:"timestamp"`
+	trafficServiceTargetSnapshots []TrafficTarget
 }
 
 type DrilldownResponse struct {
-	Metric                  string           `json:"metric"`
-	Target                  string           `json:"target,omitempty"`
-	Title                   string           `json:"title"`
-	Count                   int              `json:"count"`
-	Items                   []string         `json:"items"`
-	ItemTargets             []string         `json:"item_targets,omitempty"`
-	Trend                   []TrendPoint     `json:"trend,omitempty"`
-	Trend24h                []TrendPoint     `json:"trend_24h,omitempty"`
-	TrendDaily              []TrendPoint     `json:"trend_daily,omitempty"`
-	TrendDaily5mCaptured    []TrendPoint     `json:"trend_daily_5m_captured,omitempty"`
-	TrendMA24h              []TrendPointF    `json:"trend_ma_24h,omitempty"`
-	TrendMADaily            []TrendPointF    `json:"trend_ma_daily,omitempty"`
-	BlockedMAWindow         int              `json:"blocked_ma_window,omitempty"`
-	BlockedAnomalyPct       float64          `json:"blocked_anomaly_pct,omitempty"`
-	BlockedAlertEnabled     bool             `json:"blocked_alert_enabled"`
-	BlockedAlertMinLatest   int              `json:"blocked_alert_min_latest,omitempty"`
-	Anomalous               bool             `json:"anomalous,omitempty"`
-	AnomalyReason           string           `json:"anomaly_reason,omitempty"`
-	AnomalyWindow           int              `json:"anomaly_window,omitempty"`
-	AnomalyPct              float64          `json:"anomaly_pct,omitempty"`
-	AnomalySource           string           `json:"anomaly_source,omitempty"`
-	AnomalyCoveragePct      float64          `json:"anomaly_coverage_pct,omitempty"`
-	LatestValue             int              `json:"latest_value,omitempty"`
-	MovingAvgValue          float64          `json:"moving_avg_value,omitempty"`
-	Baseline24h             int              `json:"baseline_24h,omitempty"`
-	BaselineCapturedUTC     *time.Time       `json:"baseline_captured_utc,omitempty"`
-	BlockedPorts24h         []PortCount      `json:"blocked_ports_24h,omitempty"`
-	BlockedPortsDaily       []BlockedPortDay `json:"blocked_ports_daily,omitempty"`
-	BlockedPortDailyEnabled bool             `json:"blocked_port_daily_enabled"`
-	BlockedHostsDaily       []BlockedHostDay `json:"blocked_hosts_daily,omitempty"`
-	BlockedHosts24h         []HostCount      `json:"blocked_hosts_24h,omitempty"`
-	BlockedHostMetrics      bool             `json:"blocked_host_metrics_enabled"`
-	BlockedHostRetention    string           `json:"blocked_host_retention_mode,omitempty"`
+	Metric                  string               `json:"metric"`
+	Target                  string               `json:"target,omitempty"`
+	Title                   string               `json:"title"`
+	Count                   int                  `json:"count"`
+	Items                   []string             `json:"items"`
+	Status                  *FetchStatus         `json:"status,omitempty"`
+	Partial                 bool                 `json:"partial,omitempty"`
+	ItemLastSeen            map[string]time.Time `json:"item_last_seen,omitempty"`
+	ItemTargets             []string             `json:"item_targets,omitempty"`
+	Trend                   []TrendPoint         `json:"trend,omitempty"`
+	Trend24h                []TrendPoint         `json:"trend_24h,omitempty"`
+	TrendDaily              []TrendPoint         `json:"trend_daily,omitempty"`
+	TrendDaily5mCaptured    []TrendPoint         `json:"trend_daily_5m_captured,omitempty"`
+	TrendMA24h              []TrendPointF        `json:"trend_ma_24h,omitempty"`
+	TrendMADaily            []TrendPointF        `json:"trend_ma_daily,omitempty"`
+	BlockedMAWindow         int                  `json:"blocked_ma_window,omitempty"`
+	BlockedAnomalyPct       float64              `json:"blocked_anomaly_pct,omitempty"`
+	BlockedAlertEnabled     bool                 `json:"blocked_alert_enabled"`
+	BlockedAlertMinLatest   int                  `json:"blocked_alert_min_latest,omitempty"`
+	Anomalous               bool                 `json:"anomalous,omitempty"`
+	AnomalyReason           string               `json:"anomaly_reason,omitempty"`
+	AnomalyWindow           int                  `json:"anomaly_window,omitempty"`
+	AnomalyPct              float64              `json:"anomaly_pct,omitempty"`
+	AnomalySource           string               `json:"anomaly_source,omitempty"`
+	AnomalyCoveragePct      float64              `json:"anomaly_coverage_pct,omitempty"`
+	LatestValue             int                  `json:"latest_value,omitempty"`
+	MovingAvgValue          float64              `json:"moving_avg_value,omitempty"`
+	Baseline24h             int                  `json:"baseline_24h,omitempty"`
+	BaselineCapturedUTC     *time.Time           `json:"baseline_captured_utc,omitempty"`
+	BlockedPorts24h         []PortCount          `json:"blocked_ports_24h,omitempty"`
+	BlockedPortsDaily       []BlockedPortDay     `json:"blocked_ports_daily,omitempty"`
+	BlockedPortDailyEnabled bool                 `json:"blocked_port_daily_enabled"`
+	BlockedHostsDaily       []BlockedHostDay     `json:"blocked_hosts_daily,omitempty"`
+	BlockedHosts24h         []HostCount          `json:"blocked_hosts_24h,omitempty"`
+	BlockedHostMetrics      bool                 `json:"blocked_host_metrics_enabled"`
+	BlockedHostRetention    string               `json:"blocked_host_retention_mode,omitempty"`
 }
 
 type TrendPoint struct {
@@ -287,12 +309,14 @@ type rollingBucket struct {
 	VENWarningCount    int
 	VENErrorCount      int
 	VENSuspendedCount  int
+	VENStoppedCount    *int
 	ModeIdleCount      int
 	ModeVisCount       int
 	ModeSelectiveCount int
 	ModeFullCount      int
 	ModeUnmanagedCount int
 	TamperingCount     int
+	TamperingComplete  *bool
 	TamperingWorkloads map[string]struct{}
 	BlockedByTarget    map[string]int
 }
@@ -301,10 +325,16 @@ type rollingState struct {
 	Initialized bool
 	LastCycle   time.Time
 
-	BaselineCapturedUTC time.Time
-	BaselineTampering   int
-	BaselineWorkloads   map[string]struct{}
-	BaselineBlocked     map[string]targetBaseline
+	BaselineCapturedUTC        time.Time
+	BaselineTampering          int
+	BaselineWorkloads          map[string]struct{}
+	TamperingLastSeen          map[string]time.Time
+	TamperingTimestampsReady   bool
+	TamperingBackfillPending   bool
+	TamperingCollectionVersion string
+	BaselineBlocked            map[string]targetBaseline
+	ServiceFilterFingerprints  map[string]string
+	ServiceHistoryPending      map[string]string
 
 	Buckets []rollingBucket
 
@@ -322,25 +352,33 @@ type persistedRollingBucket struct {
 	VENWarningCount    int            `json:"ven_warning_count"`
 	VENErrorCount      int            `json:"ven_error_count"`
 	VENSuspendedCount  int            `json:"ven_suspended_count,omitempty"`
+	VENStoppedCount    *int           `json:"ven_stopped_count,omitempty"`
 	ModeIdleCount      int            `json:"mode_idle_count"`
 	ModeVisCount       int            `json:"mode_vis_count"`
 	ModeSelectiveCount int            `json:"mode_selective_count"`
 	ModeFullCount      int            `json:"mode_full_count"`
 	ModeUnmanagedCount int            `json:"mode_unmanaged_count"`
 	TamperingCount     int            `json:"tampering_count"`
+	TamperingComplete  *bool          `json:"tampering_complete,omitempty"`
 	TamperingWorkloads []string       `json:"tampering_workloads,omitempty"`
 	BlockedByTarget    map[string]int `json:"blocked_by_target,omitempty"`
 }
 
 type persistedRollingState struct {
-	SchemaVersion       int                                `json:"schema_version"`
-	Initialized         bool                               `json:"initialized"`
-	LastCycle           time.Time                          `json:"last_cycle"`
-	BaselineCapturedUTC time.Time                          `json:"baseline_captured_utc"`
-	BaselineTampering   int                                `json:"baseline_tampering"`
-	BaselineWorkloads   []string                           `json:"baseline_workloads,omitempty"`
-	BaselineBlocked     map[string]persistedTargetBaseline `json:"baseline_blocked,omitempty"`
-	Buckets             []persistedRollingBucket           `json:"buckets,omitempty"`
+	SchemaVersion              int                                `json:"schema_version"`
+	Initialized                bool                               `json:"initialized"`
+	LastCycle                  time.Time                          `json:"last_cycle"`
+	BaselineCapturedUTC        time.Time                          `json:"baseline_captured_utc"`
+	BaselineTampering          int                                `json:"baseline_tampering"`
+	BaselineWorkloads          []string                           `json:"baseline_workloads,omitempty"`
+	TamperingLastSeen          map[string]time.Time               `json:"tampering_last_seen,omitempty"`
+	TamperingTimestampsReady   bool                               `json:"tampering_timestamps_ready,omitempty"`
+	TamperingBackfillPending   bool                               `json:"tampering_backfill_pending,omitempty"`
+	TamperingCollectionVersion string                             `json:"tampering_collection_version,omitempty"`
+	BaselineBlocked            map[string]persistedTargetBaseline `json:"baseline_blocked,omitempty"`
+	ServiceFilterFingerprints  map[string]string                  `json:"service_filter_fingerprints,omitempty"`
+	ServiceHistoryPending      map[string]string                  `json:"service_history_pending,omitempty"`
+	Buckets                    []persistedRollingBucket           `json:"buckets,omitempty"`
 }
 
 type targetBaseline struct {
@@ -352,6 +390,32 @@ type trafficQueryResult struct {
 	Count     int
 	Truncated bool
 	Warning   string
+}
+
+type trafficServiceFilter struct {
+	Port               int    `json:"port,omitempty"`
+	ToPort             int    `json:"to_port,omitempty"`
+	Proto              int    `json:"proto,omitempty"`
+	ProcessName        string `json:"process_name,omitempty"`
+	WindowsServiceName string `json:"windows_service_name,omitempty"`
+	ICMPType           *int   `json:"icmp_type,omitempty"`
+	ICMPCode           *int   `json:"icmp_code,omitempty"`
+}
+
+type trafficServiceCatalogCacheEntry struct {
+	ExpiresAt time.Time
+	ByName    map[string]trafficServiceCatalogName
+}
+
+type trafficServiceCatalogName struct {
+	Entries []trafficServiceFilter
+	HRefs   []string
+}
+
+type trafficServiceCatalogFlight struct {
+	Done    chan struct{}
+	Catalog map[string]trafficServiceCatalogName
+	Err     error
 }
 
 type blockedFlowSample struct {
@@ -425,60 +489,64 @@ type tamperingHistoryReconcileMarker struct {
 type blockedHistoryReconcileStatus struct {
 	Running             bool      `json:"running"`
 	LastTriggerReason   string    `json:"last_trigger_reason,omitempty"`
-	LastStartedAt       time.Time `json:"last_started_at,omitempty"`
-	LastFinishedAt      time.Time `json:"last_finished_at,omitempty"`
+	LastStartedAt       time.Time `json:"last_started_at,omitempty,omitzero"`
+	LastFinishedAt      time.Time `json:"last_finished_at,omitempty,omitzero"`
 	LastDays            int       `json:"last_days,omitempty"`
 	LastUpdated         int       `json:"last_updated,omitempty"`
 	LastFailed          int       `json:"last_failed,omitempty"`
 	LastMessage         string    `json:"last_message,omitempty"`
 	StartupSkipped      bool      `json:"startup_skipped,omitempty"`
 	StartupSkipReason   string    `json:"startup_skip_reason,omitempty"`
-	LastCompletedAt     time.Time `json:"last_completed_at,omitempty"`
+	LastCompletedAt     time.Time `json:"last_completed_at,omitempty,omitzero"`
 	LastTargetSignature string    `json:"last_target_signature,omitempty"`
 }
 
 type tamperingHistoryReconcileStatus struct {
 	Running           bool      `json:"running"`
 	LastTriggerReason string    `json:"last_trigger_reason,omitempty"`
-	LastStartedAt     time.Time `json:"last_started_at,omitempty"`
-	LastFinishedAt    time.Time `json:"last_finished_at,omitempty"`
+	LastStartedAt     time.Time `json:"last_started_at,omitempty,omitzero"`
+	LastFinishedAt    time.Time `json:"last_finished_at,omitempty,omitzero"`
 	LastDays          int       `json:"last_days,omitempty"`
 	LastUpdated       int       `json:"last_updated,omitempty"`
 	LastFailed        int       `json:"last_failed,omitempty"`
 	LastMessage       string    `json:"last_message,omitempty"`
 	StartupSkipped    bool      `json:"startup_skipped,omitempty"`
 	StartupSkipReason string    `json:"startup_skip_reason,omitempty"`
-	LastCompletedAt   time.Time `json:"last_completed_at,omitempty"`
+	LastCompletedAt   time.Time `json:"last_completed_at,omitempty,omitzero"`
 	LastDaySignature  string    `json:"last_day_signature,omitempty"`
 }
 
 type venDailySnapshot struct {
-	WarningMax       int `json:"warning_max"`
-	ErrorMax         int `json:"error_max"`
-	SuspendedMax     int `json:"suspended_max,omitempty"`
-	TamperingMax     int `json:"tampering_max,omitempty"`
-	RulesetsMax      int `json:"rulesets_max,omitempty"`
-	RulesMax         int `json:"rules_max,omitempty"`
-	ModeIdleMax      int `json:"mode_idle_max,omitempty"`
-	ModeVisMax       int `json:"mode_vis_max,omitempty"`
-	ModeSelectiveMax int `json:"mode_selective_max,omitempty"`
-	ModeFullMax      int `json:"mode_full_max,omitempty"`
-	ModeUnmanagedMax int `json:"mode_unmanaged_max,omitempty"`
+	WarningMax        int   `json:"warning_max"`
+	ErrorMax          int   `json:"error_max"`
+	SuspendedMax      int   `json:"suspended_max,omitempty"`
+	StoppedMax        *int  `json:"stopped_max,omitempty"`
+	TamperingMax      int   `json:"tampering_max,omitempty"`
+	TamperingComplete *bool `json:"tampering_complete,omitempty"`
+	RulesetsMax       int   `json:"rulesets_max,omitempty"`
+	RulesMax          int   `json:"rules_max,omitempty"`
+	ModeIdleMax       int   `json:"mode_idle_max,omitempty"`
+	ModeVisMax        int   `json:"mode_vis_max,omitempty"`
+	ModeSelectiveMax  int   `json:"mode_selective_max,omitempty"`
+	ModeFullMax       int   `json:"mode_full_max,omitempty"`
+	ModeUnmanagedMax  int   `json:"mode_unmanaged_max,omitempty"`
 }
 
 type venDailyRecord struct {
-	Day              string `json:"day"`
-	WarningMax       int    `json:"warning_max"`
-	ErrorMax         int    `json:"error_max"`
-	SuspendedMax     int    `json:"suspended_max,omitempty"`
-	TamperingMax     int    `json:"tampering_max,omitempty"`
-	RulesetsMax      int    `json:"rulesets_max,omitempty"`
-	RulesMax         int    `json:"rules_max,omitempty"`
-	ModeIdleMax      int    `json:"mode_idle_max,omitempty"`
-	ModeVisMax       int    `json:"mode_vis_max,omitempty"`
-	ModeSelectiveMax int    `json:"mode_selective_max,omitempty"`
-	ModeFullMax      int    `json:"mode_full_max,omitempty"`
-	ModeUnmanagedMax int    `json:"mode_unmanaged_max,omitempty"`
+	Day               string `json:"day"`
+	WarningMax        int    `json:"warning_max"`
+	ErrorMax          int    `json:"error_max"`
+	SuspendedMax      int    `json:"suspended_max,omitempty"`
+	StoppedMax        *int   `json:"stopped_max,omitempty"`
+	TamperingMax      int    `json:"tampering_max,omitempty"`
+	TamperingComplete *bool  `json:"tampering_complete,omitempty"`
+	RulesetsMax       int    `json:"rulesets_max,omitempty"`
+	RulesMax          int    `json:"rules_max,omitempty"`
+	ModeIdleMax       int    `json:"mode_idle_max,omitempty"`
+	ModeVisMax        int    `json:"mode_vis_max,omitempty"`
+	ModeSelectiveMax  int    `json:"mode_selective_max,omitempty"`
+	ModeFullMax       int    `json:"mode_full_max,omitempty"`
+	ModeUnmanagedMax  int    `json:"mode_unmanaged_max,omitempty"`
 }
 
 type alertTargetState struct {
@@ -510,17 +578,18 @@ type anomalyHistoryEvent struct {
 }
 
 type blockedTargetCycleResult struct {
-	Index          int
-	Result         BlockedTargetResult
-	RawCount       int
-	CurrentCount   int
-	CurrentPorts   map[string]int
-	CurrentHosts   map[string]hostTrafficCount
-	CurrentSamples []blockedFlowSample
-	BaselineCount  int
-	NewlyBaselined bool
-	Success        bool
-	WarningMessage string
+	Index                    int
+	Result                   BlockedTargetResult
+	RawCount                 int
+	CurrentCount             int
+	CurrentPorts             map[string]int
+	CurrentHosts             map[string]hostTrafficCount
+	CurrentSamples           []blockedFlowSample
+	BaselineCount            int
+	NewlyBaselined           bool
+	Success                  bool
+	WarningMessage           string
+	ServiceFilterFingerprint string
 }
 
 var (
@@ -533,30 +602,42 @@ var (
 	statsMutex    sync.RWMutex
 	isRefreshing  atomic.Bool
 
-	rollingMu                sync.Mutex
-	rollingCache             rollingState
-	historyMu                sync.Mutex
-	blockedDaily             = map[string]map[string]int{}
-	blockedDaily5mCaptured   = map[string]map[string]int{}
-	blockedPortsDaily        = map[string]map[string]map[string]int{}
-	blockedHostsDaily        = map[string]map[string]map[string]hostTrafficCount{}
-	policyRulesetDaily       = map[string]map[string]int{}
-	venHistoryMu             sync.Mutex
-	venDaily                 = map[string]venDailySnapshot{}
-	alertMu                  sync.Mutex
-	alertState               = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
-	anomalyHistoryMu         sync.Mutex
-	anomalyHistory           = make([]anomalyHistoryEvent, 0)
-	reconcileMu              sync.Mutex
-	reconcileDayKey          string
-	reconcileDoneByT         = map[string]bool{}
-	reconcileSummarySentByD  = map[string]bool{}
-	fullReconcileInProgress  atomic.Bool
-	reconcileStatusMu        sync.Mutex
-	reconcileStatus          blockedHistoryReconcileStatus
-	tamperingReconcileBusy   atomic.Bool
-	tamperingReconcileState  tamperingHistoryReconcileStatus
-	startupHostReseedPending atomic.Bool
+	rollingMu                      sync.Mutex
+	rollingSaveMu                  sync.Mutex
+	rollingCache                   rollingState
+	historyMu                      sync.Mutex
+	blockedHistorySaveMu           sync.Mutex
+	blockedHistory5mSaveMu         sync.Mutex
+	blockedPortHistorySaveMu       sync.Mutex
+	blockedHostHistorySaveMu       sync.Mutex
+	blockedDaily                   = map[string]map[string]int{}
+	blockedDaily5mCaptured         = map[string]map[string]int{}
+	blockedPortsDaily              = map[string]map[string]map[string]int{}
+	blockedHostsDaily              = map[string]map[string]map[string]hostTrafficCount{}
+	policyRulesetDaily             = map[string]map[string]int{}
+	venHistoryMu                   sync.Mutex
+	venDaily                       = map[string]venDailySnapshot{}
+	alertMu                        sync.Mutex
+	alertState                     = persistedAlertState{SchemaVersion: 1, Targets: map[string]alertTargetState{}, Metrics: map[string]alertTargetState{}}
+	anomalyHistoryMu               sync.Mutex
+	anomalyHistory                 = make([]anomalyHistoryEvent, 0)
+	reconcileMu                    sync.Mutex
+	reconcileDayKey                string
+	reconcileDoneByT               = map[string]bool{}
+	reconcileSummarySentByD        = map[string]bool{}
+	fullReconcileInProgress        atomic.Bool
+	trafficServiceReconcileMu      sync.Mutex
+	trafficServiceReconcilePending = map[string]TrafficTarget{}
+	trafficServiceReconcileWorker  bool
+	reconcileStatusMu              sync.Mutex
+	reconcileStatus                blockedHistoryReconcileStatus
+	tamperingReconcileBusy         atomic.Bool
+	tamperingReconcileState        tamperingHistoryReconcileStatus
+	startupHostReseedPending       atomic.Bool
+	trafficServiceCatalogMu        sync.Mutex
+	trafficServiceCatalog          = map[string]trafficServiceCatalogCacheEntry{}
+	trafficServiceCatalogFlights   = map[string]*trafficServiceCatalogFlight{}
+	configUpdateMu                 sync.Mutex
 
 	httpClient                  = &http.Client{Timeout: 60 * time.Second}
 	tamperingHTTPClient         = &http.Client{Timeout: 60 * time.Second}
@@ -856,18 +937,29 @@ func main() {
 	maybeStartStartupBlockedHistoryReconcile()
 	maybeStartStartupTamperingHistoryReconcile()
 	go backgroundCollector()
+	extractorHandler, err := extractor.NewHandler(context.Background(), dashboardVersionLabel())
+	if err != nil {
+		log.Fatalf("initialize blocked traffic extractor: %v", err)
+	}
 
 	http.HandleFunc("/", withRequestTiming("dashboard", serveDashboard))
+	http.HandleFunc("/blocked-traffic", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/blocked-traffic/", http.StatusTemporaryRedirect)
+	})
+	http.Handle("/blocked-traffic/", http.StripPrefix("/blocked-traffic", extractorHandler))
 	http.HandleFunc("/settings", withRequestTiming("settings", serveSettings))
 	http.HandleFunc("/details", withRequestTiming("details", serveDetails))
 	http.HandleFunc("/report", withRequestTiming("report", serveReport))
 	http.HandleFunc("/trends", withRequestTiming("trends", serveTrends))
 	http.HandleFunc("/executive", withRequestTiming("executive", serveExecutive))
+	http.HandleFunc("/static/product-shell.css", extractor.ServeProductShellCSS)
+	http.HandleFunc("/static/product-shell.js", extractor.ServeProductShellJS)
 	staticFS, err := fs.Sub(templateFS, "static")
 	if err == nil {
 		http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	}
 	http.HandleFunc("/api/stats", withRequestTiming("api.stats", handleStats))
+	http.HandleFunc("/api/version", withRequestTiming("api.version", handleDashboardVersion))
 	http.HandleFunc("/api/drilldown", withRequestTiming("api.drilldown", handleDrilldown))
 	http.HandleFunc("/api/export/drilldown.csv", withRequestTiming("api.export.drilldown_csv", handleExportDrilldownCSV))
 	http.HandleFunc("/api/export/report.csv", withRequestTiming("api.export.report_csv", handleExportReportCSV))
@@ -923,6 +1015,7 @@ func initPendingStats() {
 	stats.Blocked.Targets = make([]BlockedTargetResult, 0)
 	pending := FetchStatus{Success: false, Error: "Initial collection in progress"}
 	stats.VENStatus.Status = pending
+	stats.VENStatus.StoppedStatus = pending
 	stats.Workloads.Status = pending
 	stats.Tampering.Status = pending
 	stats.Rules.Status = pending
@@ -937,29 +1030,48 @@ func initPendingStats() {
 }
 
 func backgroundCollector() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	runScheduledCollection(ticker.C, runCollectionCycle)
+}
+
+// Collect immediately, then on a steady start-to-start cadence. Running the
+// callback synchronously prevents overlap; the ticker drops excess ticks when
+// a collection overruns instead of building an unbounded catch-up queue.
+func runScheduledCollection(ticks <-chan time.Time, collect func()) {
 	for {
-		runCollectionCycle()
-		log.Println("[COLLECTOR] Waiting 5 minutes.")
-		time.Sleep(5 * time.Minute)
+		collect()
+		log.Println("[COLLECTOR] Waiting for the next 5-minute collection tick.")
+		if _, ok := <-ticks; !ok {
+			return
+		}
 	}
 }
 
 func runCollectionCycle() {
-	isRefreshing.Store(true)
+	if !isRefreshing.CompareAndSwap(false, true) {
+		log.Println("[COLLECTOR] Refresh skipped because another dashboard refresh is already running.")
+		return
+	}
+	defer isRefreshing.Store(false)
 	log.Println("[COLLECTOR] Starting PCE data collection cycle...")
 	cycleStart := time.Now().UTC()
 	apiRateLimiter.beginCycle(cycleStart, cycleStart.Add(5*time.Minute))
 
 	newStats := getIllumioStats()
 
+	configUpdateMu.Lock()
+	if !dashboardTrafficServiceFiltersCurrent(newStats) {
+		markDashboardTrafficServiceFiltersStale(&newStats)
+	}
 	statsMutex.Lock()
 	currentStats = newStats
 	statsMutex.Unlock()
 	saveRollingState()
+	configUpdateMu.Unlock()
 	processWebhookAlerts(newStats)
 	apiRateLimiter.endCycle(time.Now().UTC())
 
-	isRefreshing.Store(false)
 	log.Println("[COLLECTOR] Cycle complete.")
 }
 
@@ -1004,6 +1116,14 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := DrilldownResponse{Metric: metric, Target: target, Title: title, Count: len(items), Items: items, Trend: trend}
+	if metric == "tampering" {
+		resp.ItemLastSeen = snapshot.Tampering.LastSeen
+		resp.Status = &snapshot.Tampering.Status
+		resp.Partial = snapshot.Tampering.Partial
+	}
+	if metric == "ven_stopped" {
+		resp.Status = &snapshot.VENStatus.StoppedStatus
+	}
 	if metric == "policy_rulesets" {
 		_, targets := policyRulesetSummaryItems(time.Now().UTC())
 		resp.ItemTargets = targets
@@ -1016,75 +1136,25 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.TrendDaily = policyRulesetDailyTrendSeries(target, configuredHistoryDays())
 		resp.Trend = resp.TrendDaily
 	}
-	if metric == "ven_warning" {
+	if metric == "ven_warning" || metric == "ven_error" || metric == "ven_suspended" || metric == "ven_stopped" {
+		kind := strings.TrimPrefix(metric, "ven_")
 		window := configuredVENMAWindow()
 		dailyWindow := configuredDailyMAWindow()
 		pct := configuredVENAnomalyPct()
 		baselineSource := configuredVENAnomalyBaselineSource()
 		baselineDays := configuredVENAnomalyBaselineDays()
 		minCoverage := configuredVENAnomalyMinCoveragePct()
-		resp.Trend24h = venTrendSeries("warning")
-		resp.TrendDaily = venDailyTrendSeries("warning", configuredHistoryDays())
+		resp.Trend24h = venTrendSeries(kind)
+		resp.TrendDaily = venDailyTrendSeries(kind, configuredHistoryDays())
 		resp.AnomalySource = baselineSource
 		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
-		resp.Anomalous = eval.Anomalous
-		resp.AnomalyReason = eval.Reason
-		resp.AnomalyWindow = eval.Window
-		resp.AnomalyPct = pct
-		resp.AnomalyCoveragePct = eval.CoveragePct
-		resp.LatestValue = eval.Latest
-		resp.MovingAvgValue = eval.Baseline
-		resp.BlockedMAWindow = window
-		resp.BlockedAnomalyPct = pct
-		if baselineSource == "daily" {
-			resp.TrendMA24h = flatTrendLine(resp.Trend24h, eval.Baseline)
-			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
-		} else {
-			resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
-			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
+		if metric == "ven_stopped" {
+			eval, _ = stoppedVENAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
+			if !snapshot.VENStatus.StoppedStatus.Success {
+				eval.Anomalous = false
+				eval.Reason = "Stopped VEN collection unavailable; historical trends retained"
+			}
 		}
-		resp.Trend = resp.Trend24h
-	}
-	if metric == "ven_error" {
-		window := configuredVENMAWindow()
-		dailyWindow := configuredDailyMAWindow()
-		pct := configuredVENAnomalyPct()
-		baselineSource := configuredVENAnomalyBaselineSource()
-		baselineDays := configuredVENAnomalyBaselineDays()
-		minCoverage := configuredVENAnomalyMinCoveragePct()
-		resp.Trend24h = venTrendSeries("error")
-		resp.TrendDaily = venDailyTrendSeries("error", configuredHistoryDays())
-		resp.AnomalySource = baselineSource
-		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
-		resp.Anomalous = eval.Anomalous
-		resp.AnomalyReason = eval.Reason
-		resp.AnomalyWindow = eval.Window
-		resp.AnomalyPct = pct
-		resp.AnomalyCoveragePct = eval.CoveragePct
-		resp.LatestValue = eval.Latest
-		resp.MovingAvgValue = eval.Baseline
-		resp.BlockedMAWindow = window
-		resp.BlockedAnomalyPct = pct
-		if baselineSource == "daily" {
-			resp.TrendMA24h = flatTrendLine(resp.Trend24h, eval.Baseline)
-			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
-		} else {
-			resp.TrendMA24h = movingAverageTrend(resp.Trend24h, window)
-			resp.TrendMADaily = movingAverageTrend(resp.TrendDaily, dailyWindow)
-		}
-		resp.Trend = resp.Trend24h
-	}
-	if metric == "ven_suspended" {
-		window := configuredVENMAWindow()
-		dailyWindow := configuredDailyMAWindow()
-		pct := configuredVENAnomalyPct()
-		baselineSource := configuredVENAnomalyBaselineSource()
-		baselineDays := configuredVENAnomalyBaselineDays()
-		minCoverage := configuredVENAnomalyMinCoveragePct()
-		resp.Trend24h = venTrendSeries("suspended")
-		resp.TrendDaily = venDailyTrendSeries("suspended", configuredHistoryDays())
-		resp.AnomalySource = baselineSource
-		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
 		resp.Anomalous = eval.Anomalous
 		resp.AnomalyReason = eval.Reason
 		resp.AnomalyWindow = eval.Window
@@ -1116,7 +1186,11 @@ func handleDrilldown(w http.ResponseWriter, r *http.Request) {
 		resp.Trend24h = tamperingTrendSeries()
 		resp.TrendDaily = tamperingDailyTrendSeries(configuredHistoryDays())
 		resp.AnomalySource = baselineSource
-		eval := blockedAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
+		eval, _ := tamperingAnomalyFromConfig(resp.Trend24h, resp.TrendDaily, window, pct, baselineSource, baselineDays, minCoverage)
+		if !snapshot.Tampering.Status.Success || snapshot.Tampering.Partial || snapshot.Tampering.Status.Error != "" {
+			eval.Anomalous = false
+			eval.Reason = "Tampering collection incomplete; historical trends retained"
+		}
 		resp.Anomalous = eval.Anomalous
 		resp.AnomalyReason = eval.Reason
 		resp.AnomalyWindow = eval.Window
@@ -1267,6 +1341,9 @@ func handleExportDrilldownCSV(w http.ResponseWriter, r *http.Request) {
 	} else if metric == "ven_suspended" {
 		trend24h = venTrendSeries("suspended")
 		trendDaily = venDailyTrendSeries("suspended", configuredHistoryDays())
+	} else if metric == "ven_stopped" {
+		trend24h = venTrendSeries("stopped")
+		trendDaily = venDailyTrendSeries("stopped", configuredHistoryDays())
 	} else if isEnforcementMetric(metric) {
 		mode := enforcementModeFromMetric(metric)
 		trend24h = modeTrendSeries(mode)
@@ -1319,17 +1396,41 @@ func handleExportDrilldownCSV(w http.ResponseWriter, r *http.Request) {
 	if !write("Title", title) {
 		return
 	}
-	if !write("Item Count", strconv.Itoa(len(items))) {
+	itemCount := strconv.Itoa(len(items))
+	if metric == "tampering" && (!snapshot.Tampering.Status.Success || snapshot.Tampering.Partial || snapshot.Tampering.Status.Error != "") {
+		itemCount += " (incomplete)"
+		if len(items) == 0 {
+			itemCount = "Unavailable"
+		}
+		if !write("Collection Status", "Incomplete", snapshot.Tampering.Status.Error) {
+			return
+		}
+	}
+	if metric == "ven_stopped" && !snapshot.VENStatus.StoppedStatus.Success {
+		itemCount = "Unavailable"
+		if !write("Collection Status", "Incomplete", snapshot.VENStatus.StoppedStatus.Error) {
+			return
+		}
+	}
+	if !write("Item Count", itemCount) {
 		return
 	}
 	if !write() {
 		return
 	}
-	if !write("Item") {
+	itemHeader := []string{"Item"}
+	if metric == "tampering" {
+		itemHeader = append(itemHeader, "Last tamper UTC")
+	}
+	if !write(itemHeader...) {
 		return
 	}
 	for _, it := range items {
-		if !write(it) {
+		fields := []string{it}
+		if metric == "tampering" {
+			fields = append(fields, formatTamperingTimestamp(snapshot.Tampering.LastSeen[it]))
+		}
+		if !write(fields...) {
 			return
 		}
 	}
@@ -1361,6 +1462,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		configMutex.RLock()
 		targets := append([]TrafficTarget(nil), config.TrafficTargets...)
 		exclusions := append([]TrafficTarget(nil), config.SourceExclusions...)
+		serviceExclusions := append([]string(nil), config.TrafficServiceExclusions...)
 		historyDays := configuredHistoryDaysLocked()
 		blockedPortDailyEnabled := configuredBlockedPortDailyEnabledLocked()
 		maWindow := configuredBlockedMAWindowLocked()
@@ -1416,6 +1518,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"traffic_targets":                          targets,
 			"traffic_source_exclusions":                exclusions,
+			"traffic_service_exclusions":               serviceExclusions,
 			"history_days":                             historyDays,
 			"blocked_port_daily_enabled":               blockedPortDailyEnabled,
 			"blocked_ma_window":                        maWindow,
@@ -1465,6 +1568,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			TrafficTargets               []TrafficTarget `json:"traffic_targets"`
 			SourceExclusions             []TrafficTarget `json:"traffic_source_exclusions"`
+			TrafficServiceExclusions     []string        `json:"traffic_service_exclusions"`
 			HistoryDays                  int             `json:"history_days"`
 			BlockedPortDailyEnabled      *bool           `json:"blocked_port_daily_enabled"`
 			BlockedMAWindow              int             `json:"blocked_ma_window"`
@@ -1518,9 +1622,71 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "at least one target is required", http.StatusBadRequest)
 			return
 		}
+		if err := validateUniqueTrafficTargetNames(cleaned); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := validateServiceExclusions(req.TrafficServiceExclusions); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		for _, target := range req.TrafficTargets {
+			if err := validateServiceExclusions(target.ServiceExclusions); err != nil {
+				http.Error(w, fmt.Sprintf("target %q: %v", strings.TrimSpace(target.Name), err), http.StatusBadRequest)
+				return
+			}
+		}
+
+		configUpdateMu.Lock()
+		defer configUpdateMu.Unlock()
+		newServiceExclusions := sanitizeServiceExclusions(req.TrafficServiceExclusions)
+		configMutex.RLock()
+		oldTargets := sanitizeTargets(config.TrafficTargets)
+		oldServiceExclusions := sanitizeServiceExclusions(config.TrafficServiceExclusions)
+		pceURL := strings.TrimSpace(config.PCEURL)
+		orgID := strings.TrimSpace(config.OrgID)
+		currentWebhookURL := strings.TrimSpace(config.WebhookURL)
+		currentDailySummaryWebhookURL := strings.TrimSpace(config.DailySummaryWebhookURL)
+		privateWebhookOrigins := append([]string(nil), config.WebhookPrivateAllowedOrigins...)
+		configMutex.RUnlock()
+		validatedWebhookURL := currentWebhookURL
+		if req.WebhookURL != nil {
+			var err error
+			validatedWebhookURL, err = validateWebhookSettingURL(r.Context(), *req.WebhookURL, privateWebhookOrigins)
+			if err != nil {
+				http.Error(w, "invalid webhook_url: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		validatedDailySummaryWebhookURL := currentDailySummaryWebhookURL
+		if req.DailySummaryWebhookURL != nil {
+			var err error
+			validatedDailySummaryWebhookURL, err = validateWebhookSettingURL(r.Context(), *req.DailySummaryWebhookURL, privateWebhookOrigins)
+			if err != nil {
+				http.Error(w, "invalid daily_summary_webhook_url: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		affectedServiceTargets := trafficTargetsWithChangedServiceExclusions(oldTargets, cleaned, oldServiceExclusions, newServiceExclusions)
+		if len(affectedServiceTargets) > 0 {
+			baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), orgID)
+			invalidateTrafficServiceCatalog(baseURL)
+			prepared, err := validateAndPrepareTrafficServiceExclusionTargets(baseURL, newServiceExclusions, affectedServiceTargets)
+			if err != nil {
+				status := http.StatusBadGateway
+				message := strings.ToLower(err.Error())
+				if strings.Contains(message, "was not found") || strings.Contains(message, "has no usable") || strings.Contains(message, "must be unique") {
+					status = http.StatusBadRequest
+				}
+				http.Error(w, err.Error(), status)
+				return
+			}
+			affectedServiceTargets = prepared
+		}
 		configMutex.Lock()
 		config.TrafficTargets = cleaned
 		config.SourceExclusions = sanitizeTargets(req.SourceExclusions)
+		config.TrafficServiceExclusions = newServiceExclusions
 		if req.HistoryDays > 0 {
 			if req.HistoryDays > maxHistoryDays {
 				req.HistoryDays = maxHistoryDays
@@ -1615,7 +1781,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			config.DiagnosticsEnabled = *req.DiagnosticsEnabled
 		}
 		if req.WebhookURL != nil {
-			config.WebhookURL = strings.TrimSpace(*req.WebhookURL)
+			config.WebhookURL = validatedWebhookURL
 		}
 		if req.WebhookEnabled != nil {
 			config.WebhookEnabled = *req.WebhookEnabled && strings.TrimSpace(config.WebhookURL) != ""
@@ -1636,7 +1802,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			config.WebhookTeamsTitlePrefix = strings.TrimSpace(*req.WebhookTeamsTitlePrefix)
 		}
 		if req.DailySummaryWebhookURL != nil {
-			config.DailySummaryWebhookURL = strings.TrimSpace(*req.DailySummaryWebhookURL)
+			config.DailySummaryWebhookURL = validatedDailySummaryWebhookURL
 		}
 		if req.DailySummaryWebhookEnabled != nil {
 			config.DailySummaryWebhookEnabled = *req.DailySummaryWebhookEnabled && strings.TrimSpace(config.DailySummaryWebhookURL) != ""
@@ -1700,8 +1866,14 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		dailySummarySlackUsername := strings.TrimSpace(config.DailySummarySlackUsername)
 		dailySummarySlackIconEmoji := strings.TrimSpace(config.DailySummarySlackIconEmoji)
 		dailySummaryTeamsTitlePrefix := strings.TrimSpace(config.DailySummaryTeamsTitlePrefix)
+		savedSourceExclusions := append([]TrafficTarget(nil), config.SourceExclusions...)
+		savedServiceExclusions := append([]string(nil), config.TrafficServiceExclusions...)
 		saveConfigLocked()
 		configMutex.Unlock()
+		if len(affectedServiceTargets) > 0 {
+			invalidateTrafficServiceFilterTargets(affectedServiceTargets)
+			requestTrafficServiceHistoryReconcile("traffic-service-exclusions-changed", affectedServiceTargets)
+		}
 		pruneBlockedHistory(time.Now().UTC(), historyDays)
 		pruneVENHistory(time.Now().UTC(), historyDays)
 
@@ -1709,7 +1881,8 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"saved":                                    true,
 			"traffic_targets":                          cleaned,
-			"traffic_source_exclusions":                config.SourceExclusions,
+			"traffic_source_exclusions":                savedSourceExclusions,
+			"traffic_service_exclusions":               savedServiceExclusions,
 			"history_days":                             historyDays,
 			"blocked_port_daily_enabled":               blockedPortDailyEnabled,
 			"blocked_ma_window":                        maWindow,
@@ -1754,7 +1927,7 @@ func handleConfigTargets(w http.ResponseWriter, r *http.Request) {
 			"daily_summary_webhook_slack_username":     dailySummarySlackUsername,
 			"daily_summary_webhook_slack_icon_emoji":   dailySummarySlackIconEmoji,
 			"daily_summary_webhook_teams_title_prefix": dailySummaryTeamsTitlePrefix,
-			"message":                                  "Saved. Click Refresh Now to apply immediately.",
+			"message": "Saved. Click Refresh Now to apply immediately.",
 		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1788,47 +1961,70 @@ func handleConfigCredentials(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid json body", http.StatusBadRequest)
 			return
 		}
-		configMutex.Lock()
+		if req.PCEURL != nil && strings.TrimSpace(*req.PCEURL) == "" {
+			http.Error(w, "pce_url cannot be empty", http.StatusBadRequest)
+			return
+		}
+		if req.APIKey != nil && strings.TrimSpace(*req.APIKey) == "" {
+			http.Error(w, "api_key cannot be empty", http.StatusBadRequest)
+			return
+		}
+		if req.APISecret != nil && strings.TrimSpace(*req.APISecret) == "" {
+			http.Error(w, "api_secret cannot be empty", http.StatusBadRequest)
+			return
+		}
+
+		configUpdateMu.Lock()
+		defer configUpdateMu.Unlock()
+		configMutex.RLock()
+		currentPCEURL := strings.TrimSpace(config.PCEURL)
+		allowedPCEOrigins := append([]string(nil), config.PCEAllowedOrigins...)
+		currentOrgID := strings.TrimSpace(config.OrgID)
+		configMutex.RUnlock()
+
+		candidatePCEURL := currentPCEURL
 		if req.PCEURL != nil {
-			clean := strings.TrimSpace(*req.PCEURL)
-			if clean == "" {
-				configMutex.Unlock()
-				http.Error(w, "pce_url cannot be empty", http.StatusBadRequest)
-				return
-			}
-			config.PCEURL = clean
+			candidatePCEURL = strings.TrimSpace(*req.PCEURL)
 		}
+		normalizedPCEURL, err := validateAuthorizedPCEOrigin(candidatePCEURL, currentPCEURL, allowedPCEOrigins)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		candidateOrgID := currentOrgID
 		if req.OrgID != nil {
-			clean := strings.TrimSpace(*req.OrgID)
-			if clean == "" {
-				clean = "1"
+			candidateOrgID = strings.TrimSpace(*req.OrgID)
+			if candidateOrgID == "" {
+				candidateOrgID = "1"
 			}
-			config.OrgID = clean
 		}
+		orgIDValue, err := strconv.ParseUint(candidateOrgID, 10, 64)
+		if err != nil || orgIDValue == 0 {
+			http.Error(w, "org_id must be a positive integer", http.StatusBadRequest)
+			return
+		}
+
+		configMutex.Lock()
+		oldBaseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(strings.TrimSpace(config.PCEURL), "/"), strings.TrimSpace(config.OrgID))
+		config.PCEURL = normalizedPCEURL
+		config.OrgID = candidateOrgID
 		if req.APIKey != nil {
-			clean := strings.TrimSpace(*req.APIKey)
-			if clean == "" {
-				configMutex.Unlock()
-				http.Error(w, "api_key cannot be empty", http.StatusBadRequest)
-				return
-			}
-			config.APIKey = clean
+			config.APIKey = strings.TrimSpace(*req.APIKey)
 		}
 		if req.APISecret != nil {
-			clean := strings.TrimSpace(*req.APISecret)
-			if clean == "" {
-				configMutex.Unlock()
-				http.Error(w, "api_secret cannot be empty", http.StatusBadRequest)
-				return
-			}
-			config.APISecret = clean
+			config.APISecret = strings.TrimSpace(*req.APISecret)
 		}
 		saveConfigLocked()
 		pceURL := strings.TrimSpace(config.PCEURL)
 		orgID := strings.TrimSpace(config.OrgID)
 		apiKey := strings.TrimSpace(config.APIKey)
 		secretSet := strings.TrimSpace(config.APISecret) != ""
+		newBaseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), orgID)
 		configMutex.Unlock()
+		invalidateTrafficServiceCatalog(oldBaseURL)
+		if newBaseURL != oldBaseURL {
+			invalidateTrafficServiceCatalog(newBaseURL)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"saved":          true,
@@ -1900,15 +2096,30 @@ func handleConfigAlerts(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid json body", http.StatusBadRequest)
 			return
 		}
+		configUpdateMu.Lock()
+		defer configUpdateMu.Unlock()
+		configMutex.RLock()
+		privateWebhookOrigins := append([]string(nil), config.WebhookPrivateAllowedOrigins...)
+		configMutex.RUnlock()
+		webhookURL, err := validateWebhookSettingURL(r.Context(), req.WebhookURL, privateWebhookOrigins)
+		if err != nil {
+			http.Error(w, "invalid webhook_url: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		dailySummaryWebhookURL, err := validateWebhookSettingURL(r.Context(), req.DailySummaryWebhookURL, privateWebhookOrigins)
+		if err != nil {
+			http.Error(w, "invalid daily_summary_webhook_url: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 		configMutex.Lock()
-		config.WebhookURL = strings.TrimSpace(req.WebhookURL)
+		config.WebhookURL = webhookURL
 		config.WebhookEnabled = req.WebhookEnabled && config.WebhookURL != ""
 		config.WebhookProvider = normalizeWebhookProvider(req.WebhookProvider)
 		config.WebhookSlackChannel = strings.TrimSpace(req.WebhookSlackChannel)
 		config.WebhookSlackUsername = strings.TrimSpace(req.WebhookSlackUsername)
 		config.WebhookSlackIconEmoji = strings.TrimSpace(req.WebhookSlackIconEmoji)
 		config.WebhookTeamsTitlePrefix = strings.TrimSpace(req.WebhookTeamsTitlePrefix)
-		config.DailySummaryWebhookURL = strings.TrimSpace(req.DailySummaryWebhookURL)
+		config.DailySummaryWebhookURL = dailySummaryWebhookURL
 		config.DailySummaryWebhookEnabled = req.DailySummaryWebhookEnabled && config.DailySummaryWebhookURL != ""
 		config.DailySummaryWebhookProvider = normalizeWebhookProvider(req.DailySummaryWebhookProvider)
 		config.DailySummarySlackChannel = strings.TrimSpace(req.DailySummaryWebhookSlackChannel)
@@ -1916,14 +2127,14 @@ func handleConfigAlerts(w http.ResponseWriter, r *http.Request) {
 		config.DailySummarySlackIconEmoji = strings.TrimSpace(req.DailySummaryWebhookSlackIconEmoji)
 		config.DailySummaryTeamsTitlePrefix = strings.TrimSpace(req.DailySummaryWebhookTeamsTitlePrefix)
 		saveConfigLocked()
-		webhookURL := strings.TrimSpace(config.WebhookURL)
+		webhookURL = strings.TrimSpace(config.WebhookURL)
 		webhookEnabled := configuredWebhookEnabledLocked()
 		webhookProvider := configuredWebhookProviderLocked()
 		slackChannel := strings.TrimSpace(config.WebhookSlackChannel)
 		slackUsername := strings.TrimSpace(config.WebhookSlackUsername)
 		slackIconEmoji := strings.TrimSpace(config.WebhookSlackIconEmoji)
 		teamsTitlePrefix := strings.TrimSpace(config.WebhookTeamsTitlePrefix)
-		dailySummaryWebhookURL := strings.TrimSpace(config.DailySummaryWebhookURL)
+		dailySummaryWebhookURL = strings.TrimSpace(config.DailySummaryWebhookURL)
 		dailySummaryWebhookEnabled := configuredDailySummaryWebhookEnabledLocked()
 		dailySummaryWebhookProvider := configuredDailySummaryWebhookProviderLocked()
 		dailySummarySlackChannel := strings.TrimSpace(config.DailySummarySlackChannel)
@@ -1960,8 +2171,8 @@ func handleRefreshNow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	go runCollectionCycle()
 	w.Header().Set("Content-Type", "application/json")
+	go runCollectionCycle()
 	_ = json.NewEncoder(w).Encode(map[string]bool{"started": true})
 }
 
@@ -2023,8 +2234,8 @@ func handleReconcileBlockedHistoryStatus(w http.ResponseWriter, r *http.Request)
 	}
 	reconcileStatusMu.Lock()
 	status := reconcileStatus
-	reconcileStatusMu.Unlock()
 	status.Running = fullReconcileInProgress.Load()
+	reconcileStatusMu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(status)
 }
@@ -2056,18 +2267,100 @@ func handleReconcileTamperingHistoryStatus(w http.ResponseWriter, r *http.Reques
 	}
 	reconcileStatusMu.Lock()
 	status := tamperingReconcileState
-	reconcileStatusMu.Unlock()
 	status.Running = tamperingReconcileBusy.Load()
+	reconcileStatusMu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(status)
 }
 
+func beginBlockedHistoryReconcileStatus(reason string) bool {
+	reconcileStatusMu.Lock()
+	defer reconcileStatusMu.Unlock()
+	if !fullReconcileInProgress.CompareAndSwap(false, true) {
+		return false
+	}
+	reconcileStatus.StartupSkipped = false
+	reconcileStatus.StartupSkipReason = ""
+	reconcileStatus.Running = true
+	reconcileStatus.LastTriggerReason = reason
+	reconcileStatus.LastStartedAt = time.Now().UTC()
+	reconcileStatus.LastFinishedAt = time.Time{}
+	reconcileStatus.LastDays = 0
+	reconcileStatus.LastUpdated = 0
+	reconcileStatus.LastFailed = 0
+	reconcileStatus.LastTargetSignature = ""
+	reconcileStatus.LastMessage = "reconcile running"
+	return true
+}
+
+func finishBlockedHistoryReconcileStatus(days, updated, failed int, targetSignature string) {
+	reconcileStatusMu.Lock()
+	reconcileStatus.LastDays = days
+	reconcileStatus.LastUpdated = updated
+	reconcileStatus.LastFailed = failed
+	reconcileStatus.LastTargetSignature = targetSignature
+	reconcileStatus.LastMessage = fmt.Sprintf("reconcile complete days=%d updated=%d failed=%d", days, updated, failed)
+	reconcileStatus.LastFinishedAt = time.Now().UTC()
+	reconcileStatus.Running = false
+	fullReconcileInProgress.Store(false)
+	reconcileStatusMu.Unlock()
+}
+
+func beginTamperingHistoryReconcileStatus(reason string) bool {
+	reconcileStatusMu.Lock()
+	defer reconcileStatusMu.Unlock()
+	if !tamperingReconcileBusy.CompareAndSwap(false, true) {
+		return false
+	}
+	tamperingReconcileState.StartupSkipped = false
+	tamperingReconcileState.StartupSkipReason = ""
+	tamperingReconcileState.Running = true
+	tamperingReconcileState.LastTriggerReason = reason
+	tamperingReconcileState.LastStartedAt = time.Now().UTC()
+	tamperingReconcileState.LastFinishedAt = time.Time{}
+	tamperingReconcileState.LastDays = 0
+	tamperingReconcileState.LastUpdated = 0
+	tamperingReconcileState.LastFailed = 0
+	tamperingReconcileState.LastDaySignature = ""
+	tamperingReconcileState.LastMessage = "reconcile running"
+	return true
+}
+
+func finishTamperingHistoryReconcileStatus(days, updated, failed int, daySignature string) {
+	reconcileStatusMu.Lock()
+	tamperingReconcileState.LastDays = days
+	tamperingReconcileState.LastUpdated = updated
+	tamperingReconcileState.LastFailed = failed
+	tamperingReconcileState.LastDaySignature = daySignature
+	tamperingReconcileState.LastMessage = fmt.Sprintf("reconcile complete days=%d updated=%d failed=%d", days, updated, failed)
+	tamperingReconcileState.LastFinishedAt = time.Now().UTC()
+	tamperingReconcileState.Running = false
+	tamperingReconcileBusy.Store(false)
+	reconcileStatusMu.Unlock()
+}
+
 func maybeStartStartupBlockedHistoryReconcile() {
-	targets := configuredTrafficTargets()
+	configMutex.RLock()
+	pceURL := config.PCEURL
+	orgID := config.OrgID
+	configMutex.RUnlock()
+	baseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(pceURL, "/"), strings.TrimSpace(orgID))
+	targets := freezeTrafficTargetServiceExclusions(configuredTrafficTargets())
+	targets = prepareTrafficTargetsServiceExclusions(baseURL, targets)
 	marker, ok := loadBlockedHistoryReconcileMarker()
 	pending := make([]TrafficTarget, 0, len(targets))
+	resolutionFailures := 0
 	for _, t := range targets {
 		if strings.TrimSpace(t.Name) == "" {
+			continue
+		}
+		if strings.TrimSpace(t.serviceResolutionError) != "" {
+			log.Printf("[HISTORY] startup reconcile deferred target=%s: %s", t.Name, t.serviceResolutionError)
+			resolutionFailures++
+			continue
+		}
+		if trafficServiceHistoryPending(t.Name) {
+			pending = append(pending, t)
 			continue
 		}
 		if ok && marker.HasTarget(targetKeyForReconcile(t)) {
@@ -2077,13 +2370,23 @@ func maybeStartStartupBlockedHistoryReconcile() {
 	}
 	if len(pending) == 0 {
 		reconcileStatusMu.Lock()
-		reconcileStatus.StartupSkipped = true
-		reconcileStatus.StartupSkipReason = "marker exists for current target set"
+		reconcileStatus.StartupSkipped = resolutionFailures == 0
+		if resolutionFailures > 0 {
+			reconcileStatus.StartupSkipReason = fmt.Sprintf("deferred: %d traffic service exclusion resolution failure(s)", resolutionFailures)
+		} else {
+			reconcileStatus.StartupSkipReason = "marker exists for current target set"
+		}
 		reconcileStatus.LastCompletedAt = marker.LastCompletedAt()
 		reconcileStatus.LastTargetSignature = blockedHistoryReconcileFingerprint(targets)
-		reconcileStatus.LastMessage = "startup reconcile skipped (already completed)"
+		if resolutionFailures > 0 {
+			reconcileStatus.LastMessage = reconcileStatus.StartupSkipReason
+		} else {
+			reconcileStatus.LastMessage = "startup reconcile skipped (already completed)"
+		}
 		reconcileStatusMu.Unlock()
-		log.Printf("[HISTORY] startup full reconcile skipped: all %d target markers present", len(targets))
+		if resolutionFailures == 0 {
+			log.Printf("[HISTORY] startup full reconcile skipped: all %d target markers present", len(targets))
+		}
 		return
 	}
 	log.Printf("[HISTORY] startup full reconcile pending targets=%d/%d", len(pending), len(targets))
@@ -2091,26 +2394,11 @@ func maybeStartStartupBlockedHistoryReconcile() {
 }
 
 func startFullBlockedHistoryReconcileAsync(reason string, selectedTargets []TrafficTarget) bool {
-	if !fullReconcileInProgress.CompareAndSwap(false, true) {
+	if !beginBlockedHistoryReconcileStatus(reason) {
 		log.Printf("[HISTORY] full reconcile request ignored: already in progress (reason=%s)", reason)
 		return false
 	}
-	reconcileStatusMu.Lock()
-	reconcileStatus.StartupSkipped = false
-	reconcileStatus.StartupSkipReason = ""
-	reconcileStatus.Running = true
-	reconcileStatus.LastTriggerReason = reason
-	reconcileStatus.LastStartedAt = time.Now().UTC()
-	reconcileStatus.LastMessage = "reconcile running"
-	reconcileStatusMu.Unlock()
 	go func() {
-		defer func() {
-			fullReconcileInProgress.Store(false)
-			reconcileStatusMu.Lock()
-			reconcileStatus.Running = false
-			reconcileStatus.LastFinishedAt = time.Now().UTC()
-			reconcileStatusMu.Unlock()
-		}()
 		configMutex.RLock()
 		pceURL := config.PCEURL
 		orgID := config.OrgID
@@ -2119,6 +2407,11 @@ func startFullBlockedHistoryReconcileAsync(reason string, selectedTargets []Traf
 		targets := selectedTargets
 		if len(targets) == 0 {
 			targets = configuredTrafficTargets()
+		}
+		targets = freezeTrafficTargetServiceExclusions(targets)
+		targets = prepareTrafficTargetsServiceExclusions(baseURL, targets)
+		if changed := trafficServiceHistoryPendingFingerprintChanges(targets); len(changed) > 0 {
+			invalidateTrafficServiceFilterTargets(changed)
 		}
 		fp := blockedHistoryReconcileFingerprint(targets)
 		log.Printf("[HISTORY] full reconcile start reason=%s targets=%d", reason, len(targets))
@@ -2129,30 +2422,99 @@ func startFullBlockedHistoryReconcileAsync(reason string, selectedTargets []Traf
 		todayUpdated, todayFailed := reconcileCurrentDayBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
 		updated += todayUpdated
 		failed += todayFailed
+		configUpdateMu.Lock()
+		for _, target := range targets {
+			selectorFingerprint := targetServiceExclusionSelectorFingerprint(target)
+			if !ensureTrafficTargetServiceFilterCurrent(target, selectorFingerprint, "reconcile-marker") {
+				failed++
+			}
+		}
 		if len(targets) > 0 {
 			days++
 		}
-		reconcileStatusMu.Lock()
-		reconcileStatus.LastDays = days
-		reconcileStatus.LastUpdated = updated
-		reconcileStatus.LastFailed = failed
-		reconcileStatus.LastTargetSignature = fp
-		reconcileStatus.LastMessage = fmt.Sprintf("reconcile complete days=%d updated=%d failed=%d", days, updated, failed)
-		reconcileStatusMu.Unlock()
 		if failed == 0 {
 			marker, _ := loadBlockedHistoryReconcileMarker()
 			marker.MarkTargetsComplete(targets, time.Now().UTC())
 			if err := saveBlockedHistoryReconcileMarker(marker); err != nil {
 				log.Printf("[HISTORY] failed saving reconcile marker: %v", err)
 			} else {
+				clearTrafficServiceHistoryPending(targets)
 				reconcileStatusMu.Lock()
 				reconcileStatus.LastCompletedAt = marker.LastCompletedAt()
 				reconcileStatusMu.Unlock()
 			}
 		}
+		configUpdateMu.Unlock()
+		finishBlockedHistoryReconcileStatus(days, updated, failed, fp)
 		log.Printf("[HISTORY] full reconcile complete reason=%s days=%d updated=%d failed=%d", reason, days, updated, failed)
 	}()
 	return true
+}
+
+func requestTrafficServiceHistoryReconcile(reason string, targets []TrafficTarget) {
+	if len(targets) == 0 {
+		return
+	}
+	if startFullBlockedHistoryReconcileAsync(reason, targets) {
+		return
+	}
+
+	trafficServiceReconcileMu.Lock()
+	for _, target := range targets {
+		if key := trafficTargetIdentity(target); key != ":" {
+			trafficServiceReconcilePending[key] = target
+		}
+	}
+	if trafficServiceReconcileWorker {
+		trafficServiceReconcileMu.Unlock()
+		return
+	}
+	trafficServiceReconcileWorker = true
+	trafficServiceReconcileMu.Unlock()
+
+	go func() {
+		for {
+			if fullReconcileInProgress.Load() {
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			trafficServiceReconcileMu.Lock()
+			pendingSnapshots := make([]TrafficTarget, 0, len(trafficServiceReconcilePending))
+			for key, target := range trafficServiceReconcilePending {
+				pendingSnapshots = append(pendingSnapshots, target)
+				delete(trafficServiceReconcilePending, key)
+			}
+			if len(pendingSnapshots) == 0 {
+				trafficServiceReconcileWorker = false
+				trafficServiceReconcileMu.Unlock()
+				return
+			}
+			trafficServiceReconcileMu.Unlock()
+			pending := make([]TrafficTarget, 0, len(pendingSnapshots))
+			configured := configuredTrafficTargets()
+			for _, snapshot := range pendingSnapshots {
+				for _, current := range configured {
+					if trafficTargetIdentity(current) == trafficTargetIdentity(snapshot) {
+						pending = append(pending, current)
+						break
+					}
+				}
+			}
+			if len(pending) == 0 {
+				continue
+			}
+
+			if startFullBlockedHistoryReconcileAsync(reason+"-queued", pending) {
+				continue
+			}
+			trafficServiceReconcileMu.Lock()
+			for _, target := range pending {
+				trafficServiceReconcilePending[trafficTargetIdentity(target)] = target
+			}
+			trafficServiceReconcileMu.Unlock()
+			time.Sleep(2 * time.Second)
+		}
+	}()
 }
 
 func blockedHistoryReconcileFingerprint(targets []TrafficTarget) string {
@@ -2175,7 +2537,269 @@ func targetKeyForReconcile(t TrafficTarget) string {
 		return ""
 	}
 	kind := strings.ToLower(strings.TrimSpace(t.Kind))
-	return kind + ":" + name
+	key := kind + ":" + name
+	selectors := effectiveTrafficServiceExclusions(t)
+	if len(selectors) > 0 {
+		key += ":services=" + targetServiceExclusionFingerprint(t)
+	}
+	return key
+}
+
+func trafficTargetIdentity(t TrafficTarget) string {
+	return strings.ToLower(strings.TrimSpace(t.Kind)) + ":" + strings.ToLower(strings.TrimSpace(t.Name))
+}
+
+func trafficTargetsWithChangedServiceExclusions(oldTargets, newTargets []TrafficTarget, oldGlobal, newGlobal []string) []TrafficTarget {
+	oldByIdentity := make(map[string]TrafficTarget, len(oldTargets))
+	for _, target := range oldTargets {
+		oldByIdentity[trafficTargetIdentity(target)] = target
+	}
+	affected := make([]TrafficTarget, 0)
+	for _, target := range newTargets {
+		newFingerprint := serviceExclusionFingerprint(effectiveTrafficServiceExclusionsFrom(newGlobal, target))
+		oldTarget, existed := oldByIdentity[trafficTargetIdentity(target)]
+		if !existed {
+			if len(effectiveTrafficServiceExclusionsFrom(newGlobal, target)) > 0 {
+				affected = append(affected, target)
+			}
+			continue
+		}
+		oldFingerprint := serviceExclusionFingerprint(effectiveTrafficServiceExclusionsFrom(oldGlobal, oldTarget))
+		if oldFingerprint != newFingerprint {
+			affected = append(affected, target)
+		}
+	}
+	return affected
+}
+
+func targetHasRollingDataLocked(name string) bool {
+	if _, ok := rollingCache.BaselineBlocked[name]; ok {
+		return true
+	}
+	if len(rollingCache.BlockedFlowLastSeen[name]) > 0 {
+		return true
+	}
+	for _, bucket := range rollingCache.Buckets {
+		if _, ok := bucket.BlockedByTarget[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func trafficTargetsWithRollingServiceFilterChanges(targets []TrafficTarget) []TrafficTarget {
+	fingerprints := make(map[string]string, len(targets))
+	hasExclusions := make(map[string]bool, len(targets))
+	hasStoredHistory := make(map[string]bool, len(targets))
+	for _, target := range targets {
+		if strings.TrimSpace(target.serviceResolutionError) != "" {
+			continue
+		}
+		selectors := effectiveTrafficServiceExclusions(target)
+		fingerprints[target.Name] = targetServiceExclusionFingerprint(target)
+		hasExclusions[target.Name] = len(selectors) > 0
+	}
+	historyMu.Lock()
+	for _, target := range targets {
+		if strings.TrimSpace(target.serviceResolutionError) != "" {
+			continue
+		}
+		for _, dayTargets := range blockedDaily {
+			if _, ok := dayTargets[target.Name]; ok {
+				hasStoredHistory[target.Name] = true
+				break
+			}
+		}
+		if hasStoredHistory[target.Name] {
+			continue
+		}
+		for _, dayTargets := range blockedDaily5mCaptured {
+			if _, ok := dayTargets[target.Name]; ok {
+				hasStoredHistory[target.Name] = true
+				break
+			}
+		}
+		if hasStoredHistory[target.Name] {
+			continue
+		}
+		for _, dayTargets := range blockedPortsDaily {
+			if _, ok := dayTargets[target.Name]; ok {
+				hasStoredHistory[target.Name] = true
+				break
+			}
+		}
+		if hasStoredHistory[target.Name] {
+			continue
+		}
+		for _, dayTargets := range blockedHostsDaily {
+			if _, ok := dayTargets[target.Name]; ok {
+				hasStoredHistory[target.Name] = true
+				break
+			}
+		}
+	}
+	historyMu.Unlock()
+	rollingMu.Lock()
+	if rollingCache.ServiceFilterFingerprints == nil {
+		rollingCache.ServiceFilterFingerprints = map[string]string{}
+	}
+	changed := make([]TrafficTarget, 0)
+	for _, target := range targets {
+		if strings.TrimSpace(target.serviceResolutionError) != "" {
+			continue
+		}
+		fingerprint := fingerprints[target.Name]
+		previous, exists := rollingCache.ServiceFilterFingerprints[target.Name]
+		hasLegacyData := targetHasRollingDataLocked(target.Name) || hasStoredHistory[target.Name]
+		if (exists && previous != fingerprint) || (!exists && hasExclusions[target.Name] && hasLegacyData) {
+			changed = append(changed, target)
+			continue
+		}
+		rollingCache.ServiceFilterFingerprints[target.Name] = fingerprint
+	}
+	rollingMu.Unlock()
+	return changed
+}
+
+func invalidateTrafficServiceFilterTargets(targets []TrafficTarget) {
+	if len(targets) == 0 {
+		return
+	}
+	names := make(map[string]TrafficTarget, len(targets))
+	for _, target := range targets {
+		if strings.TrimSpace(target.serviceResolutionError) != "" {
+			continue
+		}
+		name := strings.TrimSpace(target.Name)
+		if name != "" {
+			names[name] = target
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	fingerprints := make(map[string]string, len(names))
+	for name, target := range names {
+		fingerprints[name] = targetServiceExclusionFingerprint(target)
+	}
+	clearDisabledPortHistory := !configuredBlockedPortDailyEnabled()
+
+	rollingMu.Lock()
+	if rollingCache.ServiceFilterFingerprints == nil {
+		rollingCache.ServiceFilterFingerprints = map[string]string{}
+	}
+	if rollingCache.ServiceHistoryPending == nil {
+		rollingCache.ServiceHistoryPending = map[string]string{}
+	}
+	for name := range names {
+		delete(rollingCache.BaselineBlocked, name)
+		delete(rollingCache.BlockedFlowLastSeen, name)
+		rollingCache.ServiceFilterFingerprints[name] = fingerprints[name]
+		rollingCache.ServiceHistoryPending[name] = fingerprints[name]
+		for i := range rollingCache.Buckets {
+			delete(rollingCache.Buckets[i].BlockedByTarget, name)
+		}
+	}
+	rollingMu.Unlock()
+
+	historyMu.Lock()
+	for _, dayTargets := range blockedDaily5mCaptured {
+		for name := range names {
+			delete(dayTargets, name)
+		}
+	}
+	if clearDisabledPortHistory {
+		for _, dayTargets := range blockedPortsDaily {
+			for name := range names {
+				delete(dayTargets, name)
+			}
+		}
+	}
+	for _, dayTargets := range blockedHostsDaily {
+		for name := range names {
+			delete(dayTargets, name)
+		}
+	}
+	historyMu.Unlock()
+
+	reconcileMu.Lock()
+	for name := range names {
+		delete(reconcileDoneByT, name)
+	}
+	reconcileMu.Unlock()
+
+	for name := range names {
+		if err := sqliteClearBlockedPort5mTarget(name); err != nil && metricsDB != nil {
+			log.Printf("[BLOCKED] service-filter port snapshot reset failed target=%s err=%v", name, err)
+		}
+		if err := sqliteClearBlockedHost5mTarget(name); err != nil && metricsDB != nil {
+			log.Printf("[BLOCKED] service-filter host snapshot reset failed target=%s err=%v", name, err)
+		}
+		if err := sqliteClearBlockedFlowSeenTarget(name); err != nil && metricsDB != nil {
+			log.Printf("[BLOCKED] service-filter flow-seen reset failed target=%s err=%v", name, err)
+		}
+	}
+	saveRollingState()
+	saveBlockedHistory5mCaptured()
+	if clearDisabledPortHistory {
+		saveBlockedPortHistory()
+	}
+	saveBlockedHostHistory()
+}
+
+func trafficServiceHistoryPending(target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	rollingMu.Lock()
+	_, pending := rollingCache.ServiceHistoryPending[target]
+	rollingMu.Unlock()
+	return pending
+}
+
+func clearTrafficServiceHistoryPending(targets []TrafficTarget) {
+	if len(targets) == 0 {
+		return
+	}
+	changed := false
+	rollingMu.Lock()
+	for _, target := range targets {
+		name := strings.TrimSpace(target.Name)
+		if name == "" {
+			continue
+		}
+		fingerprint := targetServiceExclusionFingerprint(target)
+		if pending, ok := rollingCache.ServiceHistoryPending[name]; ok && pending == fingerprint {
+			delete(rollingCache.ServiceHistoryPending, name)
+			changed = true
+		}
+	}
+	rollingMu.Unlock()
+	if changed {
+		saveRollingState()
+	}
+}
+
+func trafficServiceHistoryPendingFingerprintChanges(targets []TrafficTarget) []TrafficTarget {
+	rollingMu.Lock()
+	defer rollingMu.Unlock()
+	changed := make([]TrafficTarget, 0)
+	for _, target := range targets {
+		if strings.TrimSpace(target.serviceResolutionError) != "" {
+			continue
+		}
+		name := strings.TrimSpace(target.Name)
+		if name == "" {
+			continue
+		}
+		pending, ok := rollingCache.ServiceHistoryPending[name]
+		if !ok || pending == targetServiceExclusionFingerprint(target) {
+			continue
+		}
+		changed = append(changed, target)
+	}
+	return changed
 }
 
 func isAllTrafficTarget(t TrafficTarget) bool {
@@ -2262,26 +2886,11 @@ func maybeStartStartupTamperingHistoryReconcile() {
 }
 
 func startTamperingHistoryReconcileAsync(reason string, dayKeys []string) bool {
-	if !tamperingReconcileBusy.CompareAndSwap(false, true) {
+	if !beginTamperingHistoryReconcileStatus(reason) {
 		log.Printf("[TAMPER-HISTORY] reconcile request ignored: already in progress (reason=%s)", reason)
 		return false
 	}
-	reconcileStatusMu.Lock()
-	tamperingReconcileState.StartupSkipped = false
-	tamperingReconcileState.StartupSkipReason = ""
-	tamperingReconcileState.Running = true
-	tamperingReconcileState.LastTriggerReason = reason
-	tamperingReconcileState.LastStartedAt = time.Now().UTC()
-	tamperingReconcileState.LastMessage = "reconcile running"
-	reconcileStatusMu.Unlock()
 	go func() {
-		defer func() {
-			tamperingReconcileBusy.Store(false)
-			reconcileStatusMu.Lock()
-			tamperingReconcileState.Running = false
-			tamperingReconcileState.LastFinishedAt = time.Now().UTC()
-			reconcileStatusMu.Unlock()
-		}()
 		configMutex.RLock()
 		pceURL := config.PCEURL
 		orgID := config.OrgID
@@ -2293,13 +2902,6 @@ func startTamperingHistoryReconcileAsync(reason string, dayKeys []string) bool {
 		}
 		sig := tamperingDayFingerprint(requested)
 		updated, failed := reconcileStoredTamperingHistory(baseURL, requested)
-		reconcileStatusMu.Lock()
-		tamperingReconcileState.LastDays = len(requested)
-		tamperingReconcileState.LastUpdated = updated
-		tamperingReconcileState.LastFailed = failed
-		tamperingReconcileState.LastDaySignature = sig
-		tamperingReconcileState.LastMessage = fmt.Sprintf("reconcile complete days=%d updated=%d failed=%d", len(requested), updated, failed)
-		reconcileStatusMu.Unlock()
 		if failed == 0 && updated > 0 {
 			marker, _ := loadTamperingHistoryReconcileMarker()
 			marker.MarkDaysComplete(requested, time.Now().UTC())
@@ -2311,6 +2913,7 @@ func startTamperingHistoryReconcileAsync(reason string, dayKeys []string) bool {
 				reconcileStatusMu.Unlock()
 			}
 		}
+		finishTamperingHistoryReconcileStatus(len(requested), updated, failed, sig)
 		log.Printf("[TAMPER-HISTORY] reconcile complete reason=%s days=%d updated=%d failed=%d", reason, len(requested), updated, failed)
 	}()
 	return true
@@ -2365,7 +2968,7 @@ func reconcileStoredTamperingHistory(baseURL string, dayKeys []string) (int, int
 			continue
 		}
 		dayEndLocal := dayStartLocal.AddDate(0, 0, 1)
-		_, workloads, err := getTamperingWindow(baseURL, dayStartLocal.UTC(), dayEndLocal.UTC(), true)
+		_, workloads, err := getTamperingWindow(baseURL, dayStartLocal.UTC(), dayEndLocal.UTC().Add(-time.Nanosecond), true)
 		if err != nil {
 			failed++
 			log.Printf("[TAMPER-HISTORY] reconcile failed day=%s: %v", dayKey, err)
@@ -2374,6 +2977,8 @@ func reconcileStoredTamperingHistory(baseURL string, dayKeys []string) (int, int
 		venHistoryMu.Lock()
 		snap := venDaily[dayKey]
 		snap.TamperingMax = len(workloads)
+		complete := true
+		snap.TamperingComplete = &complete
 		venDaily[dayKey] = snap
 		venHistoryMu.Unlock()
 		updated++
@@ -2529,6 +3134,9 @@ func handleDailySummaryWebhookSend(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		totalTargets++
+		if trafficServiceHistoryPending(name) {
+			continue
+		}
 		if _, ok := dayCounts[name]; ok {
 			reconciledTargets++
 		}
@@ -2720,6 +3328,10 @@ func handleAnomalyHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func processWebhookAlerts(stats DashboardStats) {
+	configUpdateMu.Lock()
+	if !dashboardTrafficServiceFiltersCurrent(stats) {
+		markDashboardTrafficServiceFiltersStale(&stats)
+	}
 	webhookEnabled := configuredWebhookEnabled()
 	baseURL := configuredPublicBaseURL()
 	now := time.Now().UTC()
@@ -2751,6 +3363,11 @@ func processWebhookAlerts(stats DashboardStats) {
 	}
 	events := make([]ev, 0)
 	for _, t := range targets {
+		if !t.Status.Success {
+			// A failed PCE query is unknown state, not a recovery. Preserve any
+			// active alert until a successful sample can evaluate it safely.
+			continue
+		}
 		key := strings.ToLower(strings.TrimSpace(t.Name))
 		if key == "" {
 			continue
@@ -2844,6 +3461,13 @@ func processWebhookAlerts(stats DashboardStats) {
 	}
 
 	for _, m := range anomalyMetricSnapshots() {
+		if m.Metric == "tampering" && (!stats.Tampering.Status.Success || stats.Tampering.Partial || stats.Tampering.Status.Error != "" || !m.Ready) {
+			continue
+		}
+		if m.Metric == "ven_stopped" && (!stats.VENStatus.StoppedStatus.Success || !m.Ready) {
+			// Unknown/partial collection and baseline warmup are not recoveries.
+			continue
+		}
 		prev := prevMetricByKey[m.Key]
 		if m.Eval.Anomalous && !prev.Active {
 			reason := strings.TrimSpace(m.Eval.Reason)
@@ -2908,11 +3532,6 @@ func processWebhookAlerts(stats DashboardStats) {
 	changed := false
 	historyBatch := make([]anomalyHistoryEvent, 0, len(events))
 	for _, e := range events {
-		if webhookEnabled && e.payload != nil {
-			if err := sendWebhookEvent(e.payload); err != nil {
-				log.Printf("[WEBHOOK] %s send failed for %s: %v", e.eventType, e.name, err)
-			}
-		}
 		alertMu.Lock()
 		var prev alertTargetState
 		if e.scope == "metric" {
@@ -2936,6 +3555,29 @@ func processWebhookAlerts(stats DashboardStats) {
 		saveAlertState()
 		appendAnomalyHistoryEvents(historyBatch)
 	}
+	configUpdateMu.Unlock()
+
+	for _, e := range events {
+		if e.scope == "metric" && e.history.Metric == "ven_stopped" {
+			e.payload = map[string]interface{}{
+				"event": e.history.Event, "state": e.eventType,
+				"timestamp": now.Format(time.RFC3339), "metric": e.history.Metric,
+				"target_name": e.name, "target_kind": "metric",
+				"latest_5m": e.history.Latest5m, "moving_avg_5m": e.history.MovingAvg5m,
+				"anomaly_threshold_pct": e.history.AnomalyThresholdPct,
+				"ma_window_points":      e.history.MAWindowPoints,
+				"anomaly_source":        e.history.AnomalySource,
+				"anomaly_coverage_pct":  e.history.AnomalyCoveragePct,
+				"reason":                e.history.Reason,
+				"dashboard_url":         baseURL + "/details?metric=ven_stopped",
+			}
+		}
+		if webhookEnabled && e.payload != nil {
+			if err := sendWebhookEvent(e.payload); err != nil {
+				log.Printf("[WEBHOOK] %s send failed for %s: %v", e.eventType, e.name, err)
+			}
+		}
+	}
 }
 
 type anomalyMetricSnapshot struct {
@@ -2947,11 +3589,12 @@ type anomalyMetricSnapshot struct {
 	ThresholdPct float64
 	Window       int
 	Source       string
+	Ready        bool // Preserves stopped VEN/tampering alerts during baseline warmup.
 }
 
 func anomalyMetricSnapshots() []anomalyMetricSnapshot {
 	keepDays := configuredHistoryDays()
-	snaps := make([]anomalyMetricSnapshot, 0, 3)
+	snaps := make([]anomalyMetricSnapshot, 0, 4)
 
 	venWindow := configuredVENMAWindow()
 	venPct := configuredVENAnomalyPct()
@@ -2997,6 +3640,13 @@ func anomalyMetricSnapshots() []anomalyMetricSnapshot {
 		Source:       venSource,
 	})
 
+	stoppedEval, stoppedReady := stoppedVENAnomalyFromConfig(venTrendSeries("stopped"), venDailyTrendSeries("stopped", keepDays), venWindow, venPct, venSource, venDays, venMin)
+	snaps = append(snaps, anomalyMetricSnapshot{
+		Key: "ven_stopped", Display: "Stopped VENs", Metric: "ven_stopped", EventName: "ven_stopped_anomaly",
+		Eval: stoppedEval, Ready: stoppedReady,
+		ThresholdPct: venPct, Window: venWindow, Source: venSource,
+	})
+
 	tamperWindow := configuredTamperingMAWindow()
 	tamperPct := configuredTamperingAnomalyPct()
 	tamperSource := configuredTamperingAnomalyBaselineSource()
@@ -3005,7 +3655,7 @@ func anomalyMetricSnapshots() []anomalyMetricSnapshot {
 	if tamperSource == "daily" {
 		tamperPct = configuredTamperingDailyAnomalyPct()
 	}
-	tamperEval := blockedAnomalyFromConfig(
+	tamperEval, tamperReady := tamperingAnomalyFromConfig(
 		tamperingTrendSeries(),
 		tamperingDailyTrendSeries(keepDays),
 		tamperWindow,
@@ -3020,6 +3670,7 @@ func anomalyMetricSnapshots() []anomalyMetricSnapshot {
 		Metric:       "tampering",
 		EventName:    "tampering_anomaly",
 		Eval:         tamperEval,
+		Ready:        tamperReady,
 		ThresholdPct: tamperPct,
 		Window:       tamperWindow,
 		Source:       tamperSource,
@@ -3057,6 +3708,9 @@ func coalesceBlockedAlertTargets(targets []BlockedTargetResult) []BlockedTargetR
 
 func blockedAlertPriority(t BlockedTargetResult) int {
 	score := 0
+	if t.Status.Success {
+		score += 16
+	}
 	if t.Anomalous {
 		score += 8
 	}
@@ -3099,12 +3753,26 @@ func sendWebhookEventWith(webhookURL string, opts webhookFormatOptions, payload 
 	if err != nil {
 		return fmt.Errorf("encode webhook payload: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(b))
+	configMutex.RLock()
+	privateWebhookOrigins := append([]string(nil), config.WebhookPrivateAllowedOrigins...)
+	configMutex.RUnlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+	client, parsedURL, err := newPinnedWebhookClient(ctx, webhookURL, privateWebhookOrigins, 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("validate webhook destination: %w", err)
+	}
+	candidateURL := parsedURL.String()
+	trustedOrigin := parsedURL.Scheme + "://" + parsedURL.Host
+	if !isValidRedirectURL(candidateURL, trustedOrigin) {
+		return errors.New("invalid webhook destination")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, candidateURL, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -3114,6 +3782,20 @@ func sendWebhookEventWith(webhookURL string, opts webhookFormatOptions, payload 
 		return fmt.Errorf("webhook HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+func validateWebhookSettingURL(ctx context.Context, rawURL string, privateAllowedOrigins []string) (string, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return "", nil
+	}
+	validationCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	parsedURL, _, err := validateWebhookURL(validationCtx, rawURL, privateAllowedOrigins)
+	if err != nil {
+		return "", err
+	}
+	return parsedURL.String(), nil
 }
 
 func formatWebhookPayload(opts webhookFormatOptions, payload map[string]interface{}) interface{} {
@@ -3420,6 +4102,8 @@ func drilldownData(metric, target string, stats DashboardStats) (string, []strin
 		return "VEN Errors", append([]string(nil), stats.VENStatus.Error...), venTrendSeries("error")
 	case "ven_suspended":
 		return "Suspended VENs", append([]string(nil), stats.VENStatus.Suspended...), venTrendSeries("suspended")
+	case "ven_stopped":
+		return "Stopped VENs", append([]string(nil), stats.VENStatus.Stopped...), venTrendSeries("stopped")
 	case "mode_idle":
 		return "Workloads in Idle Mode", append([]string(nil), stats.Workloads.ModeMembers["idle"]...), modeTrendSeries("idle")
 	case "mode_visibility_only":
@@ -3760,6 +4444,11 @@ func venTrendSeries(kind string) []TrendPoint {
 			v = b.VENErrorCount
 		} else if kind == "suspended" {
 			v = b.VENSuspendedCount
+		} else if kind == "stopped" {
+			if b.VENStoppedCount == nil {
+				continue
+			}
+			v = *b.VENStoppedCount
 		}
 		points = append(points, TrendPoint{
 			Timestamp: b.EndUTC,
@@ -3804,7 +4493,7 @@ func tamperingTrendSeries() []TrendPoint {
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
 	points := make([]TrendPoint, 0)
 	for _, b := range rollingCache.Buckets {
-		if !b.EndUTC.After(cutoff) {
+		if !b.EndUTC.After(cutoff) || b.TamperingComplete == nil || !*b.TamperingComplete {
 			continue
 		}
 		points = append(points, TrendPoint{
@@ -3822,6 +4511,14 @@ func tamperingTodaySoFarUniqueCount(nowUTC time.Time) int {
 	rollingMu.Lock()
 	defer rollingMu.Unlock()
 	seen := make(map[string]struct{})
+	for name, at := range rollingCache.TamperingLastSeen {
+		if !at.Before(dayStartUTC) && !at.After(nowUTC) {
+			seen[name] = struct{}{}
+		}
+	}
+	if rollingCache.TamperingTimestampsReady {
+		return len(seen)
+	}
 	for _, b := range rollingCache.Buckets {
 		if b.EndUTC.Before(dayStartUTC) || b.EndUTC.After(nowUTC) {
 			continue
@@ -3856,6 +4553,11 @@ func venDailyTrendSeries(kind string, keepDays int) []TrendPoint {
 			v = snap.ErrorMax
 		} else if kind == "suspended" {
 			v = snap.SuspendedMax
+		} else if kind == "stopped" {
+			if snap.StoppedMax == nil {
+				continue
+			}
+			v = *snap.StoppedMax
 		}
 		points = append(points, TrendPoint{
 			Timestamp: d.Add(12 * time.Hour).UTC(),
@@ -3913,7 +4615,7 @@ func tamperingDailyTrendSeries(keepDays int) []TrendPoint {
 	points := make([]TrendPoint, 0, len(venDaily))
 	for day, snap := range venDaily {
 		d, err := parseDayKeyInLocation(day, loc)
-		if err != nil || d.Before(cutoff) {
+		if err != nil || d.Before(cutoff) || snap.TamperingComplete == nil || !*snap.TamperingComplete {
 			continue
 		}
 		points = append(points, TrendPoint{
@@ -4143,6 +4845,9 @@ func blockedTrendSeries(target string) []TrendPoint {
 }
 
 func blockedDailyTrendSeries(target string, keepDays int) []TrendPoint {
+	if trafficServiceHistoryPending(target) {
+		return nil
+	}
 	if keepDays <= 0 {
 		keepDays = 365
 	}
@@ -4187,6 +4892,9 @@ func blockedDailyTrendSeries(target string, keepDays int) []TrendPoint {
 }
 
 func blockedDaily5mCapturedTrendSeries(target string, keepDays int) []TrendPoint {
+	if trafficServiceHistoryPending(target) {
+		return nil
+	}
 	if keepDays <= 0 {
 		keepDays = 365
 	}
@@ -4256,6 +4964,9 @@ func blockedTodaySoFarCount(target string, todayStartUTC, nowUTC time.Time) int 
 }
 
 func blockedPortDailySeries(target string, keepDays int) []BlockedPortDay {
+	if trafficServiceHistoryPending(target) {
+		return nil
+	}
 	if !configuredBlockedPortDailyEnabled() {
 		return nil
 	}
@@ -4301,6 +5012,9 @@ func blockedPort24hAggregate(target string) []PortCount {
 }
 
 func blockedHostDailySeries(target string, keepDays int) []BlockedHostDay {
+	if trafficServiceHistoryPending(target) {
+		return nil
+	}
 	if keepDays <= 0 {
 		keepDays = 365
 	}
@@ -4533,6 +5247,31 @@ func flatTrendLine(points []TrendPoint, value float64) []TrendPointF {
 	return out
 }
 
+// Stopped counts can legitimately remain zero for months. A positive sample
+// above an established zero baseline is actionable, not a disabled comparison.
+func stoppedVENAnomalyFromConfig(series5m, seriesDaily []TrendPoint, window5m int, thresholdPct float64, source string, baselineDays int, minCoveragePct float64) (anomalyEvalResult, bool) {
+	return countAnomalyFromConfig(series5m, seriesDaily, window5m, thresholdPct, source, baselineDays, minCoveragePct, "stopped VEN")
+}
+
+func tamperingAnomalyFromConfig(series5m, seriesDaily []TrendPoint, window5m int, thresholdPct float64, source string, baselineDays int, minCoveragePct float64) (anomalyEvalResult, bool) {
+	return countAnomalyFromConfig(series5m, seriesDaily, window5m, thresholdPct, source, baselineDays, minCoveragePct, "tampered workload")
+}
+
+func countAnomalyFromConfig(series5m, seriesDaily []TrendPoint, window5m int, thresholdPct float64, source string, baselineDays int, minCoveragePct float64, metricName string) (anomalyEvalResult, bool) {
+	eval := blockedAnomalyFromConfig(series5m, seriesDaily, window5m, thresholdPct, source, baselineDays, minCoveragePct)
+	ready := len(series5m) > 0
+	if eval.Source == "daily" {
+		ready = ready && len(seriesDaily) > 0 && eval.CoveragePct >= minCoveragePct
+	} else {
+		ready = ready && window5m > 0 && len(series5m) > window5m
+	}
+	if ready && eval.Baseline == 0 && eval.Latest > 0 {
+		eval.Anomalous = true
+		eval.Reason = metricName + " count increased above an established zero baseline"
+	}
+	return eval, ready
+}
+
 func blockedAnomalyFromConfig(series5m, seriesDaily []TrendPoint, window5m int, thresholdPct float64, source string, baselineDays int, minCoveragePct float64) anomalyEvalResult {
 	src := normalizeAnomalyBaselineSource(source)
 	if src == "daily" {
@@ -4629,14 +5368,81 @@ func effectiveBlockedAlertSettingsForTarget(target TrafficTarget, defaultMinLate
 	return enabled, minLatest
 }
 
-func configuredTrafficTargetByName(name string) (TrafficTarget, bool) {
+func configuredTrafficTargetByIdentity(snapshot TrafficTarget) (TrafficTarget, bool) {
 	targets := configuredTrafficTargets()
 	for _, t := range targets {
-		if strings.EqualFold(strings.TrimSpace(t.Name), strings.TrimSpace(name)) {
+		if trafficTargetIdentity(t) == trafficTargetIdentity(snapshot) {
 			return t, true
 		}
 	}
 	return TrafficTarget{}, false
+}
+
+func configuredTrafficTargetByName(name string) (TrafficTarget, bool) {
+	targets := configuredTrafficTargets()
+	for _, target := range targets {
+		if strings.EqualFold(strings.TrimSpace(target.Name), strings.TrimSpace(name)) {
+			return target, true
+		}
+	}
+	return TrafficTarget{}, false
+}
+
+func trafficTargetServiceFilterCurrent(snapshot TrafficTarget, fingerprint string) (TrafficTarget, bool) {
+	current, ok := configuredTrafficTargetByIdentity(snapshot)
+	if !ok {
+		return current, false
+	}
+	current = freezeTrafficTargetServiceExclusions([]TrafficTarget{current})[0]
+	return current, targetServiceExclusionSelectorFingerprint(current) == fingerprint
+}
+
+func ensureTrafficTargetServiceFilterCurrent(snapshot TrafficTarget, fingerprint, context string) bool {
+	current, ok := trafficTargetServiceFilterCurrent(snapshot, fingerprint)
+	if ok {
+		return true
+	}
+	log.Printf("[HISTORY] discarded superseded traffic result context=%s target=%s", context, snapshot.Name)
+	if strings.TrimSpace(current.Name) != "" {
+		requestTrafficServiceHistoryReconcile("traffic-service-exclusions-superseded", []TrafficTarget{current})
+	}
+	return false
+}
+
+func dashboardTrafficServiceFiltersCurrent(stats DashboardStats) bool {
+	for _, snapshot := range stats.trafficServiceTargetSnapshots {
+		fingerprint := targetServiceExclusionSelectorFingerprint(snapshot)
+		if _, ok := trafficTargetServiceFilterCurrent(snapshot, fingerprint); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func markDashboardTrafficServiceFiltersStale(stats *DashboardStats) {
+	if stats == nil {
+		return
+	}
+	const message = "traffic service exclusions changed during collection; blocked traffic will refresh on the next cycle"
+	for i := range stats.Blocked.Targets {
+		stats.Blocked.Targets[i].Count = 0
+		stats.Blocked.Targets[i].Baseline24h = 0
+		stats.Blocked.Targets[i].IncrementalCount = 0
+		stats.Blocked.Targets[i].IncrementalMins = 0
+		stats.Blocked.Targets[i].Warmup = false
+		stats.Blocked.Targets[i].Latest5m = 0
+		stats.Blocked.Targets[i].MovingAvg5m = 0
+		stats.Blocked.Targets[i].Anomalous = false
+		stats.Blocked.Targets[i].AnomalyReason = ""
+		stats.Blocked.Targets[i].Status = FetchStatus{Success: false, Error: message}
+	}
+	stats.Blocked.PROD = 0
+	stats.Blocked.NONPROD = 0
+	stats.Blocked.PRODStatus = FetchStatus{Success: false, Error: message}
+	stats.Blocked.NONPRODStatus = FetchStatus{Success: false, Error: message}
+	stats.Blocked.Partial = false
+	stats.Blocked.Warning = ""
+	stats.Blocked.Status = FetchStatus{Success: false, Error: message}
 }
 
 func blockedTargetBaseline(target string) (int, *time.Time, bool) {
@@ -4734,22 +5540,56 @@ func getAllVENsByStatus(baseURL, status string) ([]map[string]interface{}, error
 		return nil, nil
 	}
 	rows, err := getAllVENsWithFilters(baseURL, map[string]string{"status": needle})
+	filterStopped := func(rows []map[string]interface{}) []map[string]interface{} {
+		out := make([]map[string]interface{}, 0, len(rows))
+		for _, v := range rows {
+			if venStatusMatches(v, "stopped") {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
 	if err == nil {
+		// The status field is optional in the VEN response schema. Trust a
+		// successful server-side filter when absent, but reject contradictions.
+		if needle == "stopped" {
+			out := make([]map[string]interface{}, 0, len(rows))
+			for _, v := range rows {
+				if state := venCurrentStatus(v); state == "" || strings.EqualFold(state, needle) {
+					out = append(out, v)
+				}
+			}
+			return out, nil
+		}
 		return rows, nil
 	}
 	firstErr := err
 	all, err := getAllVENs(baseURL)
 	if err != nil {
+		if needle == "stopped" {
+			partial := filterStopped(rows)
+			if fallbackPartial := filterStopped(all); len(fallbackPartial) > len(partial) {
+				partial = fallbackPartial
+			}
+			return partial, fmt.Errorf("filtered VEN query: %v; unfiltered fallback: %w", firstErr, err)
+		}
 		if firstErr != nil {
 			return nil, firstErr
 		}
 		return nil, err
 	}
 	out := make([]map[string]interface{}, 0, len(all))
+	unknownState := false
 	for _, v := range all {
+		if needle == "stopped" && venCurrentStatus(v) == "" {
+			unknownState = true
+		}
 		if venStatusMatches(v, needle) {
 			out = append(out, v)
 		}
+	}
+	if unknownState {
+		return out, fmt.Errorf("filtered stopped VEN query: %v; unfiltered fallback contains VENs without a current status", firstErr)
 	}
 	return out, nil
 }
@@ -4812,6 +5652,10 @@ func getAllVENsWithFilters(baseURL string, extraFilters map[string]string) ([]ma
 			if bulkErr == nil && len(bulk) > len(all) {
 				return bulk, nil
 			}
+			if bulkErr != nil {
+				return all, fmt.Errorf("partial VEN result: pagination did not advance and bulk fallback failed: %w", bulkErr)
+			}
+			return all, fmt.Errorf("partial VEN result: pagination did not advance and bulk fallback did not establish a complete result")
 		}
 		if len(batch) < pageSize || newCount == 0 {
 			break
@@ -5060,10 +5904,30 @@ func venStatusFromVEN(v map[string]interface{}) string {
 	return ""
 }
 
+func venCurrentStatus(v map[string]interface{}) string {
+	for _, path := range [][]string{
+		{"status"}, {"status", "agent_status"}, {"status", "status"},
+		{"status", "state"}, {"status", "name"}, {"status", "status_code"},
+		{"agent_status"}, {"ven_status"}, {"ven_status", "status"},
+		{"ven_status", "state"}, {"ven", "status"}, {"agent", "status"},
+		{"lifecycle", "status"}, {"lifecycle", "state"},
+	} {
+		if current := strings.TrimSpace(stringFromMap(v, path...)); current != "" {
+			return current
+		}
+	}
+	return ""
+}
+
 func venStatusMatches(v map[string]interface{}, status string) bool {
 	needle := strings.TrimSpace(strings.ToLower(status))
 	if needle == "" {
 		return false
+	}
+	if needle == "stopped" {
+		// A stopped process or historical condition is not the VEN's current
+		// lifecycle state. Prefer the current status fields, not free-text reasons.
+		return strings.EqualFold(venCurrentStatus(v), needle)
 	}
 	contains := func(s string) bool {
 		s = strings.TrimSpace(strings.ToLower(s))
@@ -5303,6 +6167,19 @@ func getIllumioStats() DashboardStats {
 	warningVENs, warnErr := getAllVENsByHealth(baseURL, "warning")
 	errorVENs, errErr := getAllVENsByHealth(baseURL, "error")
 	suspendedVENs, suspendedErr := getAllVENsByStatus(baseURL, "suspended")
+	stoppedVENs, stoppedErr := getAllVENsByStatus(baseURL, "stopped")
+	stats.VENStatus.StoppedStatus = FetchStatus{Success: stoppedErr == nil}
+	var stoppedCount *int
+	if stoppedErr == nil {
+		count := len(stoppedVENs)
+		stoppedCount = &count
+	} else {
+		stats.VENStatus.StoppedStatus.Error = "Stopped VEN query: " + stoppedErr.Error()
+	}
+	for _, v := range stoppedVENs {
+		stats.VENStatus.Stopped = append(stats.VENStatus.Stopped, venDisplayName(v))
+	}
+	log.Printf("[COLLECTOR] VEN stopped=%d err=%v", len(stoppedVENs), stoppedErr)
 	log.Printf("[COLLECTOR] VEN warning=%d error=%d suspended=%d warnErr=%v errErr=%v suspendedErr=%v", len(warningVENs), len(errorVENs), len(suspendedVENs), warnErr, errErr, suspendedErr)
 	for _, v := range warningVENs {
 		stats.VENStatus.Warning = append(stats.VENStatus.Warning, venDisplayWithReason(v))
@@ -5313,8 +6190,8 @@ func getIllumioStats() DashboardStats {
 	for _, v := range suspendedVENs {
 		stats.VENStatus.Suspended = append(stats.VENStatus.Suspended, venDisplayName(v))
 	}
-	if warnErr != nil || errErr != nil || suspendedErr != nil {
-		errs := make([]string, 0, 3)
+	if warnErr != nil || errErr != nil || suspendedErr != nil || stoppedErr != nil {
+		errs := make([]string, 0, 4)
 		if warnErr != nil {
 			errs = append(errs, "warning query: "+warnErr.Error())
 		}
@@ -5324,6 +6201,9 @@ func getIllumioStats() DashboardStats {
 		if suspendedErr != nil {
 			errs = append(errs, "suspended query: "+suspendedErr.Error())
 		}
+		if stoppedErr != nil {
+			errs = append(errs, "stopped query: "+stoppedErr.Error())
+		}
 		stats.VENStatus.Status = FetchStatus{Success: false, Error: "VENs partial: " + strings.Join(errs, " | ")}
 	} else {
 		stats.VENStatus.Status = FetchStatus{Success: true}
@@ -5332,12 +6212,13 @@ func getIllumioStats() DashboardStats {
 	stats.Collection.WindowStart = windowStart
 	stats.Collection.WindowEnd = windowEnd
 	stats.Collection.Mode = "rolling_24h"
-	tamperCount, tamperNames, tErr := getTamperingWindow(baseURL, windowStart, windowEnd, baseline)
-	log.Printf("[COLLECTOR] Tampering count=%d workloads=%d err=%v", tamperCount, len(tamperNames), tErr)
-	if tErr != nil && tamperCount == 0 {
+	tamperStart, tamperEnd, tamperBackfill := tamperingCollectionWindow(nowUTC, windowStart, windowEnd, baseline)
+	tampering, tErr := getTamperingWindowDetails(baseURL, tamperStart, tamperEnd, tamperBackfill)
+	tampering.FullWindow = tamperBackfill
+	tampering.IntervalStart = nowUTC.Add(-5 * time.Minute)
+	log.Printf("[COLLECTOR] Tampering count=%d workloads=%d backfill=%v err=%v", tampering.EventCount, len(tampering.Names), tamperBackfill, tErr)
+	if tErr != nil {
 		stats.Tampering.Status = FetchStatus{Success: false, Error: "Events: " + tErr.Error()}
-	} else if tErr != nil {
-		stats.Tampering.Status = FetchStatus{Success: true, Error: "Events partial: " + tErr.Error()}
 	} else {
 		stats.Tampering.Status = FetchStatus{Success: true}
 	}
@@ -5365,7 +6246,13 @@ func getIllumioStats() DashboardStats {
 		stats.Rules.Status = FetchStatus{Success: true, Error: "Disabled in settings"}
 	}
 
-	targets := configuredTrafficTargets()
+	targets := freezeTrafficTargetServiceExclusions(configuredTrafficTargets())
+	targets = prepareTrafficTargetsServiceExclusions(baseURL, targets)
+	if changedTargets := trafficTargetsWithRollingServiceFilterChanges(targets); len(changedTargets) > 0 {
+		log.Printf("[BLOCKED] traffic service exclusions changed for %d target(s); resetting rolling baselines", len(changedTargets))
+		invalidateTrafficServiceFilterTargets(changedTargets)
+		requestTrafficServiceHistoryReconcile("traffic-service-exclusions-reloaded", changedTargets)
+	}
 	warningParts := make([]string, 0)
 	exclusions := configuredSourceExclusions()
 	excludedHRefs, exclusionWarn := resolveSourceExclusionHRefs(baseURL, exclusions)
@@ -5390,6 +6277,18 @@ func getIllumioStats() DashboardStats {
 		blockedDeltaStart,
 		excludedHRefs,
 	)
+	stats.trafficServiceTargetSnapshots = append([]TrafficTarget(nil), targets...)
+	configUpdateMu.Lock()
+	successCount, pacedWarnings = discardSupersededBlockedCycleResults(
+		targets,
+		blockedResults,
+		blockedCurrent,
+		blockedCurrentPorts,
+		blockedCurrentHosts,
+		blockedBaseline,
+		successCount,
+		pacedWarnings,
+	)
 	stats.Blocked.Targets = append(stats.Blocked.Targets, blockedResults...)
 	warningParts = append(warningParts, pacedWarnings...)
 	log.Printf("[COLLECTOR] Blocked targets=%d successful=%d warnings=%d", len(targets), successCount, len(warningParts))
@@ -5400,25 +6299,31 @@ func getIllumioStats() DashboardStats {
 		len(stats.VENStatus.Warning),
 		len(stats.VENStatus.Error),
 		len(stats.VENStatus.Suspended),
+		stoppedCount,
 		stats.Workloads.EnforcementModes["idle"],
 		stats.Workloads.EnforcementModes["visibility_only"],
 		stats.Workloads.EnforcementModes["selective"],
 		stats.Workloads.EnforcementModes["full"],
 		stats.Workloads.Unmanaged,
-		tErr == nil,
-		tamperCount,
-		tamperNames,
+		tampering,
 		blockedCurrent,
 		blockedBaseline,
 		targets,
 	)
 	stats.Tampering.Workloads = rollingWorkloads
 	stats.Tampering.Count = len(rollingWorkloads)
-	tamperingTodayCount := tamperingTodaySoFarUniqueCount(nowUTC)
+	stats.Tampering.LastSeen = rollingTamperingLastSeen(nowUTC)
+	stats.Tampering.Partial = !tampering.Complete && (len(rollingWorkloads) > 0 || tampering.EventCount > 0)
+	var tamperingTodayCount *int
+	if tampering.Complete {
+		count := tamperingTodaySoFarUniqueCount(nowUTC)
+		tamperingTodayCount = &count
+	}
 	updateVENDailyHistory(nowUTC,
 		len(stats.VENStatus.Warning),
 		len(stats.VENStatus.Error),
 		len(stats.VENStatus.Suspended),
+		stoppedCount,
 		tamperingTodayCount,
 		stats.Workloads.EnforcementModes["idle"],
 		stats.Workloads.EnforcementModes["visibility_only"],
@@ -5515,6 +6420,7 @@ func getIllumioStats() DashboardStats {
 		stats.Blocked.Status = FetchStatus{Success: true}
 	}
 	accumulateBlockedHistoryFromCycle(nowUTC, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, portDailyEnabled, configuredBlockedHostMetricsEnabled(), configuredBlockedHostRetentionMode())
+	configUpdateMu.Unlock()
 	reconcilePreviousDayBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
 
 	return stats
@@ -5566,6 +6472,23 @@ func collectionWindow(nowUTC time.Time) (time.Time, time.Time, bool) {
 		start = nowUTC.Add(-5 * time.Minute)
 	}
 	return start, nowUTC, false
+}
+
+// A legacy cache or a failed event query needs only a tampering backfill. Do
+// not reset the shared blocked/VEN history or turn 24h of events into a 5m spike.
+func tamperingCollectionWindow(nowUTC, startUTC, endUTC time.Time, baseline bool) (time.Time, time.Time, bool) {
+	rollingMu.Lock()
+	backfill := baseline || !rollingCache.TamperingTimestampsReady || rollingCache.TamperingBackfillPending || rollingCache.TamperingCollectionVersion != tamperingCollectionMethodVersion || nowUTC.Sub(rollingCache.LastCycle) > 30*time.Minute
+	rollingMu.Unlock()
+	if backfill {
+		return nowUTC.Add(-24 * time.Hour), endUTC, true
+	}
+	// Catch up since the prior cycle while always covering the latest full
+	// five-minute chart interval, including manually requested early refreshes.
+	if latestFiveMinutes := nowUTC.Add(-5 * time.Minute); startUTC.After(latestFiveMinutes) {
+		startUTC = latestFiveMinutes
+	}
+	return startUTC, endUTC, false
 }
 
 func blockedDeltaWindowStart(nowUTC time.Time) time.Time {
@@ -5846,35 +6769,52 @@ func updateRollingAndBuildView(
 	venWarningCount int,
 	venErrorCount int,
 	venSuspendedCount int,
+	venStoppedCount *int,
 	modeIdleCount int,
 	modeVisCount int,
 	modeSelectiveCount int,
 	modeFullCount int,
 	modeUnmanagedCount int,
-	tamperingOK bool,
-	tamperingCount int,
-	tamperingNames []string,
+	tampering tamperingWindowResult,
 	blockedCurrent map[string]int,
 	blockedBaseline map[string]int,
 	targets []TrafficTarget,
 ) (int, []string, map[string]int, map[string]int, map[string]int, map[string]bool, map[string]int) {
+	serviceFilterFingerprints := make(map[string]string, len(targets))
+	for _, target := range targets {
+		serviceFilterFingerprints[target.Name] = targetServiceExclusionFingerprint(target)
+	}
 	rollingMu.Lock()
 	defer rollingMu.Unlock()
+	intervalStart := nowUTC.Add(-5 * time.Minute)
+	tamperingNames := tamperingNamesSince(tampering.LastSeen, intervalStart, nowUTC)
 
 	if baseline || !rollingCache.Initialized {
+		previousTampering := rollingCache.TamperingLastSeen
+		previousTamperingReady := rollingCache.TamperingTimestampsReady
+		previousTamperingVersion := rollingCache.TamperingCollectionVersion
+		serviceHistoryPending := make(map[string]string, len(rollingCache.ServiceHistoryPending))
+		for name, fingerprint := range rollingCache.ServiceHistoryPending {
+			serviceHistoryPending[name] = fingerprint
+		}
 		rollingCache = rollingState{
-			Initialized:         true,
-			LastCycle:           nowUTC,
-			BaselineCapturedUTC: nowUTC,
-			BaselineWorkloads:   map[string]struct{}{},
-			BaselineBlocked:     map[string]targetBaseline{},
-			Buckets:             []rollingBucket{},
-			BlockedFlowLastSeen: map[string]map[string]blockedFlowSeenState{},
+			Initialized:                true,
+			LastCycle:                  nowUTC,
+			BaselineCapturedUTC:        nowUTC,
+			BaselineWorkloads:          map[string]struct{}{},
+			TamperingLastSeen:          previousTampering,
+			TamperingTimestampsReady:   previousTamperingReady,
+			TamperingCollectionVersion: previousTamperingVersion,
+			BaselineBlocked:            map[string]targetBaseline{},
+			ServiceFilterFingerprints:  serviceFilterFingerprints,
+			ServiceHistoryPending:      serviceHistoryPending,
+			Buckets:                    []rollingBucket{},
+			BlockedFlowLastSeen:        map[string]map[string]blockedFlowSeenState{},
 		}
 		resetBlockedFlowDedupeLocked(targets)
-		if tamperingOK {
-			rollingCache.BaselineTampering = len(tamperingNames)
-			for _, n := range tamperingNames {
+		if tampering.Complete {
+			rollingCache.BaselineTampering = len(tampering.Names)
+			for _, n := range tampering.Names {
 				rollingCache.BaselineWorkloads[n] = struct{}{}
 			}
 		}
@@ -5886,6 +6826,7 @@ func updateRollingAndBuildView(
 			VENWarningCount:    venWarningCount,
 			VENErrorCount:      venErrorCount,
 			VENSuspendedCount:  venSuspendedCount,
+			VENStoppedCount:    venStoppedCount,
 			ModeIdleCount:      modeIdleCount,
 			ModeVisCount:       modeVisCount,
 			ModeSelectiveCount: modeSelectiveCount,
@@ -5902,6 +6843,7 @@ func updateRollingAndBuildView(
 			VENWarningCount:    venWarningCount,
 			VENErrorCount:      venErrorCount,
 			VENSuspendedCount:  venSuspendedCount,
+			VENStoppedCount:    venStoppedCount,
 			ModeIdleCount:      modeIdleCount,
 			ModeVisCount:       modeVisCount,
 			ModeSelectiveCount: modeSelectiveCount,
@@ -5911,12 +6853,6 @@ func updateRollingAndBuildView(
 			TamperingWorkloads: map[string]struct{}{},
 			BlockedByTarget:    map[string]int{},
 		}
-		if tamperingOK {
-			bucket.TamperingCount = len(tamperingNames)
-			for _, n := range tamperingNames {
-				bucket.TamperingWorkloads[n] = struct{}{}
-			}
-		}
 		for k, v := range blockedCurrent {
 			bucket.BlockedByTarget[k] = v
 		}
@@ -5925,6 +6861,20 @@ func updateRollingAndBuildView(
 			rollingCache.BaselineBlocked[name] = targetBaseline{Count: count, CapturedUTC: nowUTC}
 		}
 	}
+	// Every point represents only (now-5m, now], even on startup or recovery.
+	// Preserve a real zero, but never chart a failed query as zero activity.
+	if len(rollingCache.Buckets) > 0 {
+		bucket := &rollingCache.Buckets[len(rollingCache.Buckets)-1]
+		complete := tampering.Complete
+		bucket.TamperingComplete = &complete
+		if complete {
+			bucket.TamperingCount = len(tamperingNames)
+			for _, name := range tamperingNames {
+				bucket.TamperingWorkloads[name] = struct{}{}
+			}
+		}
+	}
+	updateTamperingLastSeenLocked(nowUTC, tampering)
 
 	cutoff := nowUTC.Add(-24 * time.Hour)
 	kept := make([]rollingBucket, 0, len(rollingCache.Buckets))
@@ -5935,28 +6885,12 @@ func updateRollingAndBuildView(
 	}
 	rollingCache.Buckets = kept
 
-	useBaseline := cutoff.Before(rollingCache.BaselineCapturedUTC)
-	totalTampering := 0
-	workloads := map[string]struct{}{}
+	w, _ := rollingTamperingViewLocked(nowUTC)
 	blockedRollingTotals := map[string]int{}
 	blockedBaselineTotals := map[string]int{}
 	blockedIncrementalTotals := map[string]int{}
 	blockedWarmup := map[string]bool{}
 	blockedWarmupMinutes := map[string]int{}
-
-	if useBaseline {
-		totalTampering += rollingCache.BaselineTampering
-		for n := range rollingCache.BaselineWorkloads {
-			workloads[n] = struct{}{}
-		}
-	}
-
-	for _, b := range rollingCache.Buckets {
-		totalTampering += b.TamperingCount
-		for n := range b.TamperingWorkloads {
-			workloads[n] = struct{}{}
-		}
-	}
 
 	for _, t := range targets {
 		name := t.Name
@@ -5998,15 +6932,125 @@ func updateRollingAndBuildView(
 		}
 	}
 
-	w := make([]string, 0, len(workloads))
-	for n := range workloads {
-		w = append(w, n)
-	}
-	sort.Strings(w)
-	return totalTampering, w, blockedRollingTotals, blockedBaselineTotals, blockedIncrementalTotals, blockedWarmup, blockedWarmupMinutes
+	return len(w), w, blockedRollingTotals, blockedBaselineTotals, blockedIncrementalTotals, blockedWarmup, blockedWarmupMinutes
 }
 
 func getTamperingWindow(baseURL string, startUTC, endUTC time.Time, baseline bool) (int, []string, error) {
+	result, err := getTamperingWindowDetails(baseURL, startUTC, endUTC, baseline)
+	return result.EventCount, result.Names, err
+}
+
+func formatTamperingTimestamp(at time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	return at.UTC().Format(time.RFC3339)
+}
+
+func tamperingNamesSince(lastSeen map[string]time.Time, start, end time.Time) []string {
+	names := make([]string, 0, len(lastSeen))
+	for name, at := range lastSeen {
+		if !at.IsZero() && at.After(start) && !at.After(end) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// Caller holds rollingMu. Event timestamps, never polling timestamps, determine
+// a workload's age. Partial/failing reads may add evidence but never erase it.
+func updateTamperingLastSeenLocked(nowUTC time.Time, result tamperingWindowResult) {
+	// A successful method migration is authoritative: do not promote names
+	// attributed by the old, incorrectly filtered collector to complete data.
+	// Ordinary recovery under the current method still preserves prior evidence.
+	migrating := result.Complete && result.FullWindow && rollingCache.TamperingCollectionVersion != tamperingCollectionMethodVersion
+	if rollingCache.TamperingLastSeen == nil || migrating {
+		rollingCache.TamperingLastSeen = map[string]time.Time{}
+	}
+	for name, at := range result.LastSeen {
+		name = strings.TrimSpace(name)
+		if name == "" || at.IsZero() || at.After(nowUTC) {
+			continue
+		}
+		if at.After(rollingCache.TamperingLastSeen[name]) {
+			rollingCache.TamperingLastSeen[name] = at.UTC()
+		}
+	}
+	if !result.Complete {
+		rollingCache.TamperingBackfillPending = true
+	}
+	if result.Complete && result.FullWindow {
+		rollingCache.TamperingTimestampsReady = true
+		rollingCache.TamperingBackfillPending = false
+		rollingCache.TamperingCollectionVersion = tamperingCollectionMethodVersion
+	}
+	// Before the legacy backfill succeeds, keep timestamps (including expired
+	// ones) to distinguish known-expired entries from names with no timestamp.
+	if rollingCache.TamperingTimestampsReady {
+		cutoff := nowUTC.Add(-24 * time.Hour)
+		for name, at := range rollingCache.TamperingLastSeen {
+			if !at.After(cutoff) || at.After(nowUTC) {
+				delete(rollingCache.TamperingLastSeen, name)
+			}
+		}
+	}
+}
+
+func rollingTamperingViewLocked(nowUTC time.Time) ([]string, map[string]time.Time) {
+	cutoff := nowUTC.Add(-24 * time.Hour)
+	names := map[string]struct{}{}
+	lastSeen := map[string]time.Time{}
+	for name, at := range rollingCache.TamperingLastSeen {
+		if !at.IsZero() && at.After(cutoff) && !at.After(nowUTC) {
+			names[name] = struct{}{}
+			lastSeen[name] = at.UTC()
+		}
+	}
+	if !rollingCache.TamperingTimestampsReady {
+		addUnknown := func(name string) {
+			if _, known := rollingCache.TamperingLastSeen[name]; !known && strings.TrimSpace(name) != "" {
+				names[name] = struct{}{}
+			}
+		}
+		if rollingCache.BaselineCapturedUTC.After(cutoff) {
+			for name := range rollingCache.BaselineWorkloads {
+				addUnknown(name)
+			}
+		}
+		for _, bucket := range rollingCache.Buckets {
+			if bucket.EndUTC.After(cutoff) && !bucket.EndUTC.After(nowUTC) {
+				for name := range bucket.TamperingWorkloads {
+					addUnknown(name)
+				}
+			}
+		}
+	}
+	items := make([]string, 0, len(names))
+	for name := range names {
+		items = append(items, name)
+	}
+	sort.Strings(items)
+	return items, lastSeen
+}
+
+func rollingTamperingLastSeen(nowUTC time.Time) map[string]time.Time {
+	rollingMu.Lock()
+	defer rollingMu.Unlock()
+	_, lastSeen := rollingTamperingViewLocked(nowUTC)
+	return lastSeen
+}
+
+type tamperingWindowResult struct {
+	EventCount    int
+	Names         []string
+	LastSeen      map[string]time.Time
+	Complete      bool
+	FullWindow    bool
+	IntervalStart time.Time
+}
+
+func getTamperingWindowDetails(baseURL string, startUTC, endUTC time.Time, baseline bool) (tamperingWindowResult, error) {
 	client := tamperingHTTPClient
 	if baseline {
 		client = tamperingBaselineHTTPClient
@@ -6015,22 +7059,22 @@ func getTamperingWindow(baseURL string, startUTC, endUTC time.Time, baseline boo
 		events []map[string]interface{}
 		err    error
 	)
-	if baseline {
-		// Startup baseline should mirror a single direct 24h query path first.
-		events, err = fetchTamperingSlice(baseURL, startUTC, endUTC, client)
-		if err != nil {
-			events, err = fetchTamperingEventsPaged(baseURL, startUTC, endUTC, client)
-		}
-	} else {
-		events, err = fetchTamperingEventsPaged(baseURL, startUTC, endUTC, client)
-	}
+	// The event retriever handles supported async requests and synchronous
+	// time-slice fallback under one deadline, including startup/backfill.
+	events, err = fetchTamperingEventsPaged(baseURL, startUTC, endUTC, client)
 	if len(events) == 0 && err != nil {
-		return 0, nil, err
+		return tamperingWindowResult{}, err
 	}
+	result := summarizeTamperingEvents(events, startUTC, endUTC)
+	result.Complete = err == nil
+	return result, err
+}
+
+func summarizeTamperingEvents(events []map[string]interface{}, startUTC, endUTC time.Time) tamperingWindowResult {
 	events = filterTamperingEventsInWindow(events, startUTC, endUTC)
 
 	eventDedup := map[string]struct{}{}
-	dedup := map[string]struct{}{}
+	lastSeen := map[string]time.Time{}
 	for _, evt := range events {
 		eventSig := tamperingEventSignature(evt)
 		if strings.TrimSpace(eventSig) != "" {
@@ -6040,18 +7084,21 @@ func getTamperingWindow(baseURL string, startUTC, endUTC time.Time, baseline boo
 			eventDedup[eventSig] = struct{}{}
 		}
 		if name := extractEventWorkloadName(evt); name != "" {
-			dedup[name] = struct{}{}
+			if at, ok := eventTimestampUTC(evt); ok && at.After(lastSeen[name]) {
+				lastSeen[name] = at
+			}
 		}
 	}
-	names := make([]string, 0, len(dedup))
-	for n := range dedup {
+	names := make([]string, 0, len(lastSeen))
+	for n := range lastSeen {
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	if len(eventDedup) > 0 {
-		return len(eventDedup), names, err
+	count := len(eventDedup)
+	if count == 0 {
+		count = len(events)
 	}
-	return len(events), names, err
+	return tamperingWindowResult{EventCount: count, Names: names, LastSeen: lastSeen}
 }
 
 func filterTamperingEventsInWindow(events []map[string]interface{}, startUTC, endUTC time.Time) []map[string]interface{} {
@@ -6072,192 +7119,6 @@ func filterTamperingEventsInWindow(events []map[string]interface{}, startUTC, en
 	return filtered
 }
 
-func fetchTamperingEventsPaged(baseURL string, startUTC, endUTC time.Time, client *http.Client) ([]map[string]interface{}, error) {
-	const pageSize = 1000
-	all := make([]map[string]interface{}, 0, pageSize)
-	started := time.Now()
-	lastPageSig := ""
-	hadSuccessfulPage := false
-
-	for page := 0; ; page++ {
-		if time.Since(started) > tamperingQueryMaxDuration {
-			break
-		}
-		q := url.Values{}
-		q.Set("event_type", "agent.tampering")
-		q.Set("start_date", startUTC.Format(pceTimeFormat))
-		q.Set("end_date", endUTC.Format(pceTimeFormat))
-		q.Set("max_results", strconv.Itoa(pageSize))
-		q.Set("skip", strconv.Itoa(page*pageSize))
-		batch, err := fetchCollectionPageWithClient(client, baseURL+"/events?"+q.Encode())
-		if err != nil {
-			q2 := url.Values{}
-			q2.Set("event_type", "agent.tampering")
-			q2.Set("start_time", startUTC.Format(pceTimeFormat))
-			q2.Set("end_time", endUTC.Format(pceTimeFormat))
-			q2.Set("max_results", strconv.Itoa(pageSize))
-			q2.Set("skip", strconv.Itoa(page*pageSize))
-			batch, err = fetchCollectionPageWithClient(client, baseURL+"/events?"+q2.Encode())
-			if err != nil {
-				if page == 0 {
-					return fetchTamperingEventsBySlices(baseURL, startUTC, endUTC, time.Hour, client)
-				}
-				break
-			}
-		}
-		hadSuccessfulPage = true
-		if len(batch) == 0 {
-			if page == 0 {
-				// Empty first page is a valid empty result, not an error needing expensive fallback.
-				return all, nil
-			}
-			break
-		}
-
-		pageSig := tamperingPageSignature(batch)
-		if page > 0 && pageSig != "" && pageSig == lastPageSig {
-			break
-		}
-		lastPageSig = pageSig
-
-		inWindow := 0
-		oldest := time.Now().UTC()
-		oldestSet := false
-		for _, evt := range batch {
-			ts, ok := eventTimestampUTC(evt)
-			if ok {
-				if !oldestSet || ts.Before(oldest) {
-					oldest = ts
-					oldestSet = true
-				}
-				if ts.Before(startUTC) || ts.After(endUTC) {
-					continue
-				}
-			}
-			inWindow++
-			all = append(all, evt)
-		}
-		if inWindow == 0 && oldestSet && oldest.Before(startUTC) {
-			break
-		}
-		if len(batch) < pageSize {
-			break
-		}
-	}
-	if len(all) == 0 {
-		if hadSuccessfulPage {
-			return all, nil
-		}
-		return fetchTamperingEventsBySlices(baseURL, startUTC, endUTC, time.Hour, client)
-	}
-	return all, nil
-}
-
-func fetchTamperingEventsBySlices(baseURL string, startUTC, endUTC time.Time, step time.Duration, client *http.Client) ([]map[string]interface{}, error) {
-	if step <= 0 {
-		step = time.Hour
-	}
-	all := make([]map[string]interface{}, 0, 2000)
-	seen := map[string]struct{}{}
-	for cur := startUTC; cur.Before(endUTC); cur = cur.Add(step) {
-		next := cur.Add(step)
-		if next.After(endUTC) {
-			next = endUTC
-		}
-		batch, err := fetchTamperingSlice(baseURL, cur, next, client)
-		if err != nil {
-			if len(all) == 0 {
-				return nil, err
-			}
-			return all, fmt.Errorf("partial tampering slice result: %v", err)
-		}
-		for _, evt := range batch {
-			sig := tamperingEventSignature(evt)
-			if _, ok := seen[sig]; ok {
-				continue
-			}
-			seen[sig] = struct{}{}
-			all = append(all, evt)
-		}
-	}
-	return all, nil
-}
-
-func fetchTamperingSlice(baseURL string, startUTC, endUTC time.Time, client *http.Client) ([]map[string]interface{}, error) {
-	const pageSize = 1000
-	fetchPaged := func(useTimeParams bool) ([]map[string]interface{}, error) {
-		all := make([]map[string]interface{}, 0, pageSize)
-		seen := make(map[string]struct{}, pageSize)
-		started := time.Now()
-		lastPageSig := ""
-		stagnantPages := 0
-		for page := 0; ; page++ {
-			if time.Since(started) > tamperingQueryMaxDuration {
-				if len(all) == 0 {
-					return nil, fmt.Errorf("tampering slice timed out after %d pages", page)
-				}
-				return all, fmt.Errorf("partial tampering slice: timed out after %d pages", page)
-			}
-			q := url.Values{}
-			q.Set("event_type", "agent.tampering")
-			if useTimeParams {
-				q.Set("start_time", startUTC.Format(pceTimeFormat))
-				q.Set("end_time", endUTC.Format(pceTimeFormat))
-			} else {
-				q.Set("start_date", startUTC.Format(pceTimeFormat))
-				q.Set("end_date", endUTC.Format(pceTimeFormat))
-			}
-			q.Set("max_results", strconv.Itoa(pageSize))
-			q.Set("skip", strconv.Itoa(page*pageSize))
-			batch, err := fetchCollectionPageWithClient(client, baseURL+"/events?"+q.Encode())
-			if err != nil {
-				if page == 0 {
-					return nil, err
-				}
-				break
-			}
-			if len(batch) == 0 {
-				break
-			}
-			pageSig := tamperingPageSignature(batch)
-			if page > 0 && pageSig != "" && pageSig == lastPageSig {
-				break
-			}
-			lastPageSig = pageSig
-			added := 0
-			for _, evt := range batch {
-				sig := tamperingEventSignature(evt)
-				if strings.TrimSpace(sig) != "" {
-					if _, ok := seen[sig]; ok {
-						continue
-					}
-					seen[sig] = struct{}{}
-				}
-				all = append(all, evt)
-				added++
-			}
-			if added == 0 {
-				stagnantPages++
-				if stagnantPages >= 3 {
-					break
-				}
-			} else {
-				stagnantPages = 0
-			}
-			if len(batch) < pageSize {
-				break
-			}
-		}
-		return all, nil
-	}
-
-	batch, err := fetchPaged(false)
-	if err == nil {
-		return batch, nil
-	}
-	return fetchPaged(true)
-}
-
 func tamperingEventSignature(event map[string]interface{}) string {
 	return strings.Join([]string{
 		mapString(event, "href"),
@@ -6265,17 +7126,6 @@ func tamperingEventSignature(event map[string]interface{}) string {
 		findTimestampString(event),
 		extractEventWorkloadName(event),
 	}, "|")
-}
-
-func tamperingPageSignature(batch []map[string]interface{}) string {
-	if len(batch) == 0 {
-		return ""
-	}
-	first := batch[0]
-	last := batch[len(batch)-1]
-	f := fmt.Sprintf("%s|%s|%s", mapString(first, "href"), mapString(first, "event_type"), mapString(first, "timestamp"))
-	l := fmt.Sprintf("%s|%s|%s", mapString(last, "href"), mapString(last, "event_type"), mapString(last, "timestamp"))
-	return f + "->" + l
 }
 
 func mapString(m map[string]interface{}, key string) string {
@@ -6350,6 +7200,13 @@ func configuredSourceExclusions() []TrafficTarget {
 	raw := append([]TrafficTarget(nil), config.SourceExclusions...)
 	configMutex.RUnlock()
 	return sanitizeTargets(raw)
+}
+
+func configuredTrafficServiceExclusions() []string {
+	configMutex.RLock()
+	raw := append([]string(nil), config.TrafficServiceExclusions...)
+	configMutex.RUnlock()
+	return sanitizeServiceExclusions(raw)
 }
 
 func configuredHistoryDays() int {
@@ -7202,6 +8059,7 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 	for _, target := range targets {
 		needCount := missingCountByName[target.Name]
 		needPorts := missingPortByName[target.Name]
+		selectorFingerprint := targetServiceExclusionSelectorFingerprint(target)
 		if !needCount && !needPorts {
 			continue
 		}
@@ -7214,6 +8072,11 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 			if qRes.Warning != "" {
 				log.Printf("[HISTORY] daily blocked combined snapshot warning for %s (%s): %s", target.Name, dayKey, qRes.Warning)
 			}
+			configUpdateMu.Lock()
+			if !ensureTrafficTargetServiceFilterCurrent(target, selectorFingerprint, "daily-combined") {
+				configUpdateMu.Unlock()
+				continue
+			}
 			historyMu.Lock()
 			if blockedDaily[dayKey] == nil {
 				blockedDaily[dayKey] = map[string]int{}
@@ -7227,6 +8090,7 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 			}
 			blockedPortsDaily[dayKey][target.Name] = portCounts
 			historyMu.Unlock()
+			configUpdateMu.Unlock()
 			changed = true
 			continue
 		}
@@ -7239,18 +8103,29 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 			if qRes.Warning != "" {
 				log.Printf("[HISTORY] daily blocked snapshot warning for %s (%s): %s", target.Name, dayKey, qRes.Warning)
 			}
+			configUpdateMu.Lock()
+			if !ensureTrafficTargetServiceFilterCurrent(target, selectorFingerprint, "daily-count") {
+				configUpdateMu.Unlock()
+				continue
+			}
 			historyMu.Lock()
 			if blockedDaily[dayKey] == nil {
 				blockedDaily[dayKey] = map[string]int{}
 			}
 			blockedDaily[dayKey][target.Name] = qRes.Count
 			historyMu.Unlock()
+			configUpdateMu.Unlock()
 			changed = true
 		}
 		if needPorts {
 			portCounts, err := getBlockedPortCountsForTargetWindow(baseURL, target, dayStart.UTC(), dayEnd.UTC(), sourceExcludeHRefs)
 			if err != nil {
 				log.Printf("[HISTORY] daily blocked port snapshot failed for %s (%s): %v", target.Name, dayKey, err)
+				continue
+			}
+			configUpdateMu.Lock()
+			if !ensureTrafficTargetServiceFilterCurrent(target, selectorFingerprint, "daily-ports") {
+				configUpdateMu.Unlock()
 				continue
 			}
 			historyMu.Lock()
@@ -7262,6 +8137,7 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 			}
 			blockedPortsDaily[dayKey][target.Name] = portCounts
 			historyMu.Unlock()
+			configUpdateMu.Unlock()
 			changed = true
 		}
 	}
@@ -7313,6 +8189,7 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 	changedCounts := false
 	changedPorts := false
 	for _, target := range pending {
+		selectorFingerprint := targetServiceExclusionSelectorFingerprint(target)
 		var qRes trafficQueryResult
 		var portCounts map[string]int
 		var err error
@@ -7327,6 +8204,11 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 		}
 		if qRes.Warning != "" {
 			log.Printf("[HISTORY] previous-day reconciliation warning for %s (%s): %s", target.Name, dayKey, qRes.Warning)
+		}
+		configUpdateMu.Lock()
+		if !ensureTrafficTargetServiceFilterCurrent(target, selectorFingerprint, "previous-day") {
+			configUpdateMu.Unlock()
+			continue
 		}
 		if verboseBlockedLoggingEnabled() {
 			log.Printf("[HISTORY] previous-day reconcile day=%s target=%s count=%d truncated=%t", dayKey, target.Name, qRes.Count, qRes.Truncated)
@@ -7349,6 +8231,7 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 			changedPorts = true
 		}
 		historyMu.Unlock()
+		configUpdateMu.Unlock()
 
 		reconcileMu.Lock()
 		if reconcileDayKey == dayKey {
@@ -7409,9 +8292,14 @@ func sendBlockedDailyReconcileSummaryWebhook(dayKey string, windowStartUTC time.
 
 	targetPayload := make([]map[string]interface{}, 0, len(targets))
 	totalBlocked := 0
+	pendingTargets := 0
 	for _, t := range targets {
 		name := strings.TrimSpace(t.Name)
 		if name == "" {
+			continue
+		}
+		if trafficServiceHistoryPending(name) {
+			pendingTargets++
 			continue
 		}
 		count := dayCounts[name]
@@ -7421,6 +8309,9 @@ func sendBlockedDailyReconcileSummaryWebhook(dayKey string, windowStartUTC time.
 			"kind":          strings.TrimSpace(t.Kind),
 			"blocked_count": count,
 		})
+	}
+	if failedTargets < pendingTargets {
+		failedTargets = pendingTargets
 	}
 	payload := map[string]interface{}{
 		"event":              "blocked_daily_reconcile_summary",
@@ -7491,6 +8382,7 @@ func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, n
 			if strings.TrimSpace(target.Name) == "" {
 				continue
 			}
+			selectorFingerprint := targetServiceExclusionSelectorFingerprint(target)
 			var qRes trafficQueryResult
 			var portCounts map[string]int
 			if portDailyEnabled {
@@ -7505,6 +8397,12 @@ func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, n
 			}
 			if qRes.Warning != "" {
 				log.Printf("[HISTORY] full reconcile warning day=%s target=%s: %s", dayKey, target.Name, qRes.Warning)
+			}
+			configUpdateMu.Lock()
+			if !ensureTrafficTargetServiceFilterCurrent(target, selectorFingerprint, "full-reconcile-"+dayKey) {
+				configUpdateMu.Unlock()
+				failed++
+				continue
 			}
 			if verboseBlockedLoggingEnabled() {
 				log.Printf("[HISTORY] full reconcile day=%s target=%s count=%d truncated=%t", dayKey, target.Name, qRes.Count, qRes.Truncated)
@@ -7526,6 +8424,7 @@ func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, n
 				changedPorts = true
 			}
 			historyMu.Unlock()
+			configUpdateMu.Unlock()
 			updated++
 		}
 	}
@@ -7568,6 +8467,7 @@ func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, 
 		if strings.TrimSpace(target.Name) == "" {
 			continue
 		}
+		selectorFingerprint := targetServiceExclusionSelectorFingerprint(target)
 		var (
 			qRes       trafficQueryResult
 			portCounts map[string]int
@@ -7586,6 +8486,12 @@ func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, 
 		if qRes.Warning != "" {
 			log.Printf("[HISTORY] today reconcile warning day=%s target=%s: %s", dayKey, target.Name, qRes.Warning)
 		}
+		configUpdateMu.Lock()
+		if !ensureTrafficTargetServiceFilterCurrent(target, selectorFingerprint, "today-reconcile") {
+			configUpdateMu.Unlock()
+			failed++
+			continue
+		}
 		historyMu.Lock()
 		if blockedDaily[dayKey] == nil {
 			blockedDaily[dayKey] = map[string]int{}
@@ -7603,6 +8509,7 @@ func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, 
 			changedPorts = true
 		}
 		historyMu.Unlock()
+		configUpdateMu.Unlock()
 		updated++
 	}
 
@@ -7617,6 +8524,526 @@ func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, 
 		log.Printf("[HISTORY] today reconcile complete day=%s updated=%d failed=%d changed_counts=%t changed_ports=%t", dayKey, updated, failed, changedCounts, changedPorts)
 	}
 	return updated, failed
+}
+
+func parseServiceProtocol(raw string) (int, bool) {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "TCP":
+		return 6, true
+	case "UDP":
+		return 17, true
+	case "ICMP":
+		return 1, true
+	case "IGMP":
+		return 2, true
+	case "GRE":
+		return 47, true
+	case "SCTP":
+		return 132, true
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < 1 || value > 255 {
+		return 0, false
+	}
+	return value, true
+}
+
+func serviceProtocolName(proto int) string {
+	switch proto {
+	case 6:
+		return "TCP"
+	case 17:
+		return "UDP"
+	case 1:
+		return "ICMP"
+	case 2:
+		return "IGMP"
+	case 47:
+		return "GRE"
+	case 132:
+		return "SCTP"
+	default:
+		return strconv.Itoa(proto)
+	}
+}
+
+func looksLikeServicePortSpec(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	parts := strings.Split(raw, "-")
+	if len(parts) > 2 {
+		return false
+	}
+	for _, part := range parts {
+		if _, err := strconv.Atoi(strings.TrimSpace(part)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func parseDirectServiceExclusion(raw string) (trafficServiceFilter, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return trafficServiceFilter{}, false, nil
+	}
+
+	protoRaw := ""
+	portRaw := ""
+	direct := false
+	if parts := strings.SplitN(raw, ":", 2); len(parts) == 2 {
+		if _, ok := parseServiceProtocol(parts[0]); ok {
+			protoRaw, portRaw, direct = parts[0], parts[1], true
+		} else if looksLikeServicePortSpec(parts[1]) {
+			return trafficServiceFilter{}, true, fmt.Errorf("service exclusion %q has an invalid protocol", raw)
+		} else {
+			return trafficServiceFilter{}, false, nil
+		}
+	} else if parts := strings.SplitN(raw, "/", 2); len(parts) == 2 {
+		if _, ok := parseServiceProtocol(parts[1]); ok {
+			protoRaw, portRaw, direct = parts[1], parts[0], true
+		} else if looksLikeServicePortSpec(parts[0]) {
+			return trafficServiceFilter{}, true, fmt.Errorf("service exclusion %q has an invalid protocol", raw)
+		} else {
+			return trafficServiceFilter{}, false, nil
+		}
+	} else if fields := strings.Fields(raw); len(fields) == 2 {
+		if _, ok := parseServiceProtocol(fields[0]); ok {
+			protoRaw, portRaw, direct = fields[0], fields[1], true
+		} else if _, ok := parseServiceProtocol(fields[1]); ok {
+			protoRaw, portRaw, direct = fields[1], fields[0], true
+		} else if looksLikeServicePortSpec(fields[0]) || looksLikeServicePortSpec(fields[1]) {
+			return trafficServiceFilter{}, true, fmt.Errorf("service exclusion %q has an invalid protocol", raw)
+		}
+	}
+	if !direct {
+		return trafficServiceFilter{}, false, nil
+	}
+
+	proto, _ := parseServiceProtocol(protoRaw)
+	portRaw = strings.TrimSpace(portRaw)
+	if portRaw == "" {
+		return trafficServiceFilter{}, true, fmt.Errorf("service exclusion %q is missing a port", raw)
+	}
+	startRaw := portRaw
+	endRaw := ""
+	if strings.Contains(portRaw, "-") {
+		parts := strings.SplitN(portRaw, "-", 2)
+		startRaw = strings.TrimSpace(parts[0])
+		endRaw = strings.TrimSpace(parts[1])
+	}
+	startPort, err := strconv.Atoi(startRaw)
+	if err != nil || startPort < 1 || startPort > 65535 {
+		return trafficServiceFilter{}, true, fmt.Errorf("service exclusion %q has an invalid port", raw)
+	}
+	filter := trafficServiceFilter{Port: startPort, Proto: proto}
+	if endRaw != "" {
+		endPort, err := strconv.Atoi(endRaw)
+		if err != nil || endPort < startPort || endPort > 65535 {
+			return trafficServiceFilter{}, true, fmt.Errorf("service exclusion %q has an invalid port range", raw)
+		}
+		filter.ToPort = endPort
+	}
+	return filter, true, nil
+}
+
+func canonicalDirectServiceExclusion(filter trafficServiceFilter) string {
+	port := strconv.Itoa(filter.Port)
+	if filter.ToPort > 0 {
+		port += "-" + strconv.Itoa(filter.ToPort)
+	}
+	return serviceProtocolName(filter.Proto) + ":" + port
+}
+
+func sanitizeServiceExclusions(values []string) []string {
+	cleaned := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			continue
+		}
+		if direct, ok, err := parseDirectServiceExclusion(value); ok && err == nil {
+			value = canonicalDirectServiceExclusion(direct)
+		}
+		key := strings.ToLower(value)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		cleaned = append(cleaned, value)
+	}
+	return cleaned
+}
+
+func validateServiceExclusions(values []string) error {
+	for _, raw := range values {
+		_, direct, err := parseDirectServiceExclusion(raw)
+		if direct && err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func effectiveTrafficServiceExclusionsFrom(global []string, target TrafficTarget) []string {
+	combined := make([]string, 0, len(global)+len(target.ServiceExclusions))
+	combined = append(combined, global...)
+	combined = append(combined, target.ServiceExclusions...)
+	return sanitizeServiceExclusions(combined)
+}
+
+func effectiveTrafficServiceExclusions(target TrafficTarget) []string {
+	if target.effectiveServiceExclusions != nil {
+		return sanitizeServiceExclusions(target.effectiveServiceExclusions)
+	}
+	configMutex.RLock()
+	global := append([]string(nil), config.TrafficServiceExclusions...)
+	configMutex.RUnlock()
+	return effectiveTrafficServiceExclusionsFrom(global, target)
+}
+
+func freezeTrafficTargetServiceExclusions(targets []TrafficTarget) []TrafficTarget {
+	configMutex.RLock()
+	global := append([]string(nil), config.TrafficServiceExclusions...)
+	configMutex.RUnlock()
+	return freezeTrafficTargetServiceExclusionsFrom(global, targets)
+}
+
+func freezeTrafficTargetServiceExclusionsFrom(global []string, targets []TrafficTarget) []TrafficTarget {
+	frozen := make([]TrafficTarget, len(targets))
+	for i, target := range targets {
+		frozen[i] = target
+		selectors := effectiveTrafficServiceExclusionsFrom(global, target)
+		frozen[i].effectiveServiceExclusions = append(make([]string, 0, len(selectors)), selectors...)
+		frozen[i].resolvedServiceExclusions = nil
+		frozen[i].resolvedServiceFingerprint = ""
+		frozen[i].serviceResolutionError = ""
+	}
+	return frozen
+}
+
+func serviceExclusionFingerprint(values []string) string {
+	cleaned := sanitizeServiceExclusions(values)
+	for i := range cleaned {
+		cleaned[i] = strings.ToLower(cleaned[i])
+	}
+	sort.Strings(cleaned)
+	sum := sha256.Sum256([]byte(strings.Join(cleaned, "\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
+func targetServiceExclusionFingerprint(target TrafficTarget) string {
+	if strings.TrimSpace(target.resolvedServiceFingerprint) != "" {
+		return strings.TrimSpace(target.resolvedServiceFingerprint)
+	}
+	return serviceExclusionFingerprint(effectiveTrafficServiceExclusions(target))
+}
+
+func targetServiceExclusionSelectorFingerprint(target TrafficTarget) string {
+	return serviceExclusionFingerprint(effectiveTrafficServiceExclusions(target))
+}
+
+func resolvedServiceExclusionFingerprint(filters []trafficServiceFilter) string {
+	filters = dedupeTrafficServiceFilters(filters)
+	parts := make([]string, 0, len(filters))
+	for _, filter := range filters {
+		encoded, _ := json.Marshal(filter)
+		parts = append(parts, string(encoded))
+	}
+	sort.Strings(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
+func prepareTrafficTargetServiceExclusions(baseURL string, target TrafficTarget) TrafficTarget {
+	selectors := effectiveTrafficServiceExclusions(target)
+	resolved, err := resolveTrafficServiceExclusions(baseURL, selectors)
+	if err != nil {
+		target.resolvedServiceExclusions = nil
+		target.resolvedServiceFingerprint = ""
+		target.serviceResolutionError = err.Error()
+		return target
+	}
+	target.resolvedServiceExclusions = append(make([]trafficServiceFilter, 0, len(resolved)), resolved...)
+	target.resolvedServiceFingerprint = resolvedServiceExclusionFingerprint(resolved)
+	target.serviceResolutionError = ""
+	return target
+}
+
+func prepareTrafficTargetsServiceExclusions(baseURL string, targets []TrafficTarget) []TrafficTarget {
+	prepared := make([]TrafficTarget, len(targets))
+	for i, target := range targets {
+		prepared[i] = prepareTrafficTargetServiceExclusions(baseURL, target)
+	}
+	return prepared
+}
+
+func validateAndPrepareTrafficServiceExclusionTargets(baseURL string, global []string, targets []TrafficTarget) ([]TrafficTarget, error) {
+	prepared := prepareTrafficTargetsServiceExclusions(baseURL, freezeTrafficTargetServiceExclusionsFrom(global, targets))
+	for _, target := range prepared {
+		if strings.TrimSpace(target.serviceResolutionError) != "" {
+			return nil, fmt.Errorf("target %q: %s", target.Name, target.serviceResolutionError)
+		}
+	}
+	return prepared, nil
+}
+
+func resolvedTrafficServiceExclusionsForTarget(baseURL string, target TrafficTarget) ([]trafficServiceFilter, error) {
+	if strings.TrimSpace(target.serviceResolutionError) != "" {
+		return nil, errors.New(target.serviceResolutionError)
+	}
+	if target.resolvedServiceExclusions != nil {
+		return append(make([]trafficServiceFilter, 0, len(target.resolvedServiceExclusions)), target.resolvedServiceExclusions...), nil
+	}
+	return resolveTrafficServiceExclusions(baseURL, effectiveTrafficServiceExclusions(target))
+}
+
+func intPointerFromMap(obj map[string]interface{}, key string) *int {
+	raw, ok := obj[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	v := intFromAny(raw)
+	return &v
+}
+
+func trafficServiceFilterFromObject(obj map[string]interface{}, windowsService bool) (trafficServiceFilter, bool) {
+	filter := trafficServiceFilter{}
+	hasValue := false
+	if raw, ok := obj["port"]; ok && raw != nil {
+		filter.Port = intFromAny(raw)
+		hasValue = true
+	}
+	if raw, ok := obj["to_port"]; ok && raw != nil {
+		filter.ToPort = intFromAny(raw)
+		hasValue = true
+	}
+	if raw, ok := obj["proto"]; ok && raw != nil {
+		filter.Proto = intFromAny(raw)
+		hasValue = true
+	}
+	if process, _ := obj["process_name"].(string); strings.TrimSpace(process) != "" {
+		filter.ProcessName = strings.TrimSpace(process)
+		hasValue = true
+	}
+	if windowsService {
+		name, _ := obj["service_name"].(string)
+		if strings.TrimSpace(name) == "" {
+			name, _ = obj["windows_service_name"].(string)
+		}
+		if strings.TrimSpace(name) != "" {
+			filter.WindowsServiceName = strings.TrimSpace(name)
+			hasValue = true
+		}
+	}
+	filter.ICMPType = intPointerFromMap(obj, "icmp_type")
+	filter.ICMPCode = intPointerFromMap(obj, "icmp_code")
+	if filter.ICMPType != nil || filter.ICMPCode != nil {
+		hasValue = true
+	}
+	return filter, hasValue
+}
+
+func trafficServiceEntriesFromObject(service map[string]interface{}) []trafficServiceFilter {
+	entries := make([]trafficServiceFilter, 0)
+	if process, _ := service["process_name"].(string); strings.TrimSpace(process) != "" {
+		entries = append(entries, trafficServiceFilter{ProcessName: strings.TrimSpace(process)})
+	}
+	if ports, ok := service["service_ports"].([]interface{}); ok {
+		for _, raw := range ports {
+			port, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if filter, ok := trafficServiceFilterFromObject(port, false); ok {
+				entries = append(entries, filter)
+			}
+		}
+	}
+	if services, ok := service["windows_services"].([]interface{}); ok {
+		for _, raw := range services {
+			item, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if filter, ok := trafficServiceFilterFromObject(item, true); ok {
+				entries = append(entries, filter)
+			}
+		}
+	}
+	return dedupeTrafficServiceFilters(entries)
+}
+
+func dedupeTrafficServiceFilters(entries []trafficServiceFilter) []trafficServiceFilter {
+	out := make([]trafficServiceFilter, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		encoded, _ := json.Marshal(entry)
+		key := string(encoded)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func fetchAllTrafficServices(baseURL string) ([]map[string]interface{}, error) {
+	parsed, err := url.Parse(strings.TrimSuffix(strings.TrimSpace(baseURL), "/"))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("invalid PCE base URL %q", baseURL)
+	}
+	const marker = "/api/v2/orgs/"
+	markerIndex := strings.Index(parsed.Path, marker)
+	if markerIndex < 0 {
+		return nil, fmt.Errorf("invalid PCE organization URL %q", baseURL)
+	}
+	orgPath := strings.Trim(parsed.Path[markerIndex+len(marker):], "/")
+	orgID := strings.SplitN(orgPath, "/", 2)[0]
+	if orgID == "" {
+		return nil, fmt.Errorf("invalid PCE organization URL %q", baseURL)
+	}
+	configMutex.RLock()
+	configuredPCEURL := strings.TrimSpace(config.PCEURL)
+	apiKey := config.APIKey
+	apiSecret := config.APISecret
+	configMutex.RUnlock()
+	trustedOrigin, err := normalizePCEOrigin(configuredPCEURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid configured PCE origin: %w", err)
+	}
+	if !isValidRedirectURL(strings.TrimSpace(baseURL), trustedOrigin) {
+		return nil, errors.New("service catalog URL is outside the configured PCE origin")
+	}
+	client := extractorillumio.NewClient(trustedOrigin, orgID, apiKey, apiSecret)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	services, err := client.GetServices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(services)
+	if err != nil {
+		return nil, fmt.Errorf("encode active PCE services: %w", err)
+	}
+	var objects []map[string]interface{}
+	if err := json.Unmarshal(encoded, &objects); err != nil {
+		return nil, fmt.Errorf("decode active PCE services: %w", err)
+	}
+	return objects, nil
+}
+
+func loadTrafficServiceCatalog(baseURL string) (map[string]trafficServiceCatalogName, error) {
+	cacheKey := strings.TrimSuffix(strings.TrimSpace(baseURL), "/")
+	now := time.Now().UTC()
+	trafficServiceCatalogMu.Lock()
+	if cached, ok := trafficServiceCatalog[cacheKey]; ok && now.Before(cached.ExpiresAt) {
+		trafficServiceCatalogMu.Unlock()
+		return cached.ByName, nil
+	}
+	if flight, ok := trafficServiceCatalogFlights[cacheKey]; ok {
+		trafficServiceCatalogMu.Unlock()
+		<-flight.Done
+		return flight.Catalog, flight.Err
+	}
+	flight := &trafficServiceCatalogFlight{Done: make(chan struct{})}
+	trafficServiceCatalogFlights[cacheKey] = flight
+	trafficServiceCatalogMu.Unlock()
+
+	objects, err := fetchAllTrafficServices(cacheKey)
+	if err != nil {
+		err = fmt.Errorf("load active PCE services: %w", err)
+		trafficServiceCatalogMu.Lock()
+		flight.Err = err
+		delete(trafficServiceCatalogFlights, cacheKey)
+		close(flight.Done)
+		trafficServiceCatalogMu.Unlock()
+		return nil, err
+	}
+	byName := make(map[string]trafficServiceCatalogName)
+	for _, service := range objects {
+		name, _ := service["name"].(string)
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" {
+			continue
+		}
+		entry := byName[name]
+		entry.Entries = append(entry.Entries, trafficServiceEntriesFromObject(service)...)
+		href := strings.TrimSpace(mapString(service, "href"))
+		if href == "" {
+			href = fmt.Sprintf("unnamed-object-%d", len(entry.HRefs)+1)
+		}
+		entry.HRefs = append(entry.HRefs, href)
+		byName[name] = entry
+	}
+	for name, entry := range byName {
+		entry.Entries = dedupeTrafficServiceFilters(entry.Entries)
+		byName[name] = entry
+	}
+	trafficServiceCatalogMu.Lock()
+	trafficServiceCatalog[cacheKey] = trafficServiceCatalogCacheEntry{ExpiresAt: now.Add(trafficServiceCatalogCacheTTL), ByName: byName}
+	flight.Catalog = byName
+	delete(trafficServiceCatalogFlights, cacheKey)
+	close(flight.Done)
+	trafficServiceCatalogMu.Unlock()
+	return byName, nil
+}
+
+func invalidateTrafficServiceCatalog(baseURL string) {
+	cacheKey := strings.TrimSuffix(strings.TrimSpace(baseURL), "/")
+	for {
+		trafficServiceCatalogMu.Lock()
+		flight := trafficServiceCatalogFlights[cacheKey]
+		if flight == nil {
+			delete(trafficServiceCatalog, cacheKey)
+			trafficServiceCatalogMu.Unlock()
+			return
+		}
+		trafficServiceCatalogMu.Unlock()
+		<-flight.Done
+	}
+}
+
+func resolveTrafficServiceExclusions(baseURL string, selectors []string) ([]trafficServiceFilter, error) {
+	selectors = sanitizeServiceExclusions(selectors)
+	resolved := make([]trafficServiceFilter, 0, len(selectors))
+	named := make([]string, 0)
+	for _, selector := range selectors {
+		filter, direct, err := parseDirectServiceExclusion(selector)
+		if direct {
+			if err != nil {
+				return nil, err
+			}
+			resolved = append(resolved, filter)
+			continue
+		}
+		named = append(named, selector)
+	}
+	if len(named) == 0 {
+		return dedupeTrafficServiceFilters(resolved), nil
+	}
+	catalog, err := loadTrafficServiceCatalog(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	for _, selector := range named {
+		entry, ok := catalog[strings.ToLower(strings.TrimSpace(selector))]
+		if !ok {
+			return nil, fmt.Errorf("traffic service exclusion %q was not found in active PCE services", selector)
+		}
+		if len(entry.HRefs) > 1 {
+			return nil, fmt.Errorf("traffic service exclusion %q matches %d active PCE service objects; service names must be unique", selector, len(entry.HRefs))
+		}
+		if len(entry.Entries) == 0 {
+			return nil, fmt.Errorf("traffic service exclusion %q has no usable service entries", selector)
+		}
+		resolved = append(resolved, entry.Entries...)
+	}
+	return dedupeTrafficServiceFilters(resolved), nil
 }
 
 func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
@@ -7658,6 +9085,7 @@ func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
 		cleaned = append(cleaned, TrafficTarget{
 			Name:                  name,
 			Kind:                  kind,
+			ServiceExclusions:     sanitizeServiceExclusions(t.ServiceExclusions),
 			BlockedMAWindow:       window,
 			BlockedAnomalyPct:     pct,
 			BlockedAlertEnabled:   alertEnabledPtr,
@@ -7667,20 +9095,40 @@ func sanitizeTargets(targets []TrafficTarget) []TrafficTarget {
 	return cleaned
 }
 
+func validateUniqueTrafficTargetNames(targets []TrafficTarget) error {
+	seen := make(map[string]string, len(targets))
+	for _, target := range targets {
+		name := strings.TrimSpace(target.Name)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if previous, exists := seen[key]; exists {
+			return fmt.Errorf("traffic target names must be unique; %q conflicts with %q", name, previous)
+		}
+		seen[key] = name
+	}
+	return nil
+}
+
 func getBlockedCountForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, error) {
+	serviceExcludes, err := resolvedTrafficServiceExclusionsForTarget(baseURL, target)
+	if err != nil {
+		return trafficQueryResult{}, err
+	}
 	if isAllTrafficTarget(target) {
-		return performAsyncTrafficQueryWindowWithInclude(baseURL, nil, sourceExcludeHRefs, target.Name+"_all", startUTC, endUTC, false)
+		return performAsyncTrafficQueryWindowWithInclude(baseURL, nil, sourceExcludeHRefs, serviceExcludes, target.Name+"_all", startUTC, endUTC, false)
 	}
 	includeAny, err := buildTargetIncludeAny(baseURL, target)
 	if err != nil {
 		return trafficQueryResult{}, err
 	}
 	runBothDirections := func(includeAny []interface{}, queryName string) (trafficQueryResult, error) {
-		sourceRes, err := performAsyncTrafficQueryWindowWithInclude(baseURL, includeAny, sourceExcludeHRefs, queryName+"_src", startUTC, endUTC, true)
+		sourceRes, err := performAsyncTrafficQueryWindowWithInclude(baseURL, includeAny, sourceExcludeHRefs, serviceExcludes, queryName+"_src", startUTC, endUTC, true)
 		if err != nil {
 			return trafficQueryResult{}, err
 		}
-		destRes, err := performAsyncTrafficQueryWindowWithInclude(baseURL, includeAny, sourceExcludeHRefs, queryName+"_dst", startUTC, endUTC, false)
+		destRes, err := performAsyncTrafficQueryWindowWithInclude(baseURL, includeAny, sourceExcludeHRefs, serviceExcludes, queryName+"_dst", startUTC, endUTC, false)
 		if err != nil {
 			return trafficQueryResult{}, err
 		}
@@ -7702,19 +9150,23 @@ func getBlockedCountAndPortCountsForTargetWindow(baseURL string, target TrafficT
 }
 
 func getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
+	serviceExcludes, err := resolvedTrafficServiceExclusionsForTarget(baseURL, target)
+	if err != nil {
+		return trafficQueryResult{}, nil, nil, nil, err
+	}
 	if isAllTrafficTarget(target) {
-		res, ports, hosts, samples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, nil, true, sourceExcludeHRefs, target.Name+"_combined_all", startUTC, endUTC, false)
+		res, ports, hosts, samples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, nil, true, sourceExcludeHRefs, serviceExcludes, target.Name+"_combined_all", startUTC, endUTC, false)
 		return res, ports, hosts, samples, err
 	}
 	includeAny, err := buildTargetIncludeAny(baseURL, target)
 	if err != nil {
 		return trafficQueryResult{}, nil, nil, nil, err
 	}
-	srcRes, srcPorts, srcHosts, srcSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, false, sourceExcludeHRefs, target.Name+"_combined_src", startUTC, endUTC, true)
+	srcRes, srcPorts, srcHosts, srcSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, false, sourceExcludeHRefs, serviceExcludes, target.Name+"_combined_src", startUTC, endUTC, true)
 	if err != nil {
 		return trafficQueryResult{}, nil, nil, nil, err
 	}
-	dstRes, dstPorts, dstHosts, dstSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, false, sourceExcludeHRefs, target.Name+"_combined_dst", startUTC, endUTC, false)
+	dstRes, dstPorts, dstHosts, dstSamples, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, false, sourceExcludeHRefs, serviceExcludes, target.Name+"_combined_dst", startUTC, endUTC, false)
 	if err != nil {
 		return trafficQueryResult{}, nil, nil, nil, err
 	}
@@ -7754,9 +9206,35 @@ func collectBlockedTargetPaced(
 	blockedDeltaStart time.Time,
 	sourceExcludeHRefs []string,
 ) blockedTargetCycleResult {
+	serviceFilterFingerprint := targetServiceExclusionFingerprint(target)
+	serviceFilterSelectorFingerprint := targetServiceExclusionSelectorFingerprint(target)
 	res := blockedTargetCycleResult{
-		Index:  index,
-		Result: BlockedTargetResult{Name: target.Name, Kind: target.Kind},
+		Index:                    index,
+		Result:                   BlockedTargetResult{Name: target.Name, Kind: target.Kind},
+		ServiceFilterFingerprint: serviceFilterFingerprint,
+	}
+	checkServiceFilterCurrent := func() error {
+		current, ok := trafficTargetServiceFilterCurrent(target, serviceFilterSelectorFingerprint)
+		if ok {
+			return nil
+		}
+		if strings.TrimSpace(current.Name) != "" {
+			prepared := prepareTrafficTargetServiceExclusions(baseURL, current)
+			if strings.TrimSpace(prepared.serviceResolutionError) == "" {
+				invalidateTrafficServiceFilterTargets([]TrafficTarget{prepared})
+				requestTrafficServiceHistoryReconcile("traffic-service-exclusions-changed-during-query", []TrafficTarget{prepared})
+			}
+		}
+		return errors.New("traffic service exclusions changed during query; target will retry with a fresh baseline")
+	}
+	commitIfServiceFilterCurrent := func(commit func()) error {
+		configUpdateMu.Lock()
+		defer configUpdateMu.Unlock()
+		if err := checkServiceFilterCurrent(); err != nil {
+			return err
+		}
+		commit()
+		return nil
 	}
 	verbose := verboseBlockedLoggingEnabled()
 	hostMetricsEnabled := configuredBlockedHostMetricsEnabled()
@@ -7791,32 +9269,39 @@ func collectBlockedTargetPaced(
 			var hostCounts map[string]hostTrafficCount
 			var samples []blockedFlowSample
 			qRes, portCounts, hostCounts, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
-			if collectTier2 {
-				res.CurrentPorts = portCounts
-			}
-			res.CurrentSamples = samples
 			if err == nil {
-				if collectTier3 {
-					if err := sqliteClearBlockedHost5mTarget(target.Name); err != nil {
-						log.Printf("[BLOCKED] baseline host snapshot reset failed target=%s err=%v", target.Name, err)
+				err = commitIfServiceFilterCurrent(func() {
+					if collectTier2 {
+						res.CurrentPorts = portCounts
 					}
-				}
-				if err := sqliteClearBlockedFlowSeenTarget(target.Name); err != nil {
-					log.Printf("[BLOCKED] baseline flow-seen reset failed target=%s err=%v", target.Name, err)
-				}
-				currentCount, _, dedupHosts := applyBlockedFlowSamples(target.Name, nowUTC, samples)
-				res.CurrentCount = currentCount
-				if collectTier3 {
-					if len(dedupHosts) > 0 {
-						res.CurrentHosts = dedupHosts
-					} else {
-						res.CurrentHosts = hostCounts
+					res.CurrentSamples = samples
+					if collectTier3 {
+						if clearErr := sqliteClearBlockedHost5mTarget(target.Name); clearErr != nil {
+							log.Printf("[BLOCKED] baseline host snapshot reset failed target=%s err=%v", target.Name, clearErr)
+						}
 					}
-				}
+					if clearErr := sqliteClearBlockedFlowSeenTarget(target.Name); clearErr != nil {
+						log.Printf("[BLOCKED] baseline flow-seen reset failed target=%s err=%v", target.Name, clearErr)
+					}
+					currentCount, _, dedupHosts := applyBlockedFlowSamples(target.Name, nowUTC, samples)
+					res.CurrentCount = currentCount
+					if collectTier3 {
+						if len(dedupHosts) > 0 {
+							res.CurrentHosts = dedupHosts
+						} else {
+							res.CurrentHosts = hostCounts
+						}
+					}
+				})
 			}
 		} else {
 			qRes, err = getBlockedCountForTargetWindow(baseURL, target, nowUTC.Add(-24*time.Hour), nowUTC, sourceExcludeHRefs)
-			res.CurrentCount = qRes.Count
+			if err == nil {
+				err = checkServiceFilterCurrent()
+			}
+			if err == nil {
+				res.CurrentCount = qRes.Count
+			}
 		}
 		res.BaselineCount = qRes.Count
 		res.NewlyBaselined = err == nil
@@ -7828,20 +9313,32 @@ func collectBlockedTargetPaced(
 			var portCounts map[string]int
 			var samples []blockedFlowSample
 			qRes, portCounts, _, samples, err = getBlockedCountPortCountsAndFlowSamplesForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
-			if collectTier2 {
-				res.CurrentPorts = portCounts
-			}
-			res.CurrentSamples = samples
-			res.RawCount = qRes.Count
-			res.CurrentCount, _, res.CurrentHosts = applyBlockedFlowSamples(target.Name, nowUTC, samples)
-			if !collectTier3 {
-				res.CurrentHosts = nil
+			if err == nil {
+				err = commitIfServiceFilterCurrent(func() {
+					if collectTier2 {
+						res.CurrentPorts = portCounts
+					}
+					res.CurrentSamples = samples
+					res.RawCount = qRes.Count
+					res.CurrentCount, _, res.CurrentHosts = applyBlockedFlowSamples(target.Name, nowUTC, samples)
+					if !collectTier3 {
+						res.CurrentHosts = nil
+					}
+				})
 			}
 		} else {
 			qRes, err = getBlockedCountForTargetWindow(baseURL, target, blockedDeltaStart, nowUTC, sourceExcludeHRefs)
-			res.RawCount = qRes.Count
-			res.CurrentCount = qRes.Count
+			if err == nil {
+				err = checkServiceFilterCurrent()
+			}
+			if err == nil {
+				res.RawCount = qRes.Count
+				res.CurrentCount = qRes.Count
+			}
 		}
+	}
+	if err == nil {
+		err = checkServiceFilterCurrent()
 	}
 	res.Result.Count = qRes.Count
 	if warn := strings.TrimSpace(qRes.Warning); warn != "" {
@@ -7945,19 +9442,58 @@ func collectBlockedTargetsWithPacing(
 	return ordered, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, blockedBaseline, successCount, warningParts
 }
 
+// discardSupersededBlockedCycleResults must be called while configUpdateMu is held.
+// It prevents a query completed under an older selector set from being committed
+// after a settings update invalidated that target's state.
+func discardSupersededBlockedCycleResults(
+	targets []TrafficTarget,
+	results []BlockedTargetResult,
+	blockedCurrent map[string]int,
+	blockedCurrentPorts map[string]map[string]int,
+	blockedCurrentHosts map[string]map[string]hostTrafficCount,
+	blockedBaseline map[string]int,
+	successCount int,
+	warnings []string,
+) (int, []string) {
+	const message = "traffic service exclusions changed during collection; target will retry"
+	for i, target := range targets {
+		selectorFingerprint := targetServiceExclusionSelectorFingerprint(target)
+		if _, ok := trafficTargetServiceFilterCurrent(target, selectorFingerprint); ok {
+			continue
+		}
+		delete(blockedCurrent, target.Name)
+		delete(blockedCurrentPorts, target.Name)
+		delete(blockedCurrentHosts, target.Name)
+		delete(blockedBaseline, target.Name)
+		if i < len(results) {
+			if results[i].Status.Success && successCount > 0 {
+				successCount--
+			}
+			results[i].Count = 0
+			results[i].Status = FetchStatus{Success: false, Error: message}
+		}
+		warnings = append(warnings, fmt.Sprintf("%s: %s", target.Name, message))
+	}
+	return successCount, warnings
+}
+
 func getBlockedPortCountsForTargetWindow(baseURL string, target TrafficTarget, startUTC, endUTC time.Time, sourceExcludeHRefs []string) (map[string]int, error) {
+	serviceExcludes, err := resolvedTrafficServiceExclusionsForTarget(baseURL, target)
+	if err != nil {
+		return nil, err
+	}
 	if isAllTrafficTarget(target) {
-		return performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, nil, sourceExcludeHRefs, target.Name+"_ports_all", startUTC, endUTC, false)
+		return performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, nil, sourceExcludeHRefs, serviceExcludes, target.Name+"_ports_all", startUTC, endUTC, false)
 	}
 	includeAny, err := buildTargetIncludeAny(baseURL, target)
 	if err != nil {
 		return nil, err
 	}
-	sourceMap, err := performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAny, sourceExcludeHRefs, target.Name+"_ports_src", startUTC, endUTC, true)
+	sourceMap, err := performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAny, sourceExcludeHRefs, serviceExcludes, target.Name+"_ports_src", startUTC, endUTC, true)
 	if err != nil {
 		return nil, err
 	}
-	destMap, err := performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAny, sourceExcludeHRefs, target.Name+"_ports_dst", startUTC, endUTC, false)
+	destMap, err := performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAny, sourceExcludeHRefs, serviceExcludes, target.Name+"_ports_dst", startUTC, endUTC, false)
 	if err != nil {
 		return nil, err
 	}
@@ -8373,7 +9909,7 @@ func getBlockedCountTargetLabelHRefs(baseURL string, target TrafficTarget) ([]st
 	}
 }
 
-func performAsyncTrafficQueryWindowWithInclude(baseURL string, includeAny []interface{}, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
+func buildAsyncTrafficQueryPayload(includeAny []interface{}, sourceExcludeHRefs []string, serviceExcludes []trafficServiceFilter, queryName string, startUTC, endUTC time.Time, asSource bool) map[string]interface{} {
 	if includeAny == nil {
 		includeAny = []interface{}{}
 	}
@@ -8398,21 +9934,26 @@ func performAsyncTrafficQueryWindowWithInclude(baseURL string, includeAny []inte
 		}
 		sources["exclude"] = ex
 	}
+	serviceExcludeList := make([]trafficServiceFilter, len(serviceExcludes))
+	copy(serviceExcludeList, serviceExcludes)
 
-	payload := map[string]interface{}{
+	return map[string]interface{}{
 		"query_name":   fmt.Sprintf("Dash_%s_%d", queryName, time.Now().Unix()),
 		"sources":      sources,
 		"destinations": destinations,
 		"services": map[string]interface{}{
 			"include": []interface{}{},
-			"exclude": []interface{}{},
+			"exclude": serviceExcludeList,
 		},
 		"policy_decisions": []string{"blocked"},
 		"start_date":       startUTC.Format(pceTimeFormat),
 		"end_date":         endUTC.Format(pceTimeFormat),
 		"max_results":      trafficQueryMaxResults,
 	}
+}
 
+func performAsyncTrafficQueryWindowWithInclude(baseURL string, includeAny []interface{}, sourceExcludeHRefs []string, serviceExcludes []trafficServiceFilter, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
+	payload := buildAsyncTrafficQueryPayload(includeAny, sourceExcludeHRefs, serviceExcludes, queryName, startUTC, endUTC, asSource)
 	var job map[string]interface{}
 	if err := apiCall(baseURL+"/traffic_flows/async_queries", "POST", payload, &job); err != nil {
 		return trafficQueryResult{}, err
@@ -8452,48 +9993,12 @@ func performAsyncTrafficQueryWindowWithInclude(baseURL string, includeAny []inte
 	return trafficQueryResult{}, fmt.Errorf("async job timed out")
 }
 
-func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
-	return performAsyncTrafficQueryWindowWithInclude(baseURL, includeAnyFromLabelHRefs(labelHRefs), sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
+func performAsyncTrafficQueryWindow(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, serviceExcludes []trafficServiceFilter, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, error) {
+	return performAsyncTrafficQueryWindowWithInclude(baseURL, includeAnyFromLabelHRefs(labelHRefs), sourceExcludeHRefs, serviceExcludes, queryName, startUTC, endUTC, asSource)
 }
 
-func performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL string, includeAny []interface{}, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
-	if includeAny == nil {
-		includeAny = []interface{}{}
-	}
-	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
-	for _, h := range sourceExcludeHRefs {
-		if strings.TrimSpace(h) == "" {
-			continue
-		}
-		sourceExcludes = append(sourceExcludes, map[string]interface{}{"label": map[string]string{"href": h}})
-	}
-	sources := map[string]interface{}{"include": []interface{}{}, "exclude": []interface{}{}}
-	destinations := map[string]interface{}{"include": []interface{}{}, "exclude": []interface{}{}}
-	if asSource {
-		sources["include"] = includeAny
-	} else {
-		destinations["include"] = includeAny
-	}
-	if len(sourceExcludes) > 0 {
-		ex := make([]interface{}, 0, len(sourceExcludes))
-		for _, e := range sourceExcludes {
-			ex = append(ex, e)
-		}
-		sources["exclude"] = ex
-	}
-	payload := map[string]interface{}{
-		"query_name":   fmt.Sprintf("Dash_%s_%d", queryName, time.Now().Unix()),
-		"sources":      sources,
-		"destinations": destinations,
-		"services": map[string]interface{}{
-			"include": []interface{}{},
-			"exclude": []interface{}{},
-		},
-		"policy_decisions": []string{"blocked"},
-		"start_date":       startUTC.Format(pceTimeFormat),
-		"end_date":         endUTC.Format(pceTimeFormat),
-		"max_results":      trafficQueryMaxResults,
-	}
+func performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL string, includeAny []interface{}, sourceExcludeHRefs []string, serviceExcludes []trafficServiceFilter, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
+	payload := buildAsyncTrafficQueryPayload(includeAny, sourceExcludeHRefs, serviceExcludes, queryName, startUTC, endUTC, asSource)
 	var job map[string]interface{}
 	if err := apiCall(baseURL+"/traffic_flows/async_queries", "POST", payload, &job); err != nil {
 		return nil, err
@@ -8524,53 +10029,17 @@ func performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL string, include
 	return nil, fmt.Errorf("async job timed out")
 }
 
-func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
-	return performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAnyFromLabelHRefs(labelHRefs), sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
+func performAsyncTrafficQueryWindowPortCounts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, serviceExcludes []trafficServiceFilter, queryName string, startUTC, endUTC time.Time, asSource bool) (map[string]int, error) {
+	return performAsyncTrafficQueryWindowPortCountsWithInclude(baseURL, includeAnyFromLabelHRefs(labelHRefs), sourceExcludeHRefs, serviceExcludes, queryName, startUTC, endUTC, asSource)
 }
 
-func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, error) {
-	res, ports, _, _, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
+func performAsyncTrafficQueryWindowCountAndPorts(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, serviceExcludes []trafficServiceFilter, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, error) {
+	res, ports, _, _, err := performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL, labelHRefs, sourceExcludeHRefs, serviceExcludes, queryName, startUTC, endUTC, asSource)
 	return res, ports, err
 }
 
-func performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL string, includeAny []interface{}, allScope bool, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
-	if includeAny == nil {
-		includeAny = []interface{}{}
-	}
-	sourceExcludes := make([]map[string]interface{}, 0, len(sourceExcludeHRefs))
-	for _, h := range sourceExcludeHRefs {
-		if strings.TrimSpace(h) == "" {
-			continue
-		}
-		sourceExcludes = append(sourceExcludes, map[string]interface{}{"label": map[string]string{"href": h}})
-	}
-	sources := map[string]interface{}{"include": []interface{}{}, "exclude": []interface{}{}}
-	destinations := map[string]interface{}{"include": []interface{}{}, "exclude": []interface{}{}}
-	if asSource {
-		sources["include"] = includeAny
-	} else {
-		destinations["include"] = includeAny
-	}
-	if len(sourceExcludes) > 0 {
-		ex := make([]interface{}, 0, len(sourceExcludes))
-		for _, e := range sourceExcludes {
-			ex = append(ex, e)
-		}
-		sources["exclude"] = ex
-	}
-	payload := map[string]interface{}{
-		"query_name":   fmt.Sprintf("Dash_%s_%d", queryName, time.Now().Unix()),
-		"sources":      sources,
-		"destinations": destinations,
-		"services": map[string]interface{}{
-			"include": []interface{}{},
-			"exclude": []interface{}{},
-		},
-		"policy_decisions": []string{"blocked"},
-		"start_date":       startUTC.Format(pceTimeFormat),
-		"end_date":         endUTC.Format(pceTimeFormat),
-		"max_results":      trafficQueryMaxResults,
-	}
+func performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL string, includeAny []interface{}, allScope bool, sourceExcludeHRefs []string, serviceExcludes []trafficServiceFilter, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
+	payload := buildAsyncTrafficQueryPayload(includeAny, sourceExcludeHRefs, serviceExcludes, queryName, startUTC, endUTC, asSource)
 	var job map[string]interface{}
 	if err := apiCall(baseURL+"/traffic_flows/async_queries", "POST", payload, &job); err != nil {
 		return trafficQueryResult{}, nil, nil, nil, err
@@ -8621,9 +10090,9 @@ func performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL 
 	return trafficQueryResult{}, nil, nil, nil, fmt.Errorf("async job timed out")
 }
 
-func performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
+func performAsyncTrafficQueryWindowCountPortsHostsAndSamples(baseURL string, labelHRefs []string, sourceExcludeHRefs []string, serviceExcludes []trafficServiceFilter, queryName string, startUTC, endUTC time.Time, asSource bool) (trafficQueryResult, map[string]int, map[string]hostTrafficCount, []blockedFlowSample, error) {
 	includeAny := includeAnyFromLabelHRefs(labelHRefs)
-	return performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, len(labelHRefs) == 0, sourceExcludeHRefs, queryName, startUTC, endUTC, asSource)
+	return performAsyncTrafficQueryWindowCountPortsHostsAndSamplesWithInclude(baseURL, includeAny, len(labelHRefs) == 0, sourceExcludeHRefs, serviceExcludes, queryName, startUTC, endUTC, asSource)
 }
 
 func getAsyncQueryResultRows(jobURL string) ([]map[string]interface{}, error) {
@@ -9375,36 +10844,38 @@ func statusMessage(status map[string]interface{}) string {
 }
 
 func extractEventWorkloadName(event map[string]interface{}) string {
-	for _, key := range []string{"workload", "affected_workload", "src_workload", "dst_workload"} {
-		if nested, ok := event[key].(map[string]interface{}); ok {
-			if name := mapName(nested); name != "" {
-				return name
-			}
-		}
-	}
-	if name := findNameRecursive(event); name != "" {
+	// Events can also contain user, label and service names. Only explicit
+	// workload/VEN objects identify the affected endpoint; map iteration order
+	// must never decide which object becomes a deduplication key.
+	if name := findEventWorkloadName(event); name != "" {
 		return name
 	}
-	if name := mapName(event); name != "" {
-		return name
-	}
-	return ""
+	return mapName(event) // Legacy flattened event payloads.
 }
 
-func findNameRecursive(v interface{}) string {
+func findEventWorkloadName(v interface{}) string {
 	switch t := v.(type) {
 	case map[string]interface{}:
-		if n := mapName(t); n != "" {
-			return n
+		for _, key := range []string{"workload", "affected_workload", "agent", "ven", "src_workload", "dst_workload"} {
+			if nested, ok := t[key].(map[string]interface{}); ok {
+				if name := mapName(nested); name != "" {
+					return name
+				}
+			}
 		}
-		for _, val := range t {
-			if n := findNameRecursive(val); n != "" {
+		keys := make([]string, 0, len(t))
+		for key := range t {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if n := findEventWorkloadName(t[key]); n != "" {
 				return n
 			}
 		}
 	case []interface{}:
 		for _, val := range t {
-			if n := findNameRecursive(val); n != "" {
+			if n := findEventWorkloadName(val); n != "" {
 				return n
 			}
 		}
@@ -9452,7 +10923,7 @@ func fetchCollectionPageWithClient(client *http.Client, url string) ([]map[strin
 	if err := json.Unmarshal(body, &obj); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
-	for _, key := range []string{"items", "results", "vens", "workloads", "events"} {
+	for _, key := range []string{"items", "results", "vens", "workloads", "events", "services"} {
 		if items, ok := obj[key].([]interface{}); ok {
 			out := make([]map[string]interface{}, 0, len(items))
 			for _, it := range items {
@@ -9471,7 +10942,7 @@ func apiCallRaw(url, method string, payload interface{}) ([]byte, error) {
 	return apiCallRawWithClient(httpClient, url, method, payload)
 }
 
-func apiCallRawWithClient(client *http.Client, url, method string, payload interface{}) ([]byte, error) {
+func apiCallRawWithClient(client *http.Client, rawURL, method string, payload interface{}) ([]byte, error) {
 	reloadConfigIfFileChanged()
 	var payloadBytes []byte
 	if payload != nil {
@@ -9483,12 +10954,25 @@ func apiCallRawWithClient(client *http.Client, url, method string, payload inter
 	}
 
 	configMutex.RLock()
+	pceURL := strings.TrimSpace(config.PCEURL)
 	apiKey := config.APIKey
 	apiSecret := config.APISecret
 	configMutex.RUnlock()
+	trustedOrigin, err := normalizePCEOrigin(pceURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid configured PCE origin: %w", err)
+	}
+	requestURL := strings.TrimSpace(rawURL)
+	if !isValidRedirectURL(requestURL, trustedOrigin) {
+		return nil, fmt.Errorf("PCE request URL is outside the configured origin")
+	}
 
 	if client == nil {
 		client = httpClient
+	}
+	client, err = cloneHTTPClientWithExactOrigin(client, trustedOrigin)
+	if err != nil {
+		return nil, fmt.Errorf("secure PCE HTTP client: %w", err)
 	}
 	const maxAttempts = 5
 	var lastErr error
@@ -9498,8 +10982,8 @@ func apiCallRawWithClient(client *http.Client, url, method string, payload inter
 		if payloadBytes != nil {
 			body = bytes.NewReader(payloadBytes)
 		}
-		log.Printf("[API] %s %s", method, url)
-		req, err := http.NewRequest(method, url, body)
+		log.Printf("[API] %s %s", method, requestURL)
+		req, err := http.NewRequest(method, requestURL, body)
 		if err != nil {
 			return nil, fmt.Errorf("build request: %w", err)
 		}
@@ -9613,6 +11097,28 @@ func loadConfigFile() (Config, time.Time, bool) {
 	if strings.TrimSpace(cfg.OrgID) == "" {
 		cfg.OrgID = "1"
 	}
+	orgIDValue, err := strconv.ParseUint(strings.TrimSpace(cfg.OrgID), 10, 64)
+	if err != nil || orgIDValue == 0 {
+		log.Printf("[CONFIG] org_id must be a positive integer")
+		return Config{}, time.Time{}, false
+	}
+	cfg.OrgID = strings.TrimSpace(cfg.OrgID)
+	normalizedPCEURL, err := normalizePCEOrigin(cfg.PCEURL)
+	if err != nil {
+		log.Printf("[CONFIG] invalid pce_url: %v", err)
+		return Config{}, time.Time{}, false
+	}
+	cfg.PCEURL = normalizedPCEURL
+	cfg.PCEAllowedOrigins, err = normalizeConfiguredPCEOrigins(cfg.PCEAllowedOrigins)
+	if err != nil {
+		log.Printf("[CONFIG] invalid pce_allowed_origins: %v", err)
+		return Config{}, time.Time{}, false
+	}
+	cfg.WebhookPrivateAllowedOrigins, err = normalizeWebhookPrivateAllowedOrigins(cfg.WebhookPrivateAllowedOrigins)
+	if err != nil {
+		log.Printf("[CONFIG] invalid webhook_private_allowed_origins: %v", err)
+		return Config{}, time.Time{}, false
+	}
 	cfg.Timezone = normalizeTimezone(cfg.Timezone)
 	cfg.BindAddress = normalizeBindAddress(cfg.BindAddress)
 	cfg.PublicBaseURL = normalizePublicBaseURL(cfg.PublicBaseURL)
@@ -9625,7 +11131,12 @@ func loadConfigFile() (Config, time.Time, bool) {
 	cfg.APIMaxRPM = normalizeAPIMaxRPM(cfg.APIMaxRPM)
 	cfg.HistoryDays = normalizeHistoryDays(cfg.HistoryDays)
 	cfg.TrafficTargets = sanitizeTargets(cfg.TrafficTargets)
+	if err := validateUniqueTrafficTargetNames(cfg.TrafficTargets); err != nil {
+		log.Printf("[CONFIG] invalid traffic targets in %s: %v", configFileName, err)
+		return Config{}, time.Time{}, false
+	}
 	cfg.SourceExclusions = sanitizeTargets(cfg.SourceExclusions)
+	cfg.TrafficServiceExclusions = sanitizeServiceExclusions(cfg.TrafficServiceExclusions)
 	if strings.TrimSpace(cfg.PCEURL) == "" || strings.TrimSpace(cfg.APIKey) == "" || strings.TrimSpace(cfg.APISecret) == "" {
 		return Config{}, time.Time{}, false
 	}
@@ -9634,6 +11145,27 @@ func loadConfigFile() (Config, time.Time, bool) {
 		modTime = st.ModTime().UTC()
 	}
 	return cfg, modTime, true
+}
+
+func normalizeConfiguredPCEOrigins(values []string) ([]string, error) {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		normalized, err := normalizePCEOrigin(value)
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", value, err)
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out, nil
 }
 
 func normalizeHistoryDays(days int) int {
@@ -9687,15 +11219,35 @@ func reloadConfigIfFileChanged() {
 	if !mod.After(last) {
 		return
 	}
+
+	configUpdateMu.Lock()
+	defer configUpdateMu.Unlock()
+	st, err = os.Stat(configFileName)
+	if err != nil {
+		return
+	}
+	mod = st.ModTime().UTC()
+	configMutex.RLock()
+	last = configModTime
+	configMutex.RUnlock()
+	if !mod.After(last) {
+		return
+	}
 	cfg, modTime, ok := loadConfigFile()
 	if !ok {
 		log.Printf("[CONFIG] config.json changed on disk but reload skipped due to invalid/incomplete values")
 		return
 	}
 	configMutex.Lock()
+	oldBaseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(strings.TrimSpace(config.PCEURL), "/"), strings.TrimSpace(config.OrgID))
 	config = cfg
 	configModTime = modTime
+	newBaseURL := fmt.Sprintf("%s/api/v2/orgs/%s", strings.TrimSuffix(strings.TrimSpace(config.PCEURL), "/"), strings.TrimSpace(config.OrgID))
 	configMutex.Unlock()
+	invalidateTrafficServiceCatalog(oldBaseURL)
+	if newBaseURL != oldBaseURL {
+		invalidateTrafficServiceCatalog(newBaseURL)
+	}
 	apiRateLimiter.applyConfig(cfg.APIMaxRPM)
 	log.Printf("[CONFIG] reloaded config.json from disk")
 }
@@ -10270,6 +11822,18 @@ func sqliteInsertBlockedPort5m(tsUTC time.Time, blockedPorts map[string]map[stri
 	return tx.Commit()
 }
 
+func sqliteClearBlockedPort5mTarget(target string) error {
+	if metricsDB == nil {
+		return errors.New("sqlite not initialized")
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil
+	}
+	_, err := metricsDB.Exec(`DELETE FROM blocked_ports_5m WHERE target = ?`, target)
+	return err
+}
+
 func sqliteInsertBlockedHost5m(tsUTC time.Time, blockedHosts map[string]map[string]hostTrafficCount) error {
 	if metricsDB == nil || len(blockedHosts) == 0 {
 		return nil
@@ -10709,17 +12273,19 @@ func loadVENHistory() {
 			continue
 		}
 		venDaily[day] = venDailySnapshot{
-			WarningMax:       rec.WarningMax,
-			ErrorMax:         rec.ErrorMax,
-			SuspendedMax:     rec.SuspendedMax,
-			TamperingMax:     rec.TamperingMax,
-			RulesetsMax:      rec.RulesetsMax,
-			RulesMax:         rec.RulesMax,
-			ModeIdleMax:      rec.ModeIdleMax,
-			ModeVisMax:       rec.ModeVisMax,
-			ModeSelectiveMax: rec.ModeSelectiveMax,
-			ModeFullMax:      rec.ModeFullMax,
-			ModeUnmanagedMax: rec.ModeUnmanagedMax,
+			WarningMax:        rec.WarningMax,
+			ErrorMax:          rec.ErrorMax,
+			SuspendedMax:      rec.SuspendedMax,
+			StoppedMax:        rec.StoppedMax,
+			TamperingMax:      rec.TamperingMax,
+			TamperingComplete: rec.TamperingComplete,
+			RulesetsMax:       rec.RulesetsMax,
+			RulesMax:          rec.RulesMax,
+			ModeIdleMax:       rec.ModeIdleMax,
+			ModeVisMax:        rec.ModeVisMax,
+			ModeSelectiveMax:  rec.ModeSelectiveMax,
+			ModeFullMax:       rec.ModeFullMax,
+			ModeUnmanagedMax:  rec.ModeUnmanagedMax,
 		}
 	}
 }
@@ -10758,14 +12324,20 @@ func loadRollingState() {
 	}
 
 	loaded := rollingState{
-		Initialized:         persisted.Initialized,
-		LastCycle:           persisted.LastCycle.UTC(),
-		BaselineCapturedUTC: persisted.BaselineCapturedUTC.UTC(),
-		BaselineTampering:   persisted.BaselineTampering,
-		BaselineWorkloads:   map[string]struct{}{},
-		BaselineBlocked:     map[string]targetBaseline{},
-		Buckets:             make([]rollingBucket, 0, len(persisted.Buckets)),
-		BlockedFlowLastSeen: map[string]map[string]blockedFlowSeenState{},
+		Initialized:                persisted.Initialized,
+		LastCycle:                  persisted.LastCycle.UTC(),
+		BaselineCapturedUTC:        persisted.BaselineCapturedUTC.UTC(),
+		BaselineTampering:          persisted.BaselineTampering,
+		BaselineWorkloads:          map[string]struct{}{},
+		TamperingLastSeen:          map[string]time.Time{},
+		TamperingTimestampsReady:   persisted.TamperingTimestampsReady,
+		TamperingBackfillPending:   persisted.TamperingBackfillPending,
+		TamperingCollectionVersion: persisted.TamperingCollectionVersion,
+		BaselineBlocked:            map[string]targetBaseline{},
+		ServiceFilterFingerprints:  map[string]string{},
+		ServiceHistoryPending:      map[string]string{},
+		Buckets:                    make([]rollingBucket, 0, len(persisted.Buckets)),
+		BlockedFlowLastSeen:        map[string]map[string]blockedFlowSeenState{},
 	}
 	for _, n := range persisted.BaselineWorkloads {
 		n = strings.TrimSpace(n)
@@ -10773,6 +12345,11 @@ func loadRollingState() {
 			continue
 		}
 		loaded.BaselineWorkloads[n] = struct{}{}
+	}
+	for name, at := range persisted.TamperingLastSeen {
+		if strings.TrimSpace(name) != "" && !at.IsZero() {
+			loaded.TamperingLastSeen[name] = at.UTC()
+		}
 	}
 	for target, base := range persisted.BaselineBlocked {
 		target = strings.TrimSpace(target)
@@ -10784,18 +12361,36 @@ func loadRollingState() {
 			CapturedUTC: base.CapturedUTC.UTC(),
 		}
 	}
+	for target, fingerprint := range persisted.ServiceFilterFingerprints {
+		target = strings.TrimSpace(target)
+		fingerprint = strings.TrimSpace(fingerprint)
+		if target == "" || fingerprint == "" {
+			continue
+		}
+		loaded.ServiceFilterFingerprints[target] = fingerprint
+	}
+	for target, fingerprint := range persisted.ServiceHistoryPending {
+		target = strings.TrimSpace(target)
+		fingerprint = strings.TrimSpace(fingerprint)
+		if target == "" || fingerprint == "" {
+			continue
+		}
+		loaded.ServiceHistoryPending[target] = fingerprint
+	}
 	for _, b := range persisted.Buckets {
 		bucket := rollingBucket{
 			EndUTC:             b.EndUTC.UTC(),
 			VENWarningCount:    b.VENWarningCount,
 			VENErrorCount:      b.VENErrorCount,
 			VENSuspendedCount:  b.VENSuspendedCount,
+			VENStoppedCount:    b.VENStoppedCount,
 			ModeIdleCount:      b.ModeIdleCount,
 			ModeVisCount:       b.ModeVisCount,
 			ModeSelectiveCount: b.ModeSelectiveCount,
 			ModeFullCount:      b.ModeFullCount,
 			ModeUnmanagedCount: b.ModeUnmanagedCount,
 			TamperingCount:     b.TamperingCount,
+			TamperingComplete:  b.TamperingComplete,
 			TamperingWorkloads: map[string]struct{}{},
 			BlockedByTarget:    map[string]int{},
 		}
@@ -10830,22 +12425,35 @@ func loadRollingState() {
 }
 
 func saveRollingState() {
+	rollingSaveMu.Lock()
+	defer rollingSaveMu.Unlock()
 	rollingMu.Lock()
 	persisted := persistedRollingState{
-		SchemaVersion:       rollingStateSchemaVersion,
-		Initialized:         rollingCache.Initialized,
-		LastCycle:           rollingCache.LastCycle.UTC(),
-		BaselineCapturedUTC: rollingCache.BaselineCapturedUTC.UTC(),
-		BaselineTampering:   rollingCache.BaselineTampering,
-		BaselineWorkloads:   make([]string, 0, len(rollingCache.BaselineWorkloads)),
-		BaselineBlocked:     make(map[string]persistedTargetBaseline, len(rollingCache.BaselineBlocked)),
-		Buckets:             make([]persistedRollingBucket, 0, len(rollingCache.Buckets)),
+		SchemaVersion:              rollingStateSchemaVersion,
+		Initialized:                rollingCache.Initialized,
+		LastCycle:                  rollingCache.LastCycle.UTC(),
+		BaselineCapturedUTC:        rollingCache.BaselineCapturedUTC.UTC(),
+		BaselineTampering:          rollingCache.BaselineTampering,
+		BaselineWorkloads:          make([]string, 0, len(rollingCache.BaselineWorkloads)),
+		TamperingLastSeen:          make(map[string]time.Time, len(rollingCache.TamperingLastSeen)),
+		TamperingTimestampsReady:   rollingCache.TamperingTimestampsReady,
+		TamperingBackfillPending:   rollingCache.TamperingBackfillPending,
+		TamperingCollectionVersion: rollingCache.TamperingCollectionVersion,
+		BaselineBlocked:            make(map[string]persistedTargetBaseline, len(rollingCache.BaselineBlocked)),
+		ServiceFilterFingerprints:  make(map[string]string, len(rollingCache.ServiceFilterFingerprints)),
+		ServiceHistoryPending:      make(map[string]string, len(rollingCache.ServiceHistoryPending)),
+		Buckets:                    make([]persistedRollingBucket, 0, len(rollingCache.Buckets)),
 	}
 	for n := range rollingCache.BaselineWorkloads {
 		if strings.TrimSpace(n) == "" {
 			continue
 		}
 		persisted.BaselineWorkloads = append(persisted.BaselineWorkloads, n)
+	}
+	for name, at := range rollingCache.TamperingLastSeen {
+		if strings.TrimSpace(name) != "" && !at.IsZero() {
+			persisted.TamperingLastSeen[name] = at.UTC()
+		}
 	}
 	sort.Strings(persisted.BaselineWorkloads)
 	for target, base := range rollingCache.BaselineBlocked {
@@ -10857,18 +12465,36 @@ func saveRollingState() {
 			CapturedUTC: base.CapturedUTC.UTC(),
 		}
 	}
+	for target, fingerprint := range rollingCache.ServiceFilterFingerprints {
+		target = strings.TrimSpace(target)
+		fingerprint = strings.TrimSpace(fingerprint)
+		if target == "" || fingerprint == "" {
+			continue
+		}
+		persisted.ServiceFilterFingerprints[target] = fingerprint
+	}
+	for target, fingerprint := range rollingCache.ServiceHistoryPending {
+		target = strings.TrimSpace(target)
+		fingerprint = strings.TrimSpace(fingerprint)
+		if target == "" || fingerprint == "" {
+			continue
+		}
+		persisted.ServiceHistoryPending[target] = fingerprint
+	}
 	for _, b := range rollingCache.Buckets {
 		item := persistedRollingBucket{
 			EndUTC:             b.EndUTC.UTC(),
 			VENWarningCount:    b.VENWarningCount,
 			VENErrorCount:      b.VENErrorCount,
 			VENSuspendedCount:  b.VENSuspendedCount,
+			VENStoppedCount:    b.VENStoppedCount,
 			ModeIdleCount:      b.ModeIdleCount,
 			ModeVisCount:       b.ModeVisCount,
 			ModeSelectiveCount: b.ModeSelectiveCount,
 			ModeFullCount:      b.ModeFullCount,
 			ModeUnmanagedCount: b.ModeUnmanagedCount,
 			TamperingCount:     b.TamperingCount,
+			TamperingComplete:  b.TamperingComplete,
 			TamperingWorkloads: make([]string, 0, len(b.TamperingWorkloads)),
 			BlockedByTarget:    make(map[string]int, len(b.BlockedByTarget)),
 		}
@@ -11151,6 +12777,8 @@ func pruneBlockedHistory(nowUTC time.Time, keepDays int) {
 }
 
 func saveBlockedHistory() {
+	blockedHistorySaveMu.Lock()
+	defer blockedHistorySaveMu.Unlock()
 	historyMu.Lock()
 	records := make([]dailyBlockedRecord, 0)
 	for day, targets := range blockedDaily {
@@ -11182,6 +12810,8 @@ func saveBlockedHistory() {
 }
 
 func saveBlockedHistory5mCaptured() {
+	blockedHistory5mSaveMu.Lock()
+	defer blockedHistory5mSaveMu.Unlock()
 	historyMu.Lock()
 	records := make([]dailyBlockedRecord, 0)
 	for day, targets := range blockedDaily5mCaptured {
@@ -11212,6 +12842,8 @@ func saveBlockedHistory5mCaptured() {
 }
 
 func saveBlockedPortHistory() {
+	blockedPortHistorySaveMu.Lock()
+	defer blockedPortHistorySaveMu.Unlock()
 	historyMu.Lock()
 	records := make([]dailyBlockedPortRecord, 0)
 	for day, targets := range blockedPortsDaily {
@@ -11251,6 +12883,8 @@ func saveBlockedPortHistory() {
 }
 
 func saveBlockedHostHistory() {
+	blockedHostHistorySaveMu.Lock()
+	defer blockedHostHistorySaveMu.Unlock()
 	historyMu.Lock()
 	records := make([]dailyBlockedHostRecord, 0)
 	for day, targets := range blockedHostsDaily {
@@ -11354,18 +12988,20 @@ func saveVENHistory() {
 	records := make([]venDailyRecord, 0, len(venDaily))
 	for day, snap := range venDaily {
 		records = append(records, venDailyRecord{
-			Day:              day,
-			WarningMax:       snap.WarningMax,
-			ErrorMax:         snap.ErrorMax,
-			SuspendedMax:     snap.SuspendedMax,
-			TamperingMax:     snap.TamperingMax,
-			RulesetsMax:      snap.RulesetsMax,
-			RulesMax:         snap.RulesMax,
-			ModeIdleMax:      snap.ModeIdleMax,
-			ModeVisMax:       snap.ModeVisMax,
-			ModeSelectiveMax: snap.ModeSelectiveMax,
-			ModeFullMax:      snap.ModeFullMax,
-			ModeUnmanagedMax: snap.ModeUnmanagedMax,
+			Day:               day,
+			WarningMax:        snap.WarningMax,
+			ErrorMax:          snap.ErrorMax,
+			SuspendedMax:      snap.SuspendedMax,
+			StoppedMax:        snap.StoppedMax,
+			TamperingMax:      snap.TamperingMax,
+			TamperingComplete: snap.TamperingComplete,
+			RulesetsMax:       snap.RulesetsMax,
+			RulesMax:          snap.RulesMax,
+			ModeIdleMax:       snap.ModeIdleMax,
+			ModeVisMax:        snap.ModeVisMax,
+			ModeSelectiveMax:  snap.ModeSelectiveMax,
+			ModeFullMax:       snap.ModeFullMax,
+			ModeUnmanagedMax:  snap.ModeUnmanagedMax,
 		})
 	}
 	venHistoryMu.Unlock()
@@ -11387,7 +13023,8 @@ func updateVENDailyHistory(
 	warningCount int,
 	errorCount int,
 	suspendedCount int,
-	tamperingCount int,
+	stoppedCount *int,
+	tamperingCount *int,
 	modeIdle int,
 	modeVisibility int,
 	modeSelective int,
@@ -11411,8 +13048,18 @@ func updateVENDailyHistory(
 		prev.SuspendedMax = suspendedCount
 		changed = true
 	}
-	if tamperingCount != prev.TamperingMax {
-		prev.TamperingMax = tamperingCount
+	if stoppedCount != nil && (prev.StoppedMax == nil || *stoppedCount > *prev.StoppedMax) {
+		count := *stoppedCount
+		prev.StoppedMax = &count
+		changed = true
+	}
+	tamperingComplete := tamperingCount != nil
+	if prev.TamperingComplete == nil || *prev.TamperingComplete != tamperingComplete {
+		prev.TamperingComplete = &tamperingComplete
+		changed = true
+	}
+	if tamperingCount != nil && *tamperingCount != prev.TamperingMax {
+		prev.TamperingMax = *tamperingCount
 		changed = true
 	}
 	if modeIdle > prev.ModeIdleMax {
@@ -11447,16 +13094,31 @@ func updateVENDailyHistory(
 func promptConfig() {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("--- Illumio Go Dashboard Setup ---")
-	fmt.Print("PCE URL (e.g., https://pce.example.com:8443): ")
-	config.PCEURL = strings.TrimSpace(readInput(reader))
+	for {
+		fmt.Print("PCE URL (e.g., https://pce.example.com:8443): ")
+		normalized, err := normalizePCEOrigin(readInput(reader))
+		if err != nil {
+			fmt.Printf("Invalid PCE URL: %v\n", err)
+			continue
+		}
+		config.PCEURL = normalized
+		break
+	}
 	fmt.Print("API Key ID: ")
 	config.APIKey = strings.TrimSpace(readInput(reader))
 	fmt.Print("API Secret: ")
 	config.APISecret = strings.TrimSpace(readInput(reader))
-	fmt.Print("Org ID [1]: ")
-	config.OrgID = strings.TrimSpace(readInput(reader))
-	if config.OrgID == "" {
-		config.OrgID = "1"
+	for {
+		fmt.Print("Org ID [1]: ")
+		config.OrgID = strings.TrimSpace(readInput(reader))
+		if config.OrgID == "" {
+			config.OrgID = "1"
+		}
+		value, err := strconv.ParseUint(config.OrgID, 10, 64)
+		if err == nil && value > 0 {
+			break
+		}
+		fmt.Println("Org ID must be a positive integer.")
 	}
 	config.Timezone = normalizeTimezone(config.Timezone)
 	config.BindAddress = normalizeBindAddress(config.BindAddress)
@@ -11505,6 +13167,16 @@ func serveExecutive(w http.ResponseWriter, r *http.Request) {
 	if err := executivePageTmpl.Execute(w, pageTemplateData()); err != nil {
 		http.Error(w, "failed to render executive page", http.StatusInternalServerError)
 	}
+}
+
+func handleDashboardVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]string{"version": dashboardVersionLabel()})
 }
 
 func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
@@ -11575,11 +13247,31 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 	if !writeRow("Suspended VENs", strconv.Itoa(len(snapshot.VENStatus.Suspended))) {
 		return
 	}
+	stoppedCount := "Unavailable"
+	if snapshot.VENStatus.StoppedStatus.Success {
+		stoppedCount = strconv.Itoa(len(snapshot.VENStatus.Stopped))
+	}
+	if !writeRow("Stopped VENs", stoppedCount) {
+		return
+	}
+	if !snapshot.VENStatus.StoppedStatus.Success && !writeRow("Stopped VEN Collection Status", "Incomplete", snapshot.VENStatus.StoppedStatus.Error) {
+		return
+	}
 	tamperedCount := len(snapshot.Tampering.Workloads)
 	if tamperedCount == 0 {
 		tamperedCount = snapshot.Tampering.Count
 	}
-	if !writeRow("Tampered VENs (Deduped)", strconv.Itoa(tamperedCount)) {
+	tamperedDisplay := strconv.Itoa(tamperedCount)
+	if !snapshot.Tampering.Status.Success || snapshot.Tampering.Partial || snapshot.Tampering.Status.Error != "" {
+		tamperedDisplay += " (incomplete)"
+		if tamperedCount == 0 {
+			tamperedDisplay = "Unavailable"
+		}
+		if !writeRow("Tampering Collection Status", "Incomplete", snapshot.Tampering.Status.Error) {
+			return
+		}
+	}
+	if !writeRow("Tampered VENs (Deduped)", tamperedDisplay) {
 		return
 	}
 	if snapshot.Rules.Enabled {
@@ -11599,21 +13291,26 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !writeRow("List Type", "Name") {
+	if !writeRow("List Type", "Name", "Last tamper UTC") {
 		return
 	}
 	for _, n := range snapshot.VENStatus.Warning {
-		if !writeRow("VEN Warning", n) {
+		if !writeRow("VEN Warning", n, "") {
 			return
 		}
 	}
 	for _, n := range snapshot.VENStatus.Error {
-		if !writeRow("VEN Error", n) {
+		if !writeRow("VEN Error", n, "") {
+			return
+		}
+	}
+	for _, n := range snapshot.VENStatus.Stopped {
+		if !writeRow("Stopped VEN", n, "") {
 			return
 		}
 	}
 	for _, n := range snapshot.Tampering.Workloads {
-		if !writeRow("Tampered VEN/Workload", n) {
+		if !writeRow("Tampered VEN/Workload", n, formatTamperingTimestamp(snapshot.Tampering.LastSeen[n])) {
 			return
 		}
 	}
@@ -11641,6 +13338,16 @@ func handleExportReportCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, p := range venDailyTrendSeries("error", configuredHistoryDays()) {
 		if !writeRow("VEN Error Daily", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
+			return
+		}
+	}
+	for _, p := range venTrendSeries("stopped") {
+		if !writeRow("VEN Stopped 24h (5m)", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
+			return
+		}
+	}
+	for _, p := range venDailyTrendSeries("stopped", configuredHistoryDays()) {
+		if !writeRow("VEN Stopped Daily", p.Timestamp.UTC().Format(time.RFC3339), strconv.Itoa(p.Value)) {
 			return
 		}
 	}

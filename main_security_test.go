@@ -74,4 +74,3 @@ func TestIsTrustedOriginRequest_CrossOriginBlocked(t *testing.T) {
 		t.Fatalf("expected block reason")
 	}
 }
-
