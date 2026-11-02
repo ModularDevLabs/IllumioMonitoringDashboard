@@ -1,5 +1,34 @@
 # Release Notes
 
+## v1.4.0-rc.1 - 2026-11-02
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. This does not replace `v1.3.0` as the latest stable release. All new estate features, scheduled report generation, and webhook delivery are disabled by default and can be enabled individually in Settings.
+
+### Optional estate insights
+
+- Managed/unmanaged subtotals beneath Total Workloads, inventory details, and management coverage.
+- Separate active/draft policy ruleset and rule totals, pending changes, and the latest observed provisioning timestamp. Active and draft counts are not added together.
+- VEN version distribution counting distinct deployed VENs, including an explicit Unknown version bucket; shared VEN references are counted once.
+- Issue aging and recurring episodes for warning, error, stopped, and suspended VENs; label hygiene using customer-selected required label types; and an observed estate change log.
+- Private retained history isolated by PCE, organization, and reporting timezone. Partial collections never imply workload removal or issue recovery.
+
+### Weekly Estate Report and Outlook copy
+
+- Completed Monday–Sunday reports in the dashboard timezone, with prior-week comparisons and selectable Estate, VEN Health, Policy, Traffic, Changes, and Data Quality sections.
+- The Estate section includes per-version deployed VEN totals even when the separate live version card is disabled.
+- Themed self-contained HTML exports, browser Print / Save as PDF, and an email-friendly layout with **Copy for Email**, suggested subject copying, and manual-copy fallback. Paste into an HTML-format Outlook message using Keep Source Formatting when offered. Copying does not send email; exact paste styling depends on the email client.
+- The displayed preview, HTML download, and email copy use one captured report snapshot, avoiding mismatched totals during collection or reconciliation.
+- Separately opt-in weekly scheduling and webhook delivery. Frozen reports remain available locally; Slack/Teams receive a summary and dashboard link, while generic webhooks receive structured report data. These weekly-report destinations do not send email or upload PDF attachments. Uncertain or failed sends are not automatically retried, avoiding duplicate delivery.
+
+### Coverage, upgrade, and testing notes
+
+- Inventory history begins after enabling collection; unavailable history is disclosed rather than converted to zero. Weekly health counts deduplicate observed identities and tampering uses retained event timestamps.
+- Weekly traffic includes only verified complete-day queries matched to the PCE, organization, timezone, target, and effective exclusions. Older unattributed traffic history must be reconciled to become eligible. Incomplete days remain unavailable; traffic comparisons require two complete weeks, and overlapping targets are not summed into a unique estate total.
+- Changes to the contents of a named PCE service invalidate incompatible traffic coverage, including stale queries still in flight.
+- Stop the previous application and back up configuration and history before testing. Do not run old and new binaries against the same state directories concurrently. Dashboard and traffic-extractor API credentials remain separate.
+
+Versioned binaries are provided for Windows amd64, Linux amd64, Intel macOS, and Apple Silicon macOS. Filenames and in-app version labels identify `v1.4.0-rc.1`. Validation includes fresh Go race tests across all packages, static checks, all 134 frontend tests, and browser checks with synthetic data. Live customer-PCE and Outlook-specific paste validation remain part of release-candidate testing.
+
 ## v1.3.0 - 2026-10-29
 
 Stable mainline release of the combined Monitoring Dashboard and Traffic Extractor, promoting the functionality tested through `v1.3.0-rc.11`. This replaces `v1.2.11` as the latest stable dashboard release. Promotion changes release documentation and version labeling, not the tested collection or analysis behavior.

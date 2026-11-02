@@ -36,7 +36,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-//go:embed index.html settings.html details.html report.html executive.html static/*
+//go:embed index.html settings.html details.html report.html executive.html estate.html static/*
 var templateFS embed.FS
 
 const configFileName = "config.json"
@@ -88,6 +88,7 @@ const maxMultiLabelClauses = 2000
 const trafficServiceCatalogCacheTTL = 5 * time.Minute
 
 type Config struct {
+	Estate                       EstateOptions   `json:"estate,omitempty"`
 	PCEURL                       string          `json:"pce_url"`
 	PCEAllowedOrigins            []string        `json:"pce_allowed_origins,omitempty"`
 	APIKey                       string          `json:"api_key"`
@@ -937,6 +938,7 @@ func main() {
 	maybeStartStartupBlockedHistoryReconcile()
 	maybeStartStartupTamperingHistoryReconcile()
 	go backgroundCollector()
+	go runEstateReportScheduler(context.Background())
 	extractorHandler, err := extractor.NewHandler(context.Background(), dashboardVersionLabel())
 	if err != nil {
 		log.Fatalf("initialize blocked traffic extractor: %v", err)
@@ -952,6 +954,11 @@ func main() {
 	http.HandleFunc("/report", withRequestTiming("report", serveReport))
 	http.HandleFunc("/trends", withRequestTiming("trends", serveTrends))
 	http.HandleFunc("/executive", withRequestTiming("executive", serveExecutive))
+	http.HandleFunc("/estate", withRequestTiming("estate", serveEstate))
+	http.HandleFunc("/api/config/estate", withRequestTiming("api.config.estate", withTrustedOrigin("api.config.estate", handleConfigEstate)))
+	http.HandleFunc("/api/estate", withRequestTiming("api.estate", handleEstate))
+	http.HandleFunc("/api/estate/report", withRequestTiming("api.estate.report", handleEstateReport))
+	http.HandleFunc("/api/estate/report/runs", withRequestTiming("api.estate.report.runs", handleEstateReportRuns))
 	http.HandleFunc("/static/product-shell.css", extractor.ServeProductShellCSS)
 	http.HandleFunc("/static/product-shell.js", extractor.ServeProductShellJS)
 	staticFS, err := fs.Sub(templateFS, "static")
@@ -2415,11 +2422,22 @@ func startFullBlockedHistoryReconcileAsync(reason string, selectedTargets []Traf
 		}
 		fp := blockedHistoryReconcileFingerprint(targets)
 		log.Printf("[HISTORY] full reconcile start reason=%s targets=%d", reason, len(targets))
+		configUpdateMu.Lock()
 		exclusions := configuredSourceExclusions()
-		excludedHRefs := resolveSourceExclusionHRefsBestEffort(baseURL, exclusions)
+		estateTrafficProvenance := make(map[string]string)
+		if configuredEstateOptions().WeeklyReportEnabled {
+			for _, target := range targets {
+				estateTrafficProvenance[trafficTargetIdentity(target)] = estateVerifiedTrafficFingerprint(target)
+			}
+		}
+		configUpdateMu.Unlock()
+		excludedHRefs, exclusionWarning := resolveSourceExclusionHRefs(baseURL, exclusions)
+		if exclusionWarning != "" {
+			estateTrafficProvenance = nil
+		}
 		nowUTC := time.Now().UTC()
-		days, updated, failed := reconcileAllStoredBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
-		todayUpdated, todayFailed := reconcileCurrentDayBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
+		days, updated, failed := reconcileAllStoredBlockedHistory(baseURL, targets, nowUTC, excludedHRefs, estateTrafficProvenance)
+		todayUpdated, todayFailed := reconcileCurrentDayBlockedHistory(baseURL, targets, nowUTC, excludedHRefs, estateTrafficProvenance)
 		updated += todayUpdated
 		failed += todayFailed
 		configUpdateMu.Lock()
@@ -5464,10 +5482,14 @@ func getAllWorkloads(baseURL string) ([]map[string]interface{}, error) {
 	bulk, bulkErr := fetchCollectionPage(baseURL + "/workloads?" + bulkQ.Encode())
 	if bulkErr == nil && len(bulk) > 0 {
 		log.Printf("[COLLECTOR] Workloads bulk fetch returned %d", len(bulk))
+		if len(bulk) >= 200000 {
+			return bulk, fmt.Errorf("partial workload result: bulk response reached its requested maximum; completeness is not established")
+		}
 		return bulk, nil
 	}
 	all := make([]map[string]interface{}, 0, pageSize)
 	seen := make(map[string]struct{}, pageSize)
+	complete := false
 
 	for page := 0; page < maxPages; page++ {
 		skip := page * pageSize
@@ -5482,11 +5504,12 @@ func getAllWorkloads(baseURL string) ([]map[string]interface{}, error) {
 				if fbErr != nil {
 					return nil, err
 				}
-				return fallback, nil
+				return fallback, fmt.Errorf("partial workload result: pagination is unavailable; fallback completeness is not established")
 			}
 			return all, fmt.Errorf("partial workload result: page=%d failed: %w", page, err)
 		}
 		if len(batch) == 0 {
+			complete = true
 			break
 		}
 
@@ -5509,18 +5532,22 @@ func getAllWorkloads(baseURL string) ([]map[string]interface{}, error) {
 			q2 := url.Values{}
 			q2.Set("max_results", "200000")
 			bulk, bulkErr := fetchCollectionPage(baseURL + "/workloads?" + q2.Encode())
-			if bulkErr == nil && len(bulk) > len(all) {
+			if bulkErr == nil && len(bulk) > len(all) && len(bulk) < 200000 {
 				return bulk, nil
 			}
 			log.Printf("[COLLECTOR] Workloads pagination did not advance at page=%d; keeping %d collected rows", page, len(all))
-			break
+			return all, fmt.Errorf("partial workload result: pagination did not advance at page=%d", page)
 		}
-		if len(batch) < pageSize || newCount == 0 {
+		if len(batch) < pageSize {
+			complete = true
 			break
 		}
 	}
 	if len(all) == 0 && bulkErr != nil {
 		return nil, bulkErr
+	}
+	if !complete {
+		return all, fmt.Errorf("partial workload result: pagination reached its maximum before completion")
 	}
 	log.Printf("[COLLECTOR] Workloads paged fetch returned %d", len(all))
 	return all, nil
@@ -6254,10 +6281,19 @@ func getIllumioStats() DashboardStats {
 		requestTrafficServiceHistoryReconcile("traffic-service-exclusions-reloaded", changedTargets)
 	}
 	warningParts := make([]string, 0)
+	configUpdateMu.Lock()
 	exclusions := configuredSourceExclusions()
+	estateTrafficProvenance := make(map[string]string)
+	if configuredEstateOptions().WeeklyReportEnabled {
+		for _, target := range targets {
+			estateTrafficProvenance[trafficTargetIdentity(target)] = estateVerifiedTrafficFingerprint(target)
+		}
+	}
+	configUpdateMu.Unlock()
 	excludedHRefs, exclusionWarn := resolveSourceExclusionHRefs(baseURL, exclusions)
 	if exclusionWarn != "" {
 		warningParts = append(warningParts, exclusionWarn)
+		estateTrafficProvenance = nil
 	}
 	forceHostReseed := startupHostReseedPending.CompareAndSwap(true, false)
 	if forceHostReseed && configuredBlockedHostMetricsEnabled() {
@@ -6421,7 +6457,10 @@ func getIllumioStats() DashboardStats {
 	}
 	accumulateBlockedHistoryFromCycle(nowUTC, blockedCurrent, blockedCurrentPorts, blockedCurrentHosts, portDailyEnabled, configuredBlockedHostMetricsEnabled(), configuredBlockedHostRetentionMode())
 	configUpdateMu.Unlock()
-	reconcilePreviousDayBlockedHistory(baseURL, targets, nowUTC, excludedHRefs)
+	reconcilePreviousDayBlockedHistory(baseURL, targets, nowUTC, excludedHRefs, estateTrafficProvenance)
+	updateEstateMonitor(baseURL, workloads, wErr, map[string][]map[string]interface{}{
+		"warning": warningVENs, "error": errorVENs, "suspended": suspendedVENs, "stopped": stoppedVENs,
+	}, stats, configuredEstateOptions())
 
 	return stats
 }
@@ -8007,9 +8046,13 @@ func accumulateBlockedHistoryFromCycle(nowUTC time.Time, blockedCounts map[strin
 	}
 }
 
-func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) {
+func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string, estateProvenance ...map[string]string) {
 	if len(targets) == 0 {
 		return
+	}
+	var verifiedInputs map[string]string
+	if len(estateProvenance) > 0 {
+		verifiedInputs = estateProvenance[0]
 	}
 	historyDays := configuredHistoryDays()
 	portDailyEnabled := configuredBlockedPortDailyEnabled()
@@ -8090,6 +8133,7 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 			}
 			blockedPortsDaily[dayKey][target.Name] = portCounts
 			historyMu.Unlock()
+			estateRecordVerifiedTraffic(baseURL, target, dayKey, qRes.Count, !qRes.Truncated && qRes.Warning == "", verifiedInputs[trafficTargetIdentity(target)])
 			configUpdateMu.Unlock()
 			changed = true
 			continue
@@ -8114,6 +8158,7 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 			}
 			blockedDaily[dayKey][target.Name] = qRes.Count
 			historyMu.Unlock()
+			estateRecordVerifiedTraffic(baseURL, target, dayKey, qRes.Count, !qRes.Truncated && qRes.Warning == "", verifiedInputs[trafficTargetIdentity(target)])
 			configUpdateMu.Unlock()
 			changed = true
 		}
@@ -8148,9 +8193,13 @@ func collectDailyBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC 
 	}
 }
 
-func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) {
+func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string, estateProvenance ...map[string]string) {
 	if len(targets) == 0 {
 		return
+	}
+	var verifiedInputs map[string]string
+	if len(estateProvenance) > 0 {
+		verifiedInputs = estateProvenance[0]
 	}
 	loc := configuredDayLocation()
 	dayEnd := localDayStart(nowUTC, loc)
@@ -8231,6 +8280,7 @@ func reconcilePreviousDayBlockedHistory(baseURL string, targets []TrafficTarget,
 			changedPorts = true
 		}
 		historyMu.Unlock()
+		estateRecordVerifiedTraffic(baseURL, target, dayKey, qRes.Count, !qRes.Truncated && qRes.Warning == "", verifiedInputs[trafficTargetIdentity(target)])
 		configUpdateMu.Unlock()
 
 		reconcileMu.Lock()
@@ -8334,9 +8384,13 @@ func sendBlockedDailyReconcileSummaryWebhook(dayKey string, windowStartUTC time.
 	log.Printf("[WEBHOOK] blocked daily reconcile summary sent day=%s targets=%d blocked_total=%d", dayKey, len(targetPayload), totalBlocked)
 }
 
-func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) (int, int, int) {
+func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string, estateProvenance ...map[string]string) (int, int, int) {
 	if len(targets) == 0 {
 		return 0, 0, 0
+	}
+	var verifiedInputs map[string]string
+	if len(estateProvenance) > 0 {
+		verifiedInputs = estateProvenance[0]
 	}
 	loc := configuredDayLocation()
 	todayKey := localDayStart(nowUTC, loc).Format("2006-01-02")
@@ -8424,6 +8478,7 @@ func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, n
 				changedPorts = true
 			}
 			historyMu.Unlock()
+			estateRecordVerifiedTraffic(baseURL, target, dayKey, qRes.Count, !qRes.Truncated && qRes.Warning == "", verifiedInputs[trafficTargetIdentity(target)])
 			configUpdateMu.Unlock()
 			updated++
 		}
@@ -8442,9 +8497,13 @@ func reconcileAllStoredBlockedHistory(baseURL string, targets []TrafficTarget, n
 	return len(dayKeys), updated, failed
 }
 
-func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string) (int, int) {
+func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, nowUTC time.Time, sourceExcludeHRefs []string, estateProvenance ...map[string]string) (int, int) {
 	if len(targets) == 0 {
 		return 0, 0
+	}
+	var verifiedInputs map[string]string
+	if len(estateProvenance) > 0 {
+		verifiedInputs = estateProvenance[0]
 	}
 	loc := configuredDayLocation()
 	dayStart := localDayStart(nowUTC, loc)
@@ -8509,6 +8568,9 @@ func reconcileCurrentDayBlockedHistory(baseURL string, targets []TrafficTarget, 
 			changedPorts = true
 		}
 		historyMu.Unlock()
+		// This query ends at nowUTC, not at the next local midnight. Even if it
+		// finishes after midnight, it must never establish complete-day coverage.
+		estateRecordVerifiedTraffic(baseURL, target, dayKey, qRes.Count, false, verifiedInputs[trafficTargetIdentity(target)])
 		configUpdateMu.Unlock()
 		updated++
 	}
@@ -11130,6 +11192,11 @@ func loadConfigFile() (Config, time.Time, bool) {
 	cfg.BlockedAlertMinLatest = normalizeBlockedAlertMinLatest(cfg.BlockedAlertMinLatest, 0)
 	cfg.APIMaxRPM = normalizeAPIMaxRPM(cfg.APIMaxRPM)
 	cfg.HistoryDays = normalizeHistoryDays(cfg.HistoryDays)
+	cfg.Estate, err = normalizeEstateOptions(cfg.Estate)
+	if err != nil {
+		log.Printf("[CONFIG] invalid estate options: %v", err)
+		return Config{}, time.Time{}, false
+	}
 	cfg.TrafficTargets = sanitizeTargets(cfg.TrafficTargets)
 	if err := validateUniqueTrafficTargetNames(cfg.TrafficTargets); err != nil {
 		log.Printf("[CONFIG] invalid traffic targets in %s: %v", configFileName, err)

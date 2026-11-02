@@ -20,6 +20,9 @@ blocked_daily_history.json
 blocked_port_daily_history.json
 ven_daily_history.json
 alert_state.json
+estate_history_*.json
+estate_traffic_verified_*.json
+estate-reports/
 
 # Local data dir (if used under project root)
 .illumio-monitoring-dashboard/

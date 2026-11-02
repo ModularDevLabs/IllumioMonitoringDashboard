@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="/static/product-shell.css">
+    <link rel="stylesheet" href="/static/estate.css">
+    <script src="/static/estate.js" defer></script>
     <script src="/static/product-shell.js" defer></script>
     <style>
         :root {
@@ -328,6 +330,7 @@
                     <div class="section-title">Workload Inventory</div>
                     <h6>Total Workloads</h6>
                     <h2 class="text-brand" id="w-total">0</h2>
+                    <div id="estate-inventory-breakdown" class="small text-muted" hidden></div>
                 </div>
             </div>
             <div class="col-md-9">
@@ -395,6 +398,16 @@
                     <h2 class="text-dark" id="tamp">—</h2>
                     <div id="tamp-list" class="small text-muted">Last 24h · Click for impacted workloads and last tamper time</div>
                 </div>
+            </div>
+        </div>
+
+        <div class="row" id="estate-dashboard-row" hidden>
+            <div class="col-12">
+                <details class="card p-3 estate-section" open>
+                    <summary>Estate Monitoring <span class="estate-summary-hint">Optional insights</span></summary>
+                    <div id="estate-dashboard-content" class="estate-grid mt-3"></div>
+                    <a href="/estate" class="small mt-3">Open estate details and weekly reports</a>
+                </details>
             </div>
         </div>
 

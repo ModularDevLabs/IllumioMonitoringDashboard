@@ -34,6 +34,11 @@ It serves a web UI on port `18443` by default, with configurable bind/public URL
   - Total workloads
   - Enforcement mode breakdown for managed workloads (`idle`, `visibility_only`, `selective`, `full`)
   - Unmanaged workload count
+- Optional estate monitoring and weekly reports (all new features default **off**):
+  - Individually enable the workload-card managed/unmanaged breakdown, active/draft policy insights, issue aging, label hygiene, VEN version distribution, estate change log, and weekly reports in **Settings → Optional Estate Monitoring & Weekly Reports**.
+  - View the enabled features under **Monitoring → Estate & Weekly Report**. Existing monitoring, alerts, and traffic extraction are unchanged when these features are disabled.
+  - Weekly reports include per-version deployed VEN totals in the Estate section, independently of whether the live VEN-version card is enabled.
+  - See [Optional estate monitoring](#optional-estate-monitoring) for collection, coverage, and delivery details.
 - Tampering monitoring:
   - Unique tampered VEN/workload names with `agent.tampering` events (last 24h)
   - Each five-minute chart sample counts unique workloads with events in the five minutes ending at collection time. Repeated events for a workload count once in that sample; the main card deduplicates across the full rolling 24 hours, rather than adding sample counts.
@@ -714,6 +719,35 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 - For async traffic queries, result count is read from job status and falls back to results download endpoints if needed
 - Runtime logs are written to `illumiomonitoringdashboard.log` in the process working directory (and mirrored to stdout)
 
+## Optional estate monitoring
+
+All switches under **Settings → Optional Estate Monitoring & Weekly Reports** are disabled by default, including scheduled generation and outbound delivery. Saving these settings does not modify dashboard credentials, extractor profiles, traffic exclusions, or existing anomaly alerts. Enabled insights appear after the next normal collection (or **Refresh Now**).
+
+- **Workload inventory breakdown:** managed/unmanaged subtotals beneath Total Workloads, management coverage, and workload lists. Management and enforcement are separate measures.
+- **Active/draft policy overview:** separate ruleset/rule inventories, pending provisioning objects, and the latest observed provisioning timestamp. Active and draft counts must not be added together. Policy collection uses the dashboard API key and is cached for 15 minutes; unavailable endpoints are reported as unavailable, not zero.
+- **Issue aging:** first/last observations, observed days, recurring episodes, and recovery for warning/error/stopped/suspended VENs. A partial scan does not prove recovery. Observed age does not establish uninterrupted incident duration during collection gaps.
+- **Label hygiene:** enter your required PCE label type keys, including custom types. No required labels are assumed. Unresolved label references produce an incomplete assessment, not a false clean bill of health.
+- **VEN versions:** counts per distinct deployed VEN identity, including an explicit Unknown version bucket. A VEN referenced by multiple workloads is counted once; unmanaged workloads are excluded.
+- **Estate change log:** observed workload additions/removals, management, enforcement, labels, versions, and latest observed policy provisioning (policy insights must also be enabled). A first scan, restart, partial inventory, or collection gap establishes a fresh baseline rather than manufacturing changes.
+
+### Weekly Estate Report
+
+Enable **Weekly Estate Report** to retain inventory, VEN versions, and health observations. Other optional collection features remain independent. Under **Monitoring → Estate & Weekly Report**, select a completed Monday–Sunday and the sections to include, preview it, download a self-contained themed HTML file, or use **Print / PDF** and the browser's Save as PDF option. The Estate section includes each deployed VEN version and its total even if the standalone live version card is off.
+
+For an email body, select **Preview report → Copy for Email**, then paste into an HTML-format Outlook message. Use **Keep Source Formatting** if Outlook offers paste options. The copied report uses simple tables and inline styling, with a light email layout independent of the dashboard theme; it includes the selected sections, per-version VEN totals, and essential coverage caveats. **Email Preview** shows the email layout and a suggested subject with its own copy button. A plain-text representation is copied alongside the formatted report. If the browser blocks automatic clipboard access, the preview offers manual selection and Ctrl+C / Command+C. Copying works only on explicit user action and does not send email or enable scheduled delivery. Exact pasted appearance depends on the email client and its paste settings.
+
+Reports use the dashboard timezone and compare with the preceding calendar week, including daylight-saving changes. Inventory is the latest complete retained observation in each week, with its actual timestamp—not a sum of daily peaks or a claim about exact midnight inventory. Health counts deduplicate observed identities across the week; tampering uses retained event timestamps. Data from before opt-in cannot be reconstructed. Missing days, incomplete scans, and insufficient comparison history are disclosed. Traffic remains per configured target because overlapping targets cannot safely be added into a unique estate total.
+
+Weekly traffic totals use complete-day queries verified while weekly reporting is enabled, matched to the same PCE, organization, timezone, target, and exclusions. Older dashboard traffic history without that identity is not reused; it must be reconciled again to become eligible. Partial days and incomplete queries are shown as missing coverage, and week-over-week traffic changes require two fully covered weeks.
+
+**Generate a report every week** is a separate opt-in. Choose a weekday and local time; the dashboard must remain running. A missed time within the current reporting week is picked up on the next scheduler tick. Reports are generated from retained observations without running extraction or making new PCE queries. Saved reports are frozen and available under Scheduled Report History.
+
+**Send scheduled summary to a webhook** is another separate opt-in. Slack and Teams receive a summary and dashboard link; generic webhooks receive the structured report. These are not binary file uploads or email attachments. Recipients need access to the dashboard to download saved HTML. Existing outbound destination protections apply, and no dashboard/extractor API credentials are included. Delivery attempts are recorded before sending; uncertain or failed sends are not automatically retried to avoid duplicates. The local report remains available.
+
+Estate observations are stored as private atomic JSON files in the configured data directory, isolated by PCE, organization, and reporting timezone. Retention defaults to 90 days (`estate.history_days`); at least 14 days is recommended for comparisons. Changing timezone keeps the old file rather than reinterpreting its daily boundaries. Disabling collection does not delete retained history. Frozen weekly report files are kept separately in `estate-reports/`.
+
+API surfaces: `GET/PUT /api/config/estate`, `GET /api/estate`, `GET /api/estate/report`, and `GET /api/estate/report/runs`. Configuration responses redact webhook secrets; mutations use the existing trusted-origin protection.
+
 ## Troubleshooting
 
 - `socket: operation not permitted`:
@@ -727,6 +761,9 @@ go test -run TestLiveIntegrationFromConfig -v -count=1
 ## Project Layout
 
 - `main.go`: backend, API collectors, config APIs, drilldown API
+- `estate_config.go`, `estate_monitor.go`, `estate_report.go`: opt-in settings, scoped estate history, and weekly report generation/delivery
+- `estate.html`, `static/estate.js`, `static/estate-settings.js`: estate insights, report preview, and settings UI
+- `static/estate-email.js`, `static/estate-email-copy.js`: email-friendly report formatting and rich/plain clipboard copy with manual fallback
 - `index.html`: dashboard UI and target editor
 - `details.html`: drilldown UI
 - `report.html`: printable report UI (PDF export target)

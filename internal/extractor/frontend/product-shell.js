@@ -22,6 +22,7 @@
         { id: 'monitoring', label: 'Monitoring', items: [
             { href: '/', label: 'Dashboard', title: 'Monitoring Dashboard', icon: 'overview', match: function (path) { return path === '/' || path === '/details'; } },
             { href: '/executive', label: 'Executive View', title: 'Executive View', icon: 'executive', match: function (path) { return path === '/executive'; } },
+            { href: '/estate', label: 'Estate & Weekly Report', title: 'Estate & Weekly Report', icon: 'overview', match: function (path) { return path === '/estate'; } },
             { href: '/trends', label: 'Trends & Reports', title: 'Trends & Reports', icon: 'trends', match: function (path) { return path === '/trends' || path === '/report'; } }
         ]},
 		{ id: 'blocked-traffic', label: 'Traffic', items: [

@@ -1,0 +1,46 @@
+.estate-page { margin: 0; background: var(--product-shell-bg, #f5f3ee); color: var(--product-shell-text, #272b2d); font-family: system-ui, sans-serif; }
+.estate-wrap { max-width: 1920px; margin: 0 auto; padding: 16px; }
+.estate-intro { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.estate-intro p { flex: 1 1 320px; margin: 0; color: var(--product-shell-muted, #6d706f); }
+.estate-page a { color: var(--product-shell-accent, #c94e14); }
+.estate-panel { background: var(--product-shell-panel, #fff); border: 1px solid var(--product-shell-border, #d7d1c5); border-radius: 12px; margin-bottom: 16px; padding: 18px; }
+.estate-panel h2 { margin: 0 0 12px; font-size: 1.1rem; }
+.estate-panel h3 { font-size: .95rem; }
+.estate-section > summary { cursor: pointer; font-weight: 700; padding: 3px 0; }
+.estate-summary-hint { font-size: .8rem; font-weight: 400; color: var(--product-shell-muted, #6d706f); margin-left: 8px; }
+.estate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.estate-kpi { border: 1px solid var(--product-shell-border, #d7d1c5); border-radius: 9px; padding: 14px; }
+.estate-kpi strong { display: block; font-size: 1.6rem; margin: 4px 0; }
+.estate-kpi-label, .estate-muted { color: var(--product-shell-muted, #6d706f); font-size: .88rem; }
+.estate-warning { border-left: 3px solid var(--product-shell-accent, #f26322); padding: 10px 12px; background: var(--product-shell-panel-soft, #eeebe4); }
+.estate-table-wrap { overflow-x: auto; margin-top: 12px; }
+.estate-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.estate-table th, .estate-table td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--product-shell-border, #d7d1c5); vertical-align: top; overflow-wrap: anywhere; }
+.estate-table th { font-weight: 650; color: var(--product-shell-muted, #6d706f); }
+.estate-table td:last-child, .estate-table th:last-child { padding-right: 2px; }
+.estate-option { display: flex; align-items: flex-start; gap: 9px; margin: 10px 0; cursor: pointer; }
+.estate-option input { flex: 0 0 auto; margin-top: 4px; }
+.estate-option small { display: block; font-size: .78rem; color: var(--product-shell-muted, #6d706f); }
+.estate-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.estate-checks { display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: .88rem; }
+.estate-checks label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.estate-page input, .estate-page select, .estate-page button { border: 1px solid var(--product-shell-border, #d7d1c5); border-radius: 6px; background: var(--product-shell-panel-soft, #eeebe4); color: var(--product-shell-text, #272b2d); padding: 8px 12px; font: inherit; }
+.estate-page input[type="checkbox"], #estate-settings input[type="checkbox"] { accent-color: var(--product-shell-accent, #f26322); }
+.estate-page button { cursor: pointer; font-size: .88rem; }
+.estate-page button:hover:not(:disabled) { background: var(--product-shell-panel-hover, #e6e1d8); }
+.estate-page button:disabled { cursor: not-allowed; opacity: .55; }
+.estate-report-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin: 14px 0; }
+.estate-report-controls label { display: grid; gap: 6px; font-size: .88rem; }
+.estate-section-picker { border: 1px solid var(--product-shell-border, #d7d1c5); border-radius: 8px; margin: 16px 0; padding: 12px; }
+.estate-section-picker legend { float: none; width: auto; font-size: .88rem; padding: 0 5px; }
+#estate-report-preview { width: 100%; min-height: 900px; border: 1px solid var(--product-shell-border, #d7d1c5); border-radius: 8px; background: var(--product-shell-panel, #fff); }
+#estate-inventory-breakdown a { color: inherit; }
+.estate-email-panel { margin: 16px 0; }
+.estate-email-subject-label { flex: 1 1 320px; }
+.estate-email-content { background: #fff; color: #272b2d; border: 1px solid var(--product-shell-border, #d7d1c5); padding: 16px; overflow: auto; max-height: 650px; }
+.estate-email-content:focus-visible { outline: 2px solid var(--product-shell-accent, #f26322); outline-offset: 2px; }
+.estate-email-content table { color: #272b2d; }
+[hidden] { display: none !important; }
+html[data-unified-theme="dark"] .estate-page input[type="date"], html[data-unified-theme="dark"] #estate-settings input[type="time"] { color-scheme: dark; }
+@media (max-width: 600px) { .estate-wrap { padding: 10px; } .estate-panel { padding: 13px; } .estate-form-grid { grid-template-columns: 1fr; } .estate-checks { flex-direction: column; } }
+@media print { .estate-intro, .estate-report-controls, .estate-section-picker, .estate-email-panel, #estate-email-status { display: none; } .estate-panel { break-inside: avoid; box-shadow: none; } }

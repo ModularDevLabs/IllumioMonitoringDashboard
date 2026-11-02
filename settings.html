@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="/static/product-shell.css">
+    <link rel="stylesheet" href="/static/estate.css">
+    <script src="/static/estate-settings.js" defer></script>
     <script src="/static/product-shell.js" defer></script>
     <style>
         :root {
@@ -197,6 +199,55 @@
     </div>
 
     <div class="dashboard-shell pb-4">
+        <div class="card p-3 mb-3" id="estate-settings">
+            <details class="section-toggle" open>
+                <summary>Optional Estate Monitoring &amp; Weekly Reports</summary>
+                <p class="text-muted small mt-2">All features below are off by default. Enable only the insights you want. Historical tracking starts after enabling; earlier weeks cannot be reconstructed. These features use the dashboard PCE credentials, not the traffic extractor credentials.</p>
+                <form id="estate-settings-form">
+                    <fieldset id="estate-settings-fields" disabled>
+                        <div class="settings-grid">
+                            <div class="setting-cluster">
+                                <div class="setting-cluster-title">Estate Insights</div>
+                                <label class="estate-option"><input type="checkbox" id="estate-inventory-enabled"> <span>Workload inventory breakdown <small>Managed/unmanaged counts and management coverage.</small></span></label>
+                                <label class="estate-option"><input type="checkbox" id="estate-policy-enabled"> <span>Active &amp; draft policy overview <small>Separate rule/ruleset totals and pending changes. Active and draft are not added together.</small></span></label>
+                                <label class="estate-option"><input type="checkbox" id="estate-aging-enabled"> <span>Issue aging <small>First observed, most recent observation, and recurring VEN issues.</small></span></label>
+                                <label class="estate-option"><input type="checkbox" id="estate-labels-enabled"> <span>Label hygiene <small>Workloads missing your required label types.</small></span></label>
+                                <label class="estate-option"><input type="checkbox" id="estate-versions-enabled"> <span>VEN version distribution <small>Deployed versions and distinct installed VEN counts, including unknown versions. A VEN associated with multiple workloads is counted once.</small></span></label>
+                                <label class="estate-option"><input type="checkbox" id="estate-changes-enabled"> <span>Estate change log <small>Observed inventory, enforcement, version, and policy changes.</small></span></label>
+                                <div class="mt-3">
+                                    <label class="form-label small" for="estate-required-labels">Required label types (comma-separated or one per line)</label>
+                                    <textarea id="estate-required-labels" class="form-control form-control-sm" rows="2" placeholder="env, app, role, loc"></textarea>
+                                    <div class="small text-muted mt-1">Use the PCE label type keys, including any custom keys. No required types are assumed.</div>
+                                </div>
+                                <div class="mt-3">
+                                    <label class="form-label small" for="estate-history-days">Estate history retention (days)</label>
+                                    <input id="estate-history-days" class="form-control form-control-sm" type="number" min="1" max="3650" step="1" value="90" required>
+                                    <div class="small text-muted mt-1">Keep at least 14 days for week-over-week comparisons. Historical details use additional local storage. Disabling collection stops new observations.</div>
+                                </div>
+                            </div>
+                            <div class="setting-cluster">
+                                <div class="setting-cluster-title">Weekly Estate Report</div>
+                                <label class="estate-option"><input type="checkbox" id="estate-report-enabled"> <span>Enable weekly reports <small>Manual preview, HTML download, and Print / PDF. Includes an Estate VEN version distribution with totals for each deployed version.</small></span></label>
+                                <p class="small text-muted mt-2">Report collection includes inventory, VEN versions, and health. Other optional insights appear only when enabled. Missing collection days are shown as gaps, never as zero activity.</p>
+                                <div class="setting-cluster-title mt-3">Scheduled Delivery (Separately Opt-in)</div>
+                                <label class="estate-option"><input type="checkbox" id="estate-schedule-enabled"> <span>Generate a report every week <small>The dashboard must be running. Reports cover the last completed Monday–Sunday in the dashboard timezone. Webhook delivery is separately enabled below.</small></span></label>
+                                <div class="estate-form-grid mt-3">
+                                    <div><label class="form-label small" for="estate-report-weekday">Delivery day</label><select id="estate-report-weekday" class="form-select form-select-sm"><option value="monday">Monday</option><option value="tuesday">Tuesday</option><option value="wednesday">Wednesday</option><option value="thursday">Thursday</option><option value="friday">Friday</option><option value="saturday">Saturday</option><option value="sunday">Sunday</option></select></div>
+                                    <div><label class="form-label small" for="estate-report-time">Delivery time</label><input id="estate-report-time" class="form-control form-control-sm" type="time" value="09:00" required></div>
+                                </div>
+                                <div id="estate-report-timezone" class="small text-muted mt-1">Uses the dashboard timezone.</div>
+                                <label class="estate-option mt-3"><input type="checkbox" id="estate-webhook-enabled"> <span>Send scheduled summary to a webhook <small>Slack/Teams receive a summary and dashboard link; generic webhooks receive the structured report. A frozen report is also saved locally. No outbound delivery occurs unless enabled.</small></span></label>
+                                <div class="mt-3"><label class="form-label small" for="estate-webhook-provider">Delivery provider</label><select id="estate-webhook-provider" class="form-select form-select-sm"><option value="generic">Generic webhook</option><option value="slack">Slack</option><option value="teams">Microsoft Teams</option></select></div>
+                                <div class="mt-3"><label class="form-label small" for="estate-webhook-url">Webhook URL</label><input id="estate-webhook-url" class="form-control form-control-sm" type="password" autocomplete="new-password" placeholder="https://hooks.example.com/..."><div id="estate-webhook-help" class="small text-muted mt-1">Webhook URLs are secrets. Leave blank to keep an existing saved URL.</div><label class="estate-option mt-2"><input type="checkbox" id="estate-clear-webhook"> <span>Clear saved webhook URL</span></label></div>
+                                <div class="mt-3"><span class="small">Scheduled report sections</span><div id="estate-scheduled-sections" class="estate-checks mt-1"><label><input type="checkbox" value="estate" checked> Estate &amp; VEN versions</label><label><input type="checkbox" value="health" checked> VEN health</label><label><input type="checkbox" value="policy" checked> Policy</label><label><input type="checkbox" value="traffic" checked> Traffic</label><label><input type="checkbox" value="changes" checked> Changes</label><label><input type="checkbox" value="quality" checked> Data quality</label></div></div>
+                            </div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 mt-3"><button class="btn btn-outline-primary btn-sm" type="submit">Save Estate Settings</button><a class="btn btn-outline-secondary btn-sm" href="/estate">Estate &amp; Weekly Report</a></div>
+                    </fieldset>
+                    <div id="estate-settings-message" class="small mt-2" role="status" aria-live="polite">Loading estate settings…</div>
+                </form>
+            </details>
+        </div>
         <div class="card p-3 mb-3">
             <div class="fw-semibold mb-1">Traffic And Data Settings</div>
             <p class="text-muted small mb-3 mt-1">Manage traffic targets, exclusions, retention, and anomaly defaults.</p>
