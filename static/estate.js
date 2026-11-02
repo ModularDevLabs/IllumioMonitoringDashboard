@@ -10,6 +10,8 @@
     let reportLoaded = false;
     let reportEmail = null;
     let reportSelectionsInitialized = false;
+    const sectionChoices = new Map();
+    let inventoryFilter = null;
     function node(tag, text, className) {
         const element = document.createElement(tag);
         if (text !== undefined) element.textContent = String(text);
@@ -30,15 +32,47 @@
         parent.appendChild(card);
         return card;
     }
-    function panel(parent, title, id) {
-        const section = node('details', undefined, 'estate-panel estate-section');
-        const key = 'illumio_estate_section_' + title;
-        try { section.open = sessionStorage.getItem(key) !== 'closed'; } catch (_) { section.open = true; }
-        section.addEventListener('toggle', () => { try { sessionStorage.setItem(key, section.open ? 'open' : 'closed'); } catch (_) {} });
+    function panel(parent, title, id, options = {}) {
+        const section = node('details', undefined, options.className || 'estate-panel estate-section');
+        const key = options.key || 'illumio_estate_section_' + title;
+        let saved = sectionChoices.get(key);
+        if (saved === undefined) { try { saved = sessionStorage.getItem(key); } catch (_) {} }
+        section.open = saved === 'open' ? true : saved === 'closed' ? false : options.defaultOpen !== false;
+        let previousOpen = section.open;
+        section.addEventListener('toggle', () => {
+            // Initial/programmatic toggle notifications must not create a fake
+            // remembered choice. Persist only a change from the rendered state.
+            if (section.open === previousOpen) return;
+            previousOpen = section.open;
+            const value = section.open ? 'open' : 'closed';
+            sectionChoices.set(key, value);
+            try { sessionStorage.setItem(key, value); } catch (_) {}
+        });
         if (id) section.id = id;
         section.appendChild(node('summary', title));
         parent.appendChild(section);
         return section;
+    }
+    function exportCSVControl(section, view, kind) {
+        const controls = node('div', undefined, 'estate-intro');
+        const button = node('button', 'Export CSV (Excel)');
+        button.type = 'button';
+        button.dataset.estateExport = kind;
+        const status = node('span', undefined, 'estate-muted');
+        status.setAttribute('role', 'status');
+        const api = window.EstateCSV;
+        const describe = api && (kind === 'labels' ? api.labelHygiene : api.issues);
+        const result = describe ? describe(view, { includeContent: false }) : { available: false, reason: 'CSV export is unavailable. Reload this page to try again.' };
+        button.disabled = !result.available;
+        status.textContent = result.available ? 'Exports all ' + count(result.rowCount) + ' observed rows, including other pages.' + (result.partial ? ' Partial collection: the file identifies incomplete observations.' : '') : result.reason;
+        button.addEventListener('click', () => {
+            if (button.disabled) return;
+            // Use this rendered view, not a later request or a table's current page.
+            const exported = describe(view);
+            if (!api.download(exported)) status.textContent = 'Unable to download the CSV. The displayed observations have not changed.';
+            else status.textContent = 'Exported ' + count(exported.rowCount) + ' observed rows.' + (exported.partial ? ' This is a partial collection; see the assessment columns.' : '');
+        });
+        controls.appendChild(button); controls.appendChild(status); section.appendChild(controls);
     }
     function observedDuration(first, last) {
         const start = new Date(first || '').getTime();
@@ -135,7 +169,7 @@
         if (options.inventory_enabled && content.children.length === 0) note(content, inventorySummary(snapshot));
     }
     function renderInventory(parent, snapshot) {
-        const section = panel(parent, 'Workload Inventory', 'estate-inventory');
+        const section = panel(parent, 'Workload Inventory', 'estate-inventory', { defaultOpen: false, key: 'illumio_estate_inventory_section_v2' });
         note(section, inventorySummary(snapshot));
         if (!snapshot?.inventory_complete) return;
         const grid = node('div', undefined, 'estate-grid');
@@ -144,21 +178,34 @@
         kpi(grid, 'Managed', count(snapshot.managed), 'Management is separate from enforcement');
         kpi(grid, 'Unmanaged', count(snapshot.unmanaged));
         table(section, ['Enforcement mode', 'Workloads'], Object.entries(snapshot.modes || {}).sort().map(([mode, total]) => [mode, count(total)]));
+        const list = panel(section, 'Workload list', 'estate-workload-list', { defaultOpen: false, key: 'illumio_estate_workload_list_v1', className: 'estate-section' });
         const controls = node('label', 'Show workloads: ', 'estate-intro');
         const filter = node('select');
         filter.setAttribute('aria-label', 'Workload management filter');
         ['all', 'managed', 'unmanaged'].forEach(value => { const option = node('option', value[0].toUpperCase() + value.slice(1)); option.value = value; filter.appendChild(option); });
-        const requested = new URLSearchParams(window.location.search).get('inventory');
-        filter.value = ['managed', 'unmanaged'].includes(requested) ? requested : 'all';
-        controls.appendChild(filter); section.appendChild(controls);
-        const results = node('div'); section.appendChild(results);
+        if (inventoryFilter === null) {
+            const requested = new URLSearchParams(window.location.search).get('inventory');
+            let saved;
+            try { saved = sessionStorage.getItem('illumio_estate_inventory_filter'); } catch (_) {}
+            inventoryFilter = ['managed', 'unmanaged'].includes(requested) ? requested : ['managed', 'unmanaged'].includes(saved) ? saved : 'all';
+        }
+        filter.value = inventoryFilter;
+        controls.appendChild(filter); list.appendChild(controls);
+        const results = node('div'); list.appendChild(results);
+        let listRendered = false;
         function renderWorkloads() {
+            listRendered = true;
             results.replaceChildren();
             const workloads = (snapshot.workloads || []).filter(workload => filter.value === 'all' || (filter.value === 'managed' ? workload.managed : !workload.managed));
             table(results, ['Workload', 'Management', 'Enforcement', 'VEN version'], workloads.map(workload => [workload.name || workload.id, workload.managed ? 'Managed' : 'Unmanaged', workload.mode || 'Unknown', workload.managed ? workload.ven_version || 'Unknown' : 'Not applicable']), 'No matching workloads in this observation.');
         }
-        filter.addEventListener('change', renderWorkloads);
-        renderWorkloads();
+        filter.addEventListener('change', () => {
+            inventoryFilter = filter.value;
+            try { sessionStorage.setItem('illumio_estate_inventory_filter', inventoryFilter); } catch (_) {}
+            renderWorkloads();
+        });
+        list.addEventListener('toggle', () => { if (list.open && !listRendered) renderWorkloads(); });
+        if (list.open) renderWorkloads();
     }
     function renderPolicy(parent, snapshot) {
         const section = panel(parent, 'Active & Draft Policy');
@@ -208,12 +255,14 @@
         if (options.issue_aging_enabled) {
             const section = panel(parent, 'Issue Aging & Recurrence');
             note(section, 'Times are first and last observations, not the exact onset of an incident. Collection gaps do not prove recovery. Occurrences represent observed issue episodes.');
+            exportCSVControl(section, view, 'issues');
             table(section, ['Workload', 'Issue', 'State', 'Observed age', 'First observed', 'Last observed', 'Occurrences', 'Observed days'], (view.issues || []).map(issue => [issue.name || issue.workload_id, issue.kind, issue.active ? 'Active' : 'Resolved: ' + timestamp(issue.resolved_at), observedDuration(issue.first_seen, issue.last_seen), timestamp(issue.first_seen), timestamp(issue.last_seen), count(issue.occurrences), count((issue.observed_days || []).length)]), snapshot ? 'No issues have been observed since tracking was enabled.' : 'Waiting for the first issue observation.');
         }
         if (options.label_hygiene_enabled) {
             const section = panel(parent, 'Label Hygiene');
             const required = options.required_label_types || [];
             note(section, 'Required label types: ' + (required.join(', ') || 'None configured. Select required types in Settings.'));
+            exportCSVControl(section, view, 'labels');
             if (required.length) {
                 const complete = snapshot?.inventory_complete && snapshot.labels_complete === true;
                 const assessed = snapshot?.labels_assessed;

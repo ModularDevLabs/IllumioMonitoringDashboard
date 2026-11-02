@@ -16,11 +16,14 @@ function element(tag = 'div') {
         appendChild(child) { this.children.push(child); return child; },
         replaceChildren(...children) { text = ''; this.children = children; },
         setAttribute(key, value) { this.attributes[key] = value; },
-        addEventListener(event, callback) { this.listeners[event] = callback; },
+        addEventListener(event, callback) {
+            const previous = this.listeners[event];
+            this.listeners[event] = (...args) => { if (previous) previous(...args); return callback(...args); };
+        },
         remove() {}, click() {}
     };
 }
-function app(file = 'estate.js') {
+function app(file = 'estate.js', storage = new Map()) {
     const elements = new Map();
     const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
     const sections = ['estate', 'health', 'policy', 'traffic', 'changes', 'quality'].map(value => ({ ...element('input'), value, checked: true }));
@@ -29,10 +32,19 @@ function app(file = 'estate.js') {
         getElementById: get, createElement: element, addEventListener() {},
         querySelectorAll(selector) { return selector.endsWith(':checked') ? sections.filter(input => input.checked) : sections; }
     };
-    const window = { location: { search: '' } };
-    const context = vm.createContext({ document, window, URL, URLSearchParams, Date, Blob, console, setTimeout() {}, setInterval() {} });
+    const sessionStorage = { getItem(key) { return storage.get(key) ?? null; }, setItem(key, value) { storage.set(key, value); } };
+    const window = { location: { search: '' }, document, URL, Blob, sessionStorage, setTimeout() {} };
+    const context = vm.createContext({ document, window, sessionStorage, URL, URLSearchParams, Date, Blob, console, setTimeout() {}, setInterval() {} });
+    if (file === 'estate.js') vm.runInContext(fs.readFileSync(path.join(repo, 'static/estate-csv.js'), 'utf8'), context);
     vm.runInContext(fs.readFileSync(path.join(repo, 'static', file), 'utf8'), context);
-    return { context, window, document, get, sections, api: file === 'estate.js' ? window.EstateUI : window.EstateSettings };
+    return { context, window, document, get, sections, storage, api: file === 'estate.js' ? window.EstateUI : window.EstateSettings };
+}
+function descendants(root) { return [root, ...root.children.flatMap(descendants)]; }
+function find(root, predicate) { return descendants(root).find(predicate); }
+function toggle(element, open) { element.open = open; element.listeners.toggle(); }
+function inventoryView() {
+    const workloads = Array.from({ length: 205 }, (_, index) => ({ id: '/workloads/' + index, name: 'Workload ' + index, managed: index < 150, mode: 'idle', ven_version: '25.2' }));
+    return { options: { inventory_enabled: true }, snapshot: { inventory_complete: true, total: workloads.length, managed: 150, unmanaged: 55, modes: { idle: 205 }, workloads } };
 }
 test('disabled estate features create no dashboard metrics and no fabricated zeros', () => {
     const t = app();
@@ -52,6 +64,119 @@ test('inventory breakdown is opt-in, clickable, and does not treat an incomplete
     t.api.renderDashboard({ options: { inventory_enabled: true }, snapshot: { inventory_complete: false, total: 0, managed: 0 } });
     assert.match(t.get('estate-inventory-breakdown').textContent, /incomplete/);
     assert.doesNotMatch(t.get('estate-inventory-breakdown').textContent, /Managed: 0/);
+});
+test('inventory and its lazy workload list start collapsed, ignoring the former automatic open state', () => {
+    const storage = new Map([['illumio_estate_section_Workload Inventory', 'open']]);
+    const t = app('estate.js', storage);
+    t.window.location.search = '?inventory=managed';
+    t.api.renderPage(inventoryView());
+    const root = t.get('estate-live-sections');
+    const inventory = find(root, node => node.id === 'estate-inventory');
+    const list = find(root, node => node.id === 'estate-workload-list');
+    assert.equal(inventory.open, false);
+    assert.equal(list.open, false);
+    assert.equal(find(list, node => node.tagName === 'SELECT').value, 'managed');
+    assert.equal(find(list, node => node.tagName === 'TABLE'), undefined);
+    inventory.listeners.toggle();
+    assert.equal(storage.has('illumio_estate_inventory_section_v2'), false);
+    toggle(inventory, true);
+    assert.equal(list.open, false);
+    assert.equal(find(list, node => node.tagName === 'TABLE'), undefined);
+    toggle(list, true);
+    assert.equal(find(list, node => node.tagName === 'TBODY').children.length, 100);
+    assert.match(list.textContent, /Showing 1–100 of 150/);
+    find(list, node => node.tagName === 'BUTTON' && node.textContent === 'Next').listeners.click();
+    assert.equal(find(list, node => node.tagName === 'TBODY').children.length, 50);
+    assert.match(list.textContent, /Workload 149/);
+    assert.match(list.textContent, /Showing 101–150 of 150/);
+});
+test('explicit inventory/list choices and management filtering survive refresh and navigation', () => {
+    const t = app();
+    const view = inventoryView();
+    t.api.renderPage(view);
+    let root = t.get('estate-live-sections');
+    toggle(find(root, node => node.id === 'estate-inventory'), true);
+    let list = find(root, node => node.id === 'estate-workload-list');
+    toggle(list, true);
+    const filter = find(list, node => node.tagName === 'SELECT');
+    filter.value = 'unmanaged'; filter.listeners.change();
+    assert.equal(find(list, node => node.tagName === 'TBODY').children.length, 55);
+    t.api.renderPage(view);
+    root = t.get('estate-live-sections');
+    list = find(root, node => node.id === 'estate-workload-list');
+    assert.equal(find(root, node => node.id === 'estate-inventory').open, true);
+    assert.equal(list.open, true);
+    assert.equal(find(list, node => node.tagName === 'SELECT').value, 'unmanaged');
+    assert.equal(find(list, node => node.tagName === 'TBODY').children.length, 55);
+    const next = app('estate.js', t.storage);
+    next.api.renderPage(view);
+    const nextRoot = next.get('estate-live-sections');
+    const nextList = find(nextRoot, node => node.id === 'estate-workload-list');
+    assert.equal(find(nextRoot, node => node.id === 'estate-inventory').open, true);
+    assert.equal(nextList.open, true);
+    assert.equal(find(nextList, node => node.tagName === 'SELECT').value, 'unmanaged');
+    toggle(nextList, false);
+    toggle(find(nextRoot, node => node.id === 'estate-inventory'), false);
+    next.api.renderPage(view);
+    assert.equal(find(nextRoot, node => node.id === 'estate-inventory').open, false);
+    assert.equal(find(nextRoot, node => node.id === 'estate-workload-list').open, false);
+});
+test('inventory choices persist across refresh even when browser storage is blocked', () => {
+    const t = app();
+    t.context.sessionStorage.getItem = t.context.sessionStorage.setItem = () => { throw new Error('Storage blocked'); };
+    t.api.renderPage(inventoryView());
+    const root = t.get('estate-live-sections');
+    toggle(find(root, node => node.id === 'estate-inventory'), true);
+    toggle(find(root, node => node.id === 'estate-workload-list'), true);
+    t.api.renderPage(inventoryView());
+    assert.equal(find(root, node => node.id === 'estate-inventory').open, true);
+    assert.equal(find(root, node => node.id === 'estate-workload-list').open, true);
+});
+test('standalone issue and label CSV exports include every displayed snapshot row across pages', () => {
+    const t = app();
+    const view = {
+        options: { label_hygiene_enabled: true, required_label_types: ['app'], issue_aging_enabled: true },
+        snapshot: { at: '2026-11-02T15:00:00Z', inventory_complete: true, labels_complete: true, labels_assessed: 205, total: 205, health_complete: { warning: true, error: true, stopped: true, suspended: true },
+            label_gaps: Array.from({ length: 205 }, (_, index) => ({ id: 'label-' + index, name: 'Missing ' + index, missing: ['app'] })) },
+        issues: Array.from({ length: 205 }, (_, index) => ({ id: 'issue-' + index, workload_id: 'workload-' + index, name: 'Issue ' + index, kind: 'warning', active: true, occurrences: 1, observed_days: ['2026-11-02'] }))
+    };
+    const exported = [];
+    t.window.EstateCSV.download = result => { exported.push(result); return true; };
+    t.context.fetch = () => { throw new Error('CSV exports must not fetch data'); };
+    t.api.renderPage(view);
+    const root = t.get('estate-live-sections');
+    const buttons = descendants(root).filter(node => node.dataset.estateExport);
+    assert.equal(buttons.length, 2);
+    assert.equal(descendants(root).filter(node => node.tagName === 'TBODY').every(body => body.children.length === 100), true);
+    assert.match(root.textContent, /Exports all 205 observed rows, including other pages/);
+    for (const button of buttons) { assert.equal(button.disabled, false); button.listeners.click(); }
+    assert.deepEqual(exported.map(result => result.rowCount), [205, 205]);
+    assert.match(exported[0].content, /issue-204/);
+    assert.match(exported[1].content, /label-204/);
+    assert.equal(exported.every(result => !result.partial), true);
+});
+test('CSV controls explain disabled unknown/empty results and explicitly flag partial exports', () => {
+    const t = app();
+    const view = { options: { issue_aging_enabled: true, label_hygiene_enabled: true, required_label_types: ['app'] } };
+    t.api.renderPage(view);
+    const root = t.get('estate-live-sections');
+    assert.equal(descendants(root).filter(node => node.dataset.estateExport).every(node => node.disabled), true);
+    assert.match(root.textContent, /Issue observations are unavailable/);
+    assert.match(root.textContent, /Label assessment is unavailable/);
+    view.snapshot = { at: '2026-11-02T15:00:00Z', inventory_complete: false, labels_complete: false, labels_assessed: 1, total: 2, label_gaps: [{ id: 'workload-1', name: 'Only assessed workload', missing: ['app'] }] };
+    view.issues = [{ id: 'issue-1', kind: 'warning' }];
+    let exported;
+    t.window.EstateCSV.download = result => { exported = result; return true; };
+    t.api.renderPage(view);
+    assert.match(root.textContent, /Partial collection: the file identifies incomplete observations/);
+    find(root, node => node.dataset.estateExport === 'labels').listeners.click();
+    assert.equal(exported.partial, true);
+    assert.match(root.textContent, /This is a partial collection/);
+    view.snapshot.label_gaps = []; view.issues = [];
+    t.api.renderPage(view);
+    assert.equal(descendants(root).filter(node => node.dataset.estateExport).every(node => node.disabled), true);
+    assert.match(root.textContent, /There are no observed missing-label rows to export; unassessed workloads remain unknown/);
+    assert.match(root.textContent, /There are no observed issue rows to export/);
 });
 test('weekly reports can be enabled independently of live version and inventory cards', () => {
     const t = app();

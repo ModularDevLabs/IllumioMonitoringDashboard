@@ -1,5 +1,31 @@
 # Release Notes
 
+## v1.4.0-rc.2 - 2026-11-02
+
+Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. This includes the optional estate monitoring and email-ready weekly reports from `v1.4.0-rc.1` and does not replace `v1.3.0` as the latest stable release. Estate features and scheduled delivery remain opt-in and disabled by default.
+
+### Fixed
+
+- Estate-page styles no longer override the shared navigation or theme controls. Menu colors and controls stay consistent with the dashboard in light and dark themes.
+- Policy and label inventories use the PCE's supported asynchronous collection workflow instead of unsupported offset pagination. Large active and draft policy inventories are collected separately without repeating the first 500 objects.
+- The latest provisioning timestamp is read from the active policy version, with a completeness-checked fallback for older PCEs.
+- Failed jobs, truncated downloads, malformed policy counts, and incomplete pending-change responses remain explicitly unavailable or partial, never a verified zero. Incomplete policy observations retry after five minutes; successful observations retain fifteen-minute caching.
+- Collection downloads are streamed without an application-imposed byte cap. The collection deadline still applies, and job/result links and redirects must stay on the configured dashboard PCE origin.
+
+### Improved
+
+- Workload Inventory and its nested workload list start collapsed. Explicit expand/collapse choices and the management filter persist during the browser session; rows load when the list is opened.
+- Label Hygiene and Issue Aging & Recurrence each have a separate **Export CSV (Excel)** button. Exports include all available rows across table pages, with identities, UTC timestamps, numeric counts, and assessment-completeness details.
+- CSV files use UTF-8 with a BOM, quoted fields, and spreadsheet-formula protection. Missing data stays blank, partial exports are marked clearly, and unavailable or empty results show an explanation instead of a misleading export.
+
+### Testing and upgrade
+
+Validation includes all 154 frontend tests, fresh Go race tests across all packages, static checks, and synthetic browser checks of both themes, navigation, collapsed workloads, filters, and both CSV downloads. Policy regression tests include more than 1,200 objects, ignored pagination, failures, malformed results, and origin/redirect protection. Live customer-PCE validation remains part of RC testing.
+
+Stop the previous application and back up configuration and history before testing. Do not run old and new binaries against the same state directories concurrently. Dashboard and traffic-extractor credentials remain separate.
+
+Versioned binaries are included for Windows amd64, Linux amd64, Intel macOS, and Apple Silicon macOS, plus SHA-256 checksums. Executable filenames and in-app version labels identify `v1.4.0-rc.2`.
+
 ## v1.4.0-rc.1 - 2026-11-02
 
 Testing prerelease of the combined Monitoring Dashboard and Traffic Extractor. This does not replace `v1.3.0` as the latest stable release. All new estate features, scheduled report generation, and webhook delivery are disabled by default and can be enabled individually in Settings.

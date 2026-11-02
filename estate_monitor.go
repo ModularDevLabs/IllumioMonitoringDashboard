@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/url"
 	"os"
 	"reflect"
@@ -155,7 +157,7 @@ func updateEstateMonitor(baseURL string, workloads []map[string]interface{}, wor
 	}
 	estateMonitor.Lock()
 	estateLoadLocked(scope, loc.String())
-	policyNeeded := options.PolicyEnabled && (estateMonitor.policy == nil || now.Sub(estateMonitor.policyAttempt) >= 15*time.Minute)
+	policyNeeded := options.PolicyEnabled && estatePolicyRefreshDue(estateMonitor.policy, estateMonitor.policyAttempt, now)
 	cachedPolicy := estateMonitor.policy
 	estateMonitor.Unlock()
 	var labelWarning string
@@ -217,7 +219,7 @@ func estateResolveWorkloadLabels(baseURL string, workloads []map[string]interfac
 	if !needed {
 		return workloads, ""
 	}
-	labels, err := estateFetchCollection(baseURL+"/labels", fetchCollectionPage)
+	labels, err := estateFetchCollection(baseURL + "/labels")
 	byHref := map[string]map[string]interface{}{}
 	for _, label := range labels {
 		if href := mapString(label, "href"); href != "" && mapString(label, "key") != "" {
@@ -634,9 +636,30 @@ func estatePruneHistory(history *EstateHistory, now time.Time, loc *time.Locatio
 }
 
 func estateCollectPolicy(baseURL string, now time.Time) EstatePolicy {
+	ctx, cancel := context.WithTimeout(context.Background(), estateCollectionTimeout)
+	defer cancel()
+	reader, err := configuredEstatePCEReader(ctx)
+	if err != nil {
+		return EstatePolicy{At: now, Pending: []EstatePolicyChange{}, Warnings: []string{"Policy inventory unavailable: " + err.Error()}}
+	}
+	return estateCollectPolicyWithReader(baseURL, now, reader)
+}
+
+func estatePolicyRefreshDue(policy *EstatePolicy, attemptedAt, now time.Time) bool {
+	if policy == nil || attemptedAt.IsZero() {
+		return true
+	}
+	interval := 15 * time.Minute
+	if !policy.Active.Complete || !policy.Draft.Complete || !policy.PendingComplete || len(policy.Warnings) != 0 {
+		interval = 5 * time.Minute // Retry incomplete evidence on the next normal sample.
+	}
+	return now.Sub(attemptedAt) >= interval
+}
+
+func estateCollectPolicyWithReader(baseURL string, now time.Time, reader *estatePCEReader) EstatePolicy {
 	policy := EstatePolicy{At: now, Pending: []EstatePolicyChange{}, Warnings: []string{}}
 	for _, state := range []string{"active", "draft"} {
-		count, err := estatePolicyCounts(baseURL+"/sec_policy/"+state, fetchCollectionPage)
+		count, err := estatePolicyCounts(baseURL+"/sec_policy/"+state, reader.collection)
 		if state == "active" {
 			policy.Active = count
 		} else {
@@ -646,57 +669,170 @@ func estateCollectPolicy(baseURL string, now time.Time) EstatePolicy {
 			policy.Warnings = append(policy.Warnings, state+" policy inventory incomplete: "+err.Error())
 		}
 	}
-	var pending map[string]interface{}
-	if err := apiCall(baseURL+"/sec_policy/pending", "GET", nil, &pending); err != nil {
-		policy.Warnings = append(policy.Warnings, "Pending policy changes unavailable: "+err.Error())
-	} else {
-		policy.Pending, policy.PendingComplete = estateParsePendingPolicy(pending)
-		if !policy.PendingComplete {
-			policy.Warnings = append(policy.Warnings, "Pending policy response had an unsupported format")
-		}
+	pending, pendingErr := reader.pending(baseURL + "/sec_policy/pending")
+	policy.Pending, policy.PendingComplete = estateParsePendingPolicy(pending)
+	if pendingErr != nil {
+		policy.PendingComplete = false
+		policy.Warnings = append(policy.Warnings, "Pending policy changes unavailable: "+pendingErr.Error())
+	} else if !policy.PendingComplete {
+		policy.Warnings = append(policy.Warnings, "Pending policy response had an unsupported format")
 	}
-	versions, err := estateFetchCollection(baseURL+"/sec_policy", fetchCollectionPage)
+	provisionedAt, err := estateLastProvisionedAt(baseURL, reader)
 	if err != nil {
 		policy.Warnings = append(policy.Warnings, "Last policy provisioning time unavailable: "+err.Error())
 	} else {
-		for _, version := range versions {
-			if at, parseErr := time.Parse(time.RFC3339Nano, mapString(version, "created_at")); parseErr == nil && at.After(policy.LastProvisionedAt) {
-				policy.LastProvisionedAt = at
-			}
-		}
+		policy.LastProvisionedAt = provisionedAt
 	}
 	return policy
 }
 
+func estateLastProvisionedAt(baseURL string, reader *estatePCEReader) (time.Time, error) {
+	// The active version exposes the actual provisioning created_at directly;
+	// do not page every historical version merely to find its newest timestamp.
+	var active map[string]interface{}
+	err := reader.object(baseURL+"/sec_policy/active", &active)
+	if err == nil {
+		if at, parseErr := time.Parse(time.RFC3339Nano, mapString(active, "created_at")); parseErr == nil {
+			return at, nil
+		}
+	} else {
+		var statusErr *estateCollectionHTTPError
+		if !errors.As(err, &statusErr) || (statusErr.status != 400 && statusErr.status != 404 && statusErr.status != 405 && statusErr.status != 406 && statusErr.status != 501) {
+			return time.Time{}, err
+		}
+	}
+	// Older PCEs may require a numeric version instead of the active alias.
+	// A fallback history must still be complete, not an ignored-offset page.
+	versions, err := reader.collection(baseURL + "/sec_policy")
+	if err != nil {
+		return time.Time{}, err
+	}
+	var latest time.Time
+	for _, version := range versions {
+		at, err := time.Parse(time.RFC3339Nano, mapString(version, "created_at"))
+		if err != nil {
+			return time.Time{}, errors.New("policy version history contains an invalid provisioning timestamp")
+		}
+		if at.After(latest) {
+			latest = at
+		}
+	}
+	return latest, nil
+}
+
 func estatePolicyCounts(baseURL string, fetch func(string) ([]map[string]interface{}, error)) (EstatePolicyCount, error) {
-	rulesets, err := estateFetchCollection(baseURL+"/rule_sets", fetch)
+	base, parseErr := url.Parse(baseURL)
+	if parseErr != nil || base == nil || base.Host == "" || (base.Scheme != "https" && base.Scheme != "http") {
+		return EstatePolicyCount{}, errors.New("rules count unavailable: invalid policy collection URL")
+	}
+	rulesets, err := fetch(baseURL + "/rule_sets")
 	count := EstatePolicyCount{Rulesets: len(rulesets)}
-	unknownRules := false
+	var unknownRules []map[string]interface{}
 	for _, row := range rulesets {
-		known := false
-		for _, key := range []string{"rules_count", "num_rules", "rule_count", "rules_total", "rules", "sec_rules"} {
-			if value, ok := row[key]; ok && value != nil {
-				known = true
-				break
-			}
+		if rules, known := estateRulesetCount(row); known {
+			count.Rules += rules
+		} else {
+			unknownRules = append(unknownRules, row)
 		}
-		if !known {
-			unknownRules = true
-		}
-		count.Rules += rulesetRuleCount(row)
 	}
 	if err != nil {
 		return count, err
 	}
-	if unknownRules {
-		rules, ruleErr := estateFetchCollection(baseURL+"/rules", fetch)
+	for _, ruleset := range unknownRules {
+		// Rules belong to a specific ruleset; /sec_policy/{state}/rules is
+		// not the documented collection endpoint. Only follow same-state hrefs.
+		href, parseErr := url.Parse(mapString(ruleset, "href"))
+		if parseErr != nil || href == nil {
+			return count, errors.New("rules count unavailable: invalid ruleset href")
+		}
+		path := href.Path
+		if strings.HasPrefix(path, "/orgs/") {
+			path = "/api/v2" + path
+		}
+		prefix := strings.TrimRight(base.Path, "/") + "/rule_sets/"
+		id := strings.TrimPrefix(path, prefix)
+		if !strings.HasPrefix(path, prefix) || id == "" || id == "." || id == ".." || strings.Contains(id, "/") || (href.Host != "" && (href.Host != base.Host || href.Scheme != base.Scheme)) || href.RawQuery != "" || href.Fragment != "" {
+			return count, errors.New("rules count unavailable: ruleset href is outside the requested policy version")
+		}
+		rules, ruleErr := fetch(baseURL + "/rule_sets/" + url.PathEscape(id) + "/sec_rules")
 		if ruleErr != nil {
 			return count, fmt.Errorf("rules count unavailable: %w", ruleErr)
 		}
-		count.Rules = len(rules)
+		count.Rules += len(rules)
 	}
 	count.Complete = true
 	return count, nil
+}
+
+// A present field is not necessarily a count: null, fractional/negative values,
+// malformed strings and non-object arrays must never imply a known zero.
+func estateRulesetCount(row map[string]interface{}) (int, bool) {
+	for _, key := range []string{"rules_count", "num_rules", "rule_count", "rules_total"} {
+		if count, ok := estateNonnegativeInteger(row[key]); ok {
+			return count, true
+		}
+	}
+	for _, key := range []string{"rules", "sec_rules"} {
+		if rules, ok := estatePolicyObjectArray(row[key]); ok {
+			return len(rules), true
+		}
+	}
+	return 0, false
+}
+
+func estateNonnegativeInteger(raw interface{}) (int, bool) {
+	var text string
+	switch value := raw.(type) {
+	case int:
+		return value, value >= 0
+	case float64:
+		// JSON numbers decode to float64. Stay below the rounded native-int
+		// ceiling so conversion cannot overflow on either supported word size.
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || math.Trunc(value) != value || value >= float64(^uint(0)>>1) {
+			return 0, false
+		}
+		return int(value), true
+	case json.Number:
+		text = string(value)
+	case string:
+		text = strings.TrimSpace(value)
+	default:
+		return 0, false
+	}
+	count, err := strconv.ParseUint(text, 10, strconv.IntSize-1)
+	return int(count), err == nil
+}
+
+func estatePolicyObjectArray(raw interface{}) ([]map[string]interface{}, bool) {
+	var rows []map[string]interface{}
+	valid := true
+	switch values := raw.(type) {
+	case []map[string]interface{}:
+		if values == nil {
+			return nil, false
+		}
+		for _, row := range values {
+			if row == nil {
+				valid = false
+				continue
+			}
+			rows = append(rows, row)
+		}
+	case []interface{}:
+		if values == nil {
+			return nil, false
+		}
+		for _, value := range values {
+			if row, ok := value.(map[string]interface{}); ok && row != nil {
+				rows = append(rows, row)
+			} else {
+				valid = false
+			}
+		}
+	default:
+		return nil, false
+	}
+	return rows, valid
 }
 
 func estateParsePendingPolicy(payload map[string]interface{}) ([]EstatePolicyChange, bool) {
@@ -705,21 +841,19 @@ func estateParsePendingPolicy(payload map[string]interface{}) ([]EstatePolicyCha
 		return changes, false
 	}
 	known := false
+	complete := true
 	seen := map[string]bool{}
 	for kind, raw := range payload {
-		if raw == nil {
-			continue
-		}
-		if _, ok := raw.([]interface{}); !ok {
-			if _, ok = raw.([]map[string]interface{}); !ok {
-				return changes, false
-			}
+		rows, valid := estatePolicyObjectArray(raw)
+		if !valid {
+			complete = false
 		}
 		known = true
-		for _, row := range estateObjectArray(raw) {
+		for _, row := range rows {
 			change := EstatePolicyChange{ID: mapString(row, "href"), Name: firstNonEmpty(mapString(row, "name"), mapString(row, "href")), Kind: kind, Operation: mapString(row, "update_type")}
 			if change.ID == "" || change.Operation == "" {
-				return changes, false
+				complete = false
+				continue
 			}
 			key := kind + ":" + change.ID + ":" + change.Operation
 			if seen[key] {
@@ -738,7 +872,7 @@ func estateParsePendingPolicy(payload map[string]interface{}) ([]EstatePolicyCha
 		}
 		return changes[i].Kind < changes[j].Kind
 	})
-	return changes, known
+	return changes, known && complete
 }
 
 // estateIdentity deliberately excludes credentials. Changing API keys must not
@@ -808,53 +942,5 @@ func estateObjectArray(raw interface{}) []map[string]interface{} {
 		return out
 	default:
 		return nil
-	}
-}
-
-// The generic legacy collection helper treats failures after page one as
-// success. Estate comparisons need a strict completeness signal instead.
-func estateFetchCollection(endpoint string, fetch func(string) ([]map[string]interface{}, error)) ([]map[string]interface{}, error) {
-	const pageSize = 500
-	var out []map[string]interface{}
-	seen := make(map[string]struct{})
-	for page := 0; ; page++ {
-		u, err := url.Parse(endpoint)
-		if err != nil {
-			return out, err
-		}
-		q := u.Query()
-		q.Set("max_results", strconv.Itoa(pageSize))
-		q.Set("skip", strconv.Itoa(page*pageSize))
-		u.RawQuery = q.Encode()
-		batch, err := fetch(u.String())
-		if err != nil {
-			return out, fmt.Errorf("page %d incomplete: %w", page+1, err)
-		}
-		added := 0
-		for _, row := range batch {
-			key := estateWorkloadIdentity(row)
-			if key == "" {
-				b, marshalErr := json.Marshal(row)
-				if marshalErr != nil {
-					return out, marshalErr
-				}
-				key = string(b)
-			}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			out = append(out, row)
-			added++
-		}
-		if len(batch) == 0 || (len(batch) < pageSize && added == len(batch)) {
-			return out, nil
-		}
-		if added == 0 {
-			return out, errors.New("pagination repeated a page; estate result is incomplete")
-		}
-		if len(batch) < pageSize {
-			return out, errors.New("pagination overlapped the final page; estate result is incomplete")
-		}
 	}
 }

@@ -31,6 +31,8 @@ func TestEstatePreviewServer(t *testing.T) {
 			_ = json.NewEncoder(w).Encode([]any{map[string]any{"href": "/orgs/1/sec_policy/draft/rule_sets/1", "name": "Payments", "rules": []any{map[string]any{"href": "/rules/1"}, map[string]any{"href": "/rules/2"}}}})
 		case "/api/v2/orgs/1/sec_policy/pending":
 			_ = json.NewEncoder(w).Encode(map[string]any{"rule_sets": []any{map[string]any{"href": "/rule_sets/1", "name": "Payments", "update_type": "update", "updated_at": time.Now().UTC().Format(time.RFC3339)}}})
+		case "/api/v2/orgs/1/sec_policy/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{"href": "/orgs/1/sec_policy/12", "version": 12, "created_at": provisionedAt})
 		case "/api/v2/orgs/1/sec_policy":
 			_ = json.NewEncoder(w).Encode([]any{map[string]any{"href": "/orgs/1/sec_policy/12", "version": 12, "created_at": provisionedAt}})
 		default:

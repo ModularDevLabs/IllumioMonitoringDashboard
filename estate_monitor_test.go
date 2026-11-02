@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -192,43 +190,6 @@ func TestEstateDailyPeaksDoNotMutateLiveSnapshot(t *testing.T) {
 	}
 }
 
-func TestEstateStrictPolicyPagination(t *testing.T) {
-	full := make([]map[string]interface{}, 500)
-	for i := range full {
-		full[i] = map[string]interface{}{"href": fmt.Sprintf("/rules/%d", i)}
-	}
-	for _, scenario := range []string{"later-error", "repeat", "complete"} {
-		t.Run(scenario, func(t *testing.T) {
-			calls := 0
-			fetch := func(endpoint string) ([]map[string]interface{}, error) {
-				calls++
-				u, _ := url.Parse(endpoint)
-				if calls == 1 {
-					if u.Query().Get("skip") != "0" {
-						t.Fatal("wrong first page")
-					}
-					return full, nil
-				}
-				if scenario == "later-error" {
-					return nil, errors.New("PCE unavailable")
-				}
-				if scenario == "repeat" {
-					return full, nil
-				}
-				return []map[string]interface{}{{"href": "/rules/final"}}, nil
-			}
-			rows, err := estateFetchCollection("https://pce.invalid/rules", fetch)
-			if scenario == "complete" {
-				if err != nil || len(rows) != 501 {
-					t.Fatalf("complete result %d %v", len(rows), err)
-				}
-			} else if err == nil || len(rows) != 500 {
-				t.Fatalf("partial result reported success: %d %v", len(rows), err)
-			}
-		})
-	}
-}
-
 func TestEstatePolicySeparateCountsAndPending(t *testing.T) {
 	fetch := func(endpoint string) ([]map[string]interface{}, error) {
 		if strings.Contains(endpoint, "/active/") {
@@ -296,6 +257,8 @@ func TestEstateMonitorHelperProcess(t *testing.T) {
 			_ = json.NewEncoder(w).Encode([]interface{}{map[string]interface{}{"href": r.URL.Path + "/1", "name": "Payments", "rules_count": 2}})
 		case strings.HasSuffix(r.URL.Path, "/sec_policy/pending"):
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"rule_sets": []interface{}{map[string]interface{}{"href": "/rule_sets/2", "name": "New ruleset", "update_type": "create"}}})
+		case strings.HasSuffix(r.URL.Path, "/sec_policy/active"):
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"href": "/sec_policy/8", "version": 8, "created_at": "2026-11-01T12:00:00Z"})
 		case strings.HasSuffix(r.URL.Path, "/sec_policy"):
 			_ = json.NewEncoder(w).Encode([]interface{}{map[string]interface{}{"href": "/sec_policy/8", "version": 8, "created_at": "2026-11-01T12:00:00Z"}})
 		case strings.HasSuffix(r.URL.Path, "/labels"):
