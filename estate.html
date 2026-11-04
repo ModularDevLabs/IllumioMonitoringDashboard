@@ -19,11 +19,16 @@
         <section id="estate-disabled" class="estate-panel" hidden><h2>Estate features are off</h2><p>Choose which insights to collect in <a href="/settings#estate-settings">Settings</a>. All estate features and scheduled delivery are opt-in. Your existing dashboard monitoring is unchanged.</p></section>
         <div id="estate-live-sections"></div>
         <details id="estate-report-section" class="estate-panel estate-section" open hidden>
-            <summary>Weekly Estate Report</summary>
-            <p class="estate-muted">Compare a completed Monday–Sunday with the previous week. The report shows retained observations, not a reconstruction of data from before monitoring was enabled.</p>
+            <summary>Estate Reports</summary>
+            <p class="estate-muted">Create a report now from the latest retained observation and the current week so far, or compare a completed Monday–Sunday with the previous week. Reports do not reconstruct data from before monitoring was enabled.</p>
             <div class="estate-report-controls">
-                <label>Week starting (Monday)<input id="estate-week-start" type="date"></label>
-                <button id="estate-preview" type="button">Preview report</button>
+                <button id="estate-run-now" type="button">Run report now</button>
+                <div class="estate-checks"><label><input id="estate-set-baseline" type="checkbox"> Use this report as the new change baseline</label></div>
+            </div>
+            <p class="estate-muted">Run report now saves a new, frozen report each time, even during a partial week. It uses the latest collected data and does not force a new PCE collection or send a webhook. The change baseline stays unchanged unless you select the checkbox for that run.</p>
+            <div class="estate-report-controls">
+                <label>Completed week starting (Monday)<input id="estate-week-start" type="date"></label>
+                <button id="estate-preview" type="button">Preview completed week</button>
                 <button id="estate-save-snapshot" type="button">Save weekly snapshot</button>
                 <button id="estate-download" type="button" disabled>Download HTML</button>
                 <button id="estate-print" type="button" disabled>Print / PDF</button>
@@ -32,7 +37,7 @@
             </div>
             <p class="estate-muted">Saving a snapshot establishes the dashboard change-count baseline at the end of that reporting week. Previews and downloads do not change it. Each week's manual snapshot is frozen when first saved; saving that week again reopens the same snapshot. Scheduled reports remain separate.</p>
             <fieldset class="estate-section-picker"><legend>Include sections</legend><div id="estate-report-sections" class="estate-checks"><label><input type="checkbox" value="estate" checked> Estate &amp; VEN versions</label><label><input type="checkbox" value="health" checked> VEN health</label><label><input type="checkbox" value="policy" checked> Policy</label><label><input type="checkbox" value="traffic" checked> Traffic</label><label><input type="checkbox" value="changes" checked> Changes</label><label><input type="checkbox" value="quality" checked> Data quality</label></div></fieldset>
-            <p id="estate-report-status" class="estate-muted" role="status" aria-live="polite">Select Preview report to load the last completed week.</p>
+            <p id="estate-report-status" class="estate-muted" role="status" aria-live="polite">Run a report now, or preview a completed week.</p>
             <p id="estate-email-status" class="estate-muted" role="status" aria-live="polite"></p>
             <details id="estate-email-panel" class="estate-section estate-email-panel" hidden>
                 <summary>Email-ready preview &amp; manual copy</summary>
@@ -45,8 +50,8 @@
                 <p class="estate-muted">If automatic copying is blocked, select the report below, press Ctrl+C (or Command+C on Mac), then paste it into your email.</p>
                 <div id="estate-email-content" class="estate-email-content" tabindex="0" role="region" aria-label="Email-ready report"></div>
             </details>
-            <iframe id="estate-report-preview" title="Weekly estate report preview" sandbox="allow-same-origin allow-modals" hidden></iframe>
-            <details class="estate-section" open><summary>Saved Weekly Reports</summary><p class="estate-muted">Frozen manual and scheduled reports stay available locally. Saving a manual snapshot does not send it anywhere. Scheduled delivery is separately enabled in Settings.</p><div id="estate-report-runs"></div></details>
+            <iframe id="estate-report-preview" title="Estate report preview" sandbox="allow-same-origin allow-modals" hidden></iframe>
+            <details class="estate-section" open><summary>Saved Estate Reports</summary><p class="estate-muted">Frozen on-demand, completed-week, and scheduled reports stay available locally. Manual reports are not sent anywhere. Scheduled delivery is separately enabled in Settings.</p><div id="estate-report-runs"></div></details>
         </details>
     </main>
 </body>

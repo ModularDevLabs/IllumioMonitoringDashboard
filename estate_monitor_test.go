@@ -254,9 +254,14 @@ func TestEstateMonitorHelperProcess(t *testing.T) {
 		requests.Add(1)
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/rule_sets"):
-			_ = json.NewEncoder(w).Encode([]interface{}{map[string]interface{}{"href": r.URL.Path + "/1", "name": "Payments", "rules_count": 2}})
+			state := "active"
+			port := 80
+			if strings.Contains(r.URL.Path, "/draft/") {
+				state, port = "draft", 443
+			}
+			_ = json.NewEncoder(w).Encode([]interface{}{estatePendingTestRuleset(state, "1", estatePendingTestRule(state, "1", "1", port), estatePendingTestRule(state, "1", "2", 22))})
 		case strings.HasSuffix(r.URL.Path, "/sec_policy/pending"):
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"rule_sets": []interface{}{map[string]interface{}{"href": "/rule_sets/2", "name": "New ruleset", "update_type": "create"}}})
+			_ = json.NewEncoder(w).Encode(estatePendingTestPayload(map[string]string{"1": "update"}))
 		case strings.HasSuffix(r.URL.Path, "/sec_policy/active"):
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"href": "/sec_policy/8", "version": 8, "created_at": "2026-11-01T12:00:00Z"})
 		case strings.HasSuffix(r.URL.Path, "/sec_policy"):
@@ -294,7 +299,7 @@ func TestEstateMonitorHelperProcess(t *testing.T) {
 			t.Fatal("policy snapshot missing")
 		}
 		policy := first.Latest.Policy
-		if requests.Load() != 4 || !policy.Active.Complete || !policy.Draft.Complete || !policy.PendingComplete || policy.LastProvisionedAt.IsZero() {
+		if requests.Load() != 4 || !policy.Active.Complete || !policy.Draft.Complete || !policy.PendingComplete || policy.LastProvisionedAt.IsZero() || policy.PendingCounts == nil || !policy.PendingCounts.Rules.Complete || policy.PendingCounts.Rules.Modified != 1 {
 			t.Fatalf("policy collection invalid: requests=%d policy=%+v", requests.Load(), policy)
 		}
 		updateEstateMonitor(base, nil, nil, nil, estateTestStats(at.Add(5*time.Minute)), configuredEstateOptions())

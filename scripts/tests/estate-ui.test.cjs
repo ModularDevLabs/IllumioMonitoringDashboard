@@ -96,7 +96,7 @@ test('dashboard awaits a report baseline instead of substituting the lifetime ch
     t.api.renderDashboard(view);
     let text = t.get('estate-dashboard-content').textContent;
     assert.match(text, /Changes since last weekly reportAwaiting report/);
-    assert.match(text, /first saved weekly report will establish the baseline/);
+    assert.match(text, /Save a completed-week snapshot.*Run report now.*change-baseline checkbox selected/);
     assert.doesNotMatch(text, /160/);
     delete view.changes_since_report;
     t.api.renderDashboard(view);
@@ -106,12 +106,26 @@ test('dashboard awaits a report baseline instead of substituting the lifetime ch
     view.options.weekly_report_enabled = false;
     t.api.renderDashboard(view);
     text = t.get('estate-dashboard-content').textContent;
-    assert.match(text, /No saved weekly report baseline/);
+    assert.match(text, /No saved report baseline/);
     assert.match(text, /Enable Weekly Estate Report in Settings/);
     assert.doesNotMatch(text, /160/);
     view.options.change_log_enabled = false;
     t.api.renderDashboard(view);
     assert.equal(t.get('estate-dashboard-row').hidden, true);
+});
+test('change log displays the actual observation time and falls back for older history', () => {
+    const t = app();
+    const observed = '2026-11-04T17:00:00Z';
+    const changed = '2026-11-02T13:00:00Z';
+    const legacy = '2026-11-03T14:00:00Z';
+    t.api.renderPage({ options: { change_log_enabled: true }, snapshot: {}, changes: [
+        { name: 'Delayed policy observation', kind: 'policy', at: changed, observed_at: observed },
+        { name: 'Older recorded change', kind: 'labels', at: legacy }
+    ] });
+    const rows = find(t.get('estate-live-sections'), node => node.tagName === 'TBODY').children;
+    assert.equal(rows[0].children[0].textContent, t.api.timestamp(observed));
+    assert.notEqual(rows[0].children[0].textContent, t.api.timestamp(changed));
+    assert.equal(rows[1].children[0].textContent, t.api.timestamp(legacy));
 });
 test('dashboard report-relative changes disclose partial or unavailable observations without inventing totals', () => {
     const t = app();
@@ -360,7 +374,7 @@ test('manual weekly snapshot is an explicit POST and refreshes the baseline and 
         let data;
         if (url === '/api/estate') data = { options: { weekly_report_enabled: true, change_log_enabled: true }, snapshot: {}, changes: Array(160).fill({}), changes_since_report: { status: 'available', count: 3, since: '2026-10-26T00:00:00Z', report_week: '2026-10-19' } };
         else if (url === '/api/estate/report/runs') data = { runs: [] };
-        else data = { report: { timezone: 'UTC', sections: ['estate', 'changes'], window: { first_day: '2026-10-19' }, quality: { warnings: [] } }, html: '<p>Frozen manual report</p>' };
+        else data = { report: { id: 'weekly-snapshot', timezone: 'UTC', sections: ['estate', 'changes'], window: { first_day: '2026-10-19' }, quality: { warnings: [] } }, html: '<p>Frozen manual report</p>' };
         return { ok: true, json: async () => data };
     };
     await t.api.previewReport(true);
@@ -375,6 +389,67 @@ test('manual weekly snapshot is an explicit POST and refreshes the baseline and 
     assert.equal(t.get('estate-report-preview').srcdoc, '<p>Frozen manual report</p>');
     assert.deepEqual(t.sections.filter(input => input.checked).map(input => input.value), ['estate', 'changes']);
     assert.equal(t.get('estate-save-snapshot').disabled, false);
+    t.document.documentElement.dataset.unifiedTheme = 'light';
+    await t.api.refreshReportTheme();
+    assert.equal(calls.at(-1).options.method, 'GET');
+    assert.match(calls.at(-1).url, /^\/api\/estate\/report\/runs\?id=weekly-snapshot&format=preview&theme=light$/);
+    assert.equal(calls.filter(call => call.options.method === 'POST').length, 1);
+});
+test('saved reports force a fresh baseline even while an older estate refresh is in flight', async () => {
+    for (const mode of ['now', 'weekly']) {
+        for (const staleFailure of [false, true]) {
+            const t = app();
+            let finishOld;
+            let estateCalls = 0;
+            const latest = { options: { weekly_report_enabled: true, change_log_enabled: true }, snapshot: { at: '2026-11-04T17:00:00Z' }, changes_since_report: { status: 'available', count: 2 } };
+            t.context.fetch = async url => {
+                if (url === '/api/estate') {
+                    if (++estateCalls === 1) return new Promise(resolve => { finishOld = resolve; });
+                    return { ok: true, json: async () => latest };
+                }
+                if (url === '/api/estate/report/runs') return { ok: true, json: async () => ({ runs: [] }) };
+                return { ok: true, json: async () => mode === 'now' ? onDemandBundle('baseline-now', true) : { report: { id: 'weekly-baseline', window: { first_day: '2026-10-26' } }, html: '<p>Saved week</p>' } };
+            };
+            const older = t.api.load();
+            await (mode === 'now' ? t.api.runReportNow() : t.api.previewReport(true));
+            assert.equal(estateCalls, 2, mode + ' must not skip the post-save refresh');
+            const dashboard = t.get('estate-dashboard-content').textContent;
+            const status = t.get('estate-status').textContent;
+            assert.match(dashboard, /Changes since last weekly report2/);
+            finishOld(staleFailure ? { ok: false, status: 503, text: async () => 'Old request failed' } : { ok: true, json: async () => ({ ...latest, changes_since_report: { status: 'available', count: 160 } }) });
+            await older;
+            assert.equal(t.get('estate-dashboard-content').textContent, dashboard);
+            assert.equal(t.get('estate-status').textContent, status);
+        }
+    }
+});
+test('an obsolete refresh cannot unlock a newer refresh or replace the saved report history', async () => {
+    const t = app();
+    const estateRequests = [];
+    t.context.fetch = async url => {
+        assert.equal(url, '/api/estate');
+        return new Promise(resolve => { estateRequests.push(resolve); });
+    };
+    const old = t.api.load();
+    const fresh = t.api.load(true);
+    estateRequests[0]({ ok: true, json: async () => ({ options: {} }) });
+    await old;
+    await t.api.load();
+    assert.equal(estateRequests.length, 2);
+    estateRequests[1]({ ok: true, json: async () => ({ options: {} }) });
+    await fresh;
+
+    let finishOldHistory;
+    t.context.fetch = async () => new Promise(resolve => { finishOldHistory = resolve; });
+    const oldHistory = t.api.loadReportRuns();
+    reportFetch(t, async () => ({ ok: true, json: async () => onDemandBundle('new-history') }));
+    await t.api.runReportNow();
+    await t.api.loadReportRuns();
+    const history = t.get('estate-report-runs').textContent;
+    finishOldHistory({ ok: false, status: 503, text: async () => 'Stale history failed' });
+    await oldHistory;
+    assert.equal(t.get('estate-report-runs').textContent, history);
+    assert.doesNotMatch(history, /Stale history failed/);
 });
 test('preview events never save snapshots, and failed saves cannot claim success', async () => {
     const t = app();
@@ -563,4 +638,199 @@ test('disabling weekly reporting clears loaded and in-flight email exports until
     assert.equal(t.get('estate-email-copy').disabled, true);
     assert.equal(t.get('estate-download').disabled, true);
     assert.equal(t.api.previewEmail(), false);
+});
+
+test('pending policy counts describe actual added/modified/deleted objects, not full draft inventory', () => {
+    const t = app();
+    const policy = { active: { complete: true, rules: 800, rulesets: 80 }, draft: { complete: true, rules: 806, rulesets: 82 }, pending_complete: true,
+        pending_counts: { rules: { complete: true, added: 8, modified: 3, deleted: 2, total: 13 }, rulesets: { complete: true, added: 2, modified: 1, deleted: 0, total: 3 } },
+        pending: [{ kind: 'rule', name: '<img src=x onerror=unsafe()>', operation: 'modified' }] };
+    const view = { options: { policy_enabled: true }, snapshot: { policy } };
+    t.api.renderDashboard(view);
+    const cards = t.get('estate-dashboard-content').children;
+    const card = label => cards.find(item => item.children[0].textContent === label);
+    assert.match(card('Draft policy inventory').textContent, /806 rules82 rulesets.*not pending changes/);
+    assert.equal(card('Pending rules').children[1].textContent, '13');
+    assert.match(card('Pending rules').textContent, /Added: 8.*Modified: 3.*Deleted: 2/);
+    assert.equal(card('Pending rulesets').children[1].textContent, '3');
+    t.api.renderPage(view);
+    assert.match(t.get('estate-live-sections').textContent, /Pending rules13Added: 8/);
+    assert.match(t.get('estate-live-sections').textContent, /<img src=x onerror=unsafe\(\)>/);
+});
+
+test('unknown and incomplete pending counts never become zero; confirmed zero remains valid', () => {
+    const t = app();
+    for (const counts of [undefined, {}, { rules: { complete: false, total: 0, added: 0, modified: 0, deleted: 0 } }, { rules: { complete: true, total: 0, added: null, modified: 0, deleted: 0 } }]) {
+        t.api.renderDashboard({ options: { policy_enabled: true }, snapshot: { policy: { draft: { complete: true, rules: 700, rulesets: 50 }, pending_counts: counts } } });
+        const card = t.get('estate-dashboard-content').children.find(item => item.children[0].textContent === 'Pending rules');
+        assert.equal(card.children[1].textContent, 'Unavailable / incomplete');
+    }
+    const zero = { complete: true, total: 0, added: 0, modified: 0, deleted: 0 };
+    t.api.renderPage({ options: { policy_enabled: true }, snapshot: { policy: { warnings: ['<svg>Assessment warning</svg>'], pending_counts: { rules: zero, rulesets: zero, warnings: ['<svg>Assessment warning</svg>'] }, pending_complete: true } } });
+    assert.match(t.get('estate-live-sections').textContent, /Pending rules0Added: 0.*Pending rulesets0/);
+    assert.match(t.get('estate-live-sections').textContent, /<svg>Assessment warning<\/svg>/);
+    assert.equal(t.get('estate-live-sections').textContent.split('<svg>Assessment warning</svg>').length - 1, 1);
+});
+
+test('an explicitly selected on-demand baseline is not labelled a weekly baseline', () => {
+    const t = app();
+    t.api.renderDashboard({ options: { change_log_enabled: true }, snapshot: {}, changes_since_report: {
+        baseline_kind: 'on_demand', report_id: 'now-123', observation_at: '2026-11-04T16:00:00Z', since: '2026-11-04T16:00:00Z', report_week: '2026-11-02', status: 'available', count: 4
+    } });
+    const text = t.get('estate-dashboard-content').textContent;
+    assert.match(text, /Changes since on-demand report baseline4/);
+    assert.match(text, /Explicitly selected on-demand baseline/);
+    assert.doesNotMatch(text, /weekly report|Report week/);
+});
+
+function onDemandBundle(id = 'now-1', baseline = false) {
+    return { report: { id, kind: 'on_demand', timezone: 'America/Chicago', observation_at: '2026-11-04T16:00:00Z', generated_at: '2026-11-04T16:05:00Z', sets_change_baseline: baseline, partial_week: true,
+        window: { first_day: '2026-11-02', last_day: '2026-11-04' }, sections: ['estate', 'policy'], quality: { expected_days: 3, comparison_available: false, warnings: ['Latest observation is retained data.'] } }, html: '<p>Frozen ' + id + '</p>' };
+}
+function reportFetch(t, handler) {
+    const calls = [];
+    t.context.fetch = async (url, options = {}) => {
+        calls.push({ url, options });
+        if (url === '/api/estate') return { ok: true, json: async () => ({ options: { weekly_report_enabled: true }, snapshot: {} }) };
+        if (url === '/api/estate/report/runs') return { ok: true, json: async () => ({ runs: [] }) };
+        return handler(url, options);
+    };
+    return calls;
+}
+test('Run report now accepts a partial current week, preserves completed-week selection, and defaults baseline off', async () => {
+    const t = app();
+    t.get('estate-week-start').value = '2026-11-02'; // Not a completed week: irrelevant to this action.
+    t.sections.forEach(input => { input.checked = ['estate', 'policy'].includes(input.value); });
+    const calls = reportFetch(t, async () => ({ ok: true, json: async () => onDemandBundle() }));
+    await t.api.runReportNow();
+    const url = new URL(calls[0].url, 'http://localhost');
+    assert.equal(url.pathname, '/api/estate/report/now');
+    assert.equal(calls[0].options.method, 'POST');
+    assert.equal(url.searchParams.get('set_baseline'), 'false');
+    assert.equal(url.searchParams.get('sections'), 'estate,policy');
+    assert.equal(url.searchParams.get('theme'), 'dark');
+    assert.equal(url.searchParams.has('week'), false);
+    assert.equal(t.get('estate-week-start').value, '2026-11-02');
+    assert.equal(t.get('estate-download').disabled, false);
+    assert.match(t.get('estate-report-status').textContent, /Saved on-demand report.*As of.*Current partial week.*3 elapsed reporting days/);
+    assert.match(t.get('estate-report-status').textContent, /future days are not missing data.*comparison is unavailable.*baseline unchanged/);
+    assert.equal(calls.some(call => call.url === '/api/estate/report/runs'), true);
+    assert.equal(t.api.reportFilename('on_demand', '2026-11-04T16:00:00Z', '2026-11-02', 'now-1'), 'Illumio_Estate_On_Demand_2026-11-04T16-00-00Z_now-1.html');
+    assert.equal(t.get('estate-run-now').disabled, false);
+});
+
+test('baseline opt-in applies only to an explicit run and each new run is a new POST', async () => {
+    const t = app();
+    let number = 0;
+    const calls = reportFetch(t, async url => ({ ok: true, json: async () => onDemandBundle('now-' + ++number, new URL(url, 'http://localhost').searchParams.get('set_baseline') === 'true') }));
+    t.get('estate-set-baseline').checked = true;
+    await t.api.runReportNow();
+    assert.equal(new URL(calls[0].url, 'http://localhost').searchParams.get('set_baseline'), 'true');
+    assert.equal(t.get('estate-set-baseline').checked, false);
+    assert.match(t.get('estate-report-status').textContent, /Explicitly selected as a change baseline.*newer baseline is kept/);
+    await t.api.runReportNow();
+    const posts = calls.filter(call => call.options.method === 'POST');
+    assert.equal(posts.length, 2);
+    assert.equal(new URL(posts[1].url, 'http://localhost').searchParams.get('set_baseline'), 'false');
+    assert.equal(t.get('estate-report-preview').srcdoc, '<p>Frozen now-2</p>');
+});
+
+test('theme changes reopen the same frozen on-demand report with GET and never reset the baseline', async () => {
+    const t = app();
+    const bundle = onDemandBundle('saved-now', true);
+    const calls = reportFetch(t, async () => ({ ok: true, json: async () => bundle }));
+    t.get('estate-set-baseline').checked = true;
+    await t.api.runReportNow();
+    t.document.documentElement.dataset.unifiedTheme = 'light';
+    await t.api.refreshReportTheme();
+    const last = calls.at(-1), url = new URL(last.url, 'http://localhost');
+    assert.equal(last.options.method, 'GET');
+    assert.equal(url.pathname, '/api/estate/report/runs');
+    assert.equal(url.searchParams.get('id'), 'saved-now');
+    assert.equal(url.searchParams.get('format'), 'preview');
+    assert.equal(url.searchParams.get('theme'), 'light');
+    assert.equal(url.searchParams.has('set_baseline'), false);
+    assert.equal(url.searchParams.has('week'), false);
+    assert.equal(calls.filter(call => call.options.method === 'POST').length, 1);
+    assert.equal(t.get('estate-report-preview').srcdoc, bundle.html);
+});
+
+test('a theme change during report creation repaints the saved ID once without a second POST', async () => {
+    const t = app();
+    let finish;
+    const calls = reportFetch(t, async (url, options) => options.method === 'POST' ? new Promise(resolve => { finish = resolve; }) : { ok: true, json: async () => onDemandBundle('in-flight') });
+    const pending = t.api.runReportNow();
+    t.document.documentElement.dataset.unifiedTheme = 'light';
+    await t.api.refreshReportTheme();
+    assert.equal(calls.length, 1);
+    finish({ ok: true, json: async () => onDemandBundle('in-flight') });
+    await pending;
+    const requests = calls.filter(call => call.options.method);
+    assert.deepEqual(requests.map(call => call.options.method), ['POST', 'GET']);
+    assert.match(requests[1].url, /id=in-flight&format=preview&theme=light/);
+    assert.equal(t.get('estate-run-now').disabled, false);
+});
+
+test('pending save prevents duplicate runs and stale responses cannot replace a changed selection', async () => {
+    const t = app();
+    let finish;
+    const calls = reportFetch(t, async () => new Promise(resolve => { finish = resolve; }));
+    t.get('estate-set-baseline').checked = true;
+    const pending = t.api.runReportNow();
+    assert.equal(t.get('estate-set-baseline').checked, false);
+    assert.equal(t.get('estate-run-now').disabled, true);
+    t.api.invalidateReport();
+    await t.api.runReportNow();
+    assert.equal(calls.filter(call => call.options.method === 'POST').length, 1);
+    finish({ ok: true, json: async () => onDemandBundle('stale') });
+    await pending;
+    assert.equal(t.get('estate-report-preview').hidden, true);
+    assert.equal(t.get('estate-download').disabled, true);
+    assert.equal(t.get('estate-run-now').disabled, false);
+    assert.doesNotMatch(t.get('estate-report-status').textContent, /Saved on-demand report/);
+});
+
+test('failed or malformed on-demand responses never enable old exports or claim the baseline changed', async () => {
+    for (const response of [
+        { ok: false, status: 503, text: async () => 'No current observation available.' },
+        { ok: true, json: async () => ({ report: { kind: 'on_demand' }, html: '<p>Missing identity</p>' }) }
+    ]) {
+        const t = app();
+        reportFetch(t, async () => ({ ok: true, json: async () => onDemandBundle() }));
+        await t.api.runReportNow();
+        reportFetch(t, async () => response);
+        await t.api.runReportNow();
+        assert.equal(t.get('estate-download').disabled, true);
+        assert.equal(t.get('estate-report-preview').hidden, true);
+        assert.equal(t.get('estate-email-copy').disabled, true);
+        assert.equal(t.get('estate-run-now').disabled, false);
+        assert.match(t.get('estate-report-status').textContent, /Unable to run report now/);
+        assert.doesNotMatch(t.get('estate-report-status').textContent, /Saved on-demand report|new change baseline/);
+    }
+});
+
+test('a frozen report identity mismatch is rejected instead of silently substituting another report', async () => {
+    const t = app();
+    reportFetch(t, async () => ({ ok: true, json: async () => onDemandBundle('correct') }));
+    await t.api.runReportNow();
+    reportFetch(t, async () => ({ ok: true, json: async () => onDemandBundle('different') }));
+    await t.api.refreshReportTheme();
+    assert.match(t.get('estate-report-status').textContent, /did not match/);
+    assert.equal(t.get('estate-download').disabled, true);
+});
+
+test('saved on-demand reports have distinct names and the baseline control starts unchecked', async () => {
+    const t = app();
+    t.context.fetch = async () => ({ ok: true, json: async () => ({ runs: [{ ...onDemandBundle('now-list').report, created_at: '2026-11-04T16:05:00Z', state: 'generated', week: '2026-11-02' }] }) });
+    await t.api.loadReportRuns();
+    const row = t.get('estate-report-runs').children[0];
+    assert.match(row.children[0].textContent, /Download on-demand report/);
+    assert.match(row.children[0].download, /Estate_On_Demand_.*now-list/);
+    assert.match(row.textContent, /Change baseline unchanged/);
+    const html = fs.readFileSync(path.join(repo, 'estate.html'), 'utf8');
+    const checkbox = html.match(/<input[^>]+id="estate-set-baseline"[^>]*>/)[0];
+    assert.doesNotMatch(checkbox, /\bchecked\b/);
+    assert.match(html, /id="estate-run-now"[^>]*>Run report now/);
+    assert.match(html, /id="estate-preview"/);
+    assert.match(html, /id="estate-save-snapshot"/);
 });

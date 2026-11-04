@@ -32,6 +32,8 @@
 .estate-wrap button:disabled { cursor: not-allowed; opacity: .55; }
 .estate-report-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin: 14px 0; }
 .estate-report-controls label { display: grid; gap: 6px; font-size: .88rem; }
+.estate-report-controls .estate-checks { align-self: center; }
+.estate-report-controls .estate-checks label { display: flex; align-items: center; }
 .estate-section-picker { border: 1px solid var(--product-shell-border, #d7d1c5); border-radius: 8px; margin: 16px 0; padding: 12px; }
 .estate-section-picker legend { float: none; width: auto; font-size: .88rem; padding: 0 5px; }
 #estate-report-preview { width: 100%; min-height: 900px; border: 1px solid var(--product-shell-border, #d7d1c5); border-radius: 8px; background: var(--product-shell-panel, #fff); }

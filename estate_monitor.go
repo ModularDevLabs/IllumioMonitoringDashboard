@@ -433,7 +433,8 @@ func estateApplySnapshot(history *EstateHistory, snapshot EstateSnapshot, health
 	if options.PolicyEnabled && options.ChangeLogEnabled && history.OptionsKey == key && history.Latest != nil && history.Latest.Policy != nil && snapshot.Policy != nil {
 		before, after := history.Latest.Policy.LastProvisionedAt, snapshot.Policy.LastProvisionedAt
 		if !before.IsZero() && after.After(before) {
-			history.Changes = append(history.Changes, EstateChange{At: after, Kind: "policy_provisioned", Name: "Latest observed policy provisioning", Before: before.Format(time.RFC3339), After: after.Format(time.RFC3339)})
+			observedAt := snapshot.At
+			history.Changes = append(history.Changes, EstateChange{At: after, ObservedAt: &observedAt, Kind: "policy_provisioned", Name: "Latest observed policy provisioning", Before: before.Format(time.RFC3339), After: after.Format(time.RFC3339)})
 		}
 	}
 	if options.ChangeLogEnabled && snapshot.InventoryComplete && continuity {
@@ -616,7 +617,7 @@ func estatePruneHistory(history *EstateHistory, now time.Time, loc *time.Locatio
 	history.Days = days
 	changes := history.Changes[:0]
 	for _, change := range history.Changes {
-		if change.At.In(loc).Format("2006-01-02") >= cutoff {
+		if estateChangeObservedAt(change).In(loc).Format("2006-01-02") >= cutoff {
 			changes = append(changes, change)
 		}
 	}
@@ -652,7 +653,7 @@ func estatePolicyRefreshDue(policy *EstatePolicy, attemptedAt, now time.Time) bo
 		return true
 	}
 	interval := 15 * time.Minute
-	if !policy.Active.Complete || !policy.Draft.Complete || !policy.PendingComplete || len(policy.Warnings) != 0 {
+	if !policy.Active.Complete || !policy.Draft.Complete || !policy.PendingComplete || policy.PendingCounts == nil || !policy.PendingCounts.Rulesets.Complete || !policy.PendingCounts.Rules.Complete || len(policy.Warnings) != 0 {
 		interval = 5 * time.Minute // Retry incomplete evidence on the next normal sample.
 	}
 	return now.Sub(attemptedAt) >= interval
@@ -660,8 +661,9 @@ func estatePolicyRefreshDue(policy *EstatePolicy, attemptedAt, now time.Time) bo
 
 func estateCollectPolicyWithReader(baseURL string, now time.Time, reader *estatePCEReader) EstatePolicy {
 	policy := EstatePolicy{At: now, Pending: []EstatePolicyChange{}, Warnings: []string{}}
+	fetch := estatePolicyCachedCollection(reader.collection)
 	for _, state := range []string{"active", "draft"} {
-		count, err := estatePolicyCounts(baseURL+"/sec_policy/"+state, reader.collection)
+		count, err := estatePolicyCounts(baseURL+"/sec_policy/"+state, fetch)
 		if state == "active" {
 			policy.Active = count
 		} else {
@@ -679,6 +681,8 @@ func estateCollectPolicyWithReader(baseURL string, now time.Time, reader *estate
 	} else if !policy.PendingComplete {
 		policy.Warnings = append(policy.Warnings, "Pending policy response had an unsupported format")
 	}
+	policy.PendingCounts = estateCountPendingPolicy(baseURL, pending, policy.PendingComplete, fetch)
+	policy.Warnings = append(policy.Warnings, policy.PendingCounts.Warnings...)
 	provisionedAt, err := estateLastProvisionedAt(baseURL, reader)
 	if err != nil {
 		policy.Warnings = append(policy.Warnings, "Last policy provisioning time unavailable: "+err.Error())

@@ -130,6 +130,8 @@ type estateReportTraffic struct {
 }
 
 type estateReportQuality struct {
+	ExpectedDays        int        `json:"expected_days"`
+	ComparisonAvailable bool       `json:"comparison_available"`
 	CoveredDays         int        `json:"covered_days"`
 	MissingDays         []string   `json:"missing_days"`
 	PreviousCoveredDays int        `json:"previous_covered_days"`
@@ -170,20 +172,25 @@ func estateVersionRows(versions map[string]int) []estateReportVersion {
 }
 
 type estateWeeklyReport struct {
-	SchemaVersion  int                    `json:"schema_version"`
-	GeneratedAt    time.Time              `json:"generated_at"`
-	Version        string                 `json:"version"`
-	Timezone       string                 `json:"timezone"`
-	Window         estateReportWindow     `json:"window"`
-	PreviousWindow estateReportWindow     `json:"previous_window"`
-	Sections       []string               `json:"sections"`
-	Estate         *estateReportInventory `json:"estate,omitempty"`
-	Health         *estateReportHealth    `json:"health,omitempty"`
-	Policy         *EstatePolicy          `json:"policy,omitempty"`
-	PreviousPolicy *EstatePolicy          `json:"previous_policy,omitempty"`
-	Traffic        []estateReportTraffic  `json:"traffic,omitempty"`
-	Changes        []EstateChange         `json:"changes,omitempty"`
-	Quality        estateReportQuality    `json:"quality"`
+	ID                 string                 `json:"id,omitempty"`
+	Kind               string                 `json:"kind,omitempty"`
+	ObservationAt      *time.Time             `json:"observation_at,omitempty"`
+	SetsChangeBaseline bool                   `json:"sets_change_baseline"`
+	PartialWeek        bool                   `json:"partial_week"`
+	SchemaVersion      int                    `json:"schema_version"`
+	GeneratedAt        time.Time              `json:"generated_at"`
+	Version            string                 `json:"version"`
+	Timezone           string                 `json:"timezone"`
+	Window             estateReportWindow     `json:"window"`
+	PreviousWindow     estateReportWindow     `json:"previous_window"`
+	Sections           []string               `json:"sections"`
+	Estate             *estateReportInventory `json:"estate,omitempty"`
+	Health             *estateReportHealth    `json:"health,omitempty"`
+	Policy             *EstatePolicy          `json:"policy,omitempty"`
+	PreviousPolicy     *EstatePolicy          `json:"previous_policy,omitempty"`
+	Traffic            []estateReportTraffic  `json:"traffic,omitempty"`
+	Changes            []EstateChange         `json:"changes,omitempty"`
+	Quality            estateReportQuality    `json:"quality"`
 }
 
 func estateWindowContains(at time.Time, window estateReportWindow) bool {
@@ -274,19 +281,39 @@ func estateWeekCoverage(history EstateHistory, window estateReportWindow) (int, 
 			missing = append(missing, key)
 		}
 	}
-	return 7 - len(missing), missing
+	return estateReportExpectedDays(window) - len(missing), missing
 }
 
 func buildEstateWeeklyReport(history EstateHistory, opts EstateOptions, window estateReportWindow, sections []string, generatedAt time.Time, traffic []estateReportTraffic) estateWeeklyReport {
+	return buildEstateReport(history, opts, window, sections, generatedAt, traffic, false)
+}
+
+func estateReportExpectedDays(window estateReportWindow) int {
+	days := 0
+	for day := window.Start; day.Before(window.End); day = day.AddDate(0, 0, 1) {
+		days++
+	}
+	return days
+}
+
+func buildEstateReport(history EstateHistory, opts EstateOptions, window estateReportWindow, sections []string, generatedAt time.Time, traffic []estateReportTraffic, partialWeek bool) estateWeeklyReport {
 	previousWindow := estateWindow(window.Start.AddDate(0, 0, -7), window.Start)
 	report := estateWeeklyReport{SchemaVersion: 1, GeneratedAt: generatedAt.UTC(), Version: dashboardVersionLabel(), Timezone: window.Start.Location().String(), Window: window, PreviousWindow: previousWindow, Sections: sections}
+	report.PartialWeek = partialWeek
+	report.Quality.ExpectedDays = estateReportExpectedDays(window)
+	report.Quality.ComparisonAvailable = !partialWeek
 	report.Quality.CoveredDays, report.Quality.MissingDays = estateWeekCoverage(history, window)
-	report.Quality.PreviousCoveredDays, _ = estateWeekCoverage(history, previousWindow)
+	if !partialWeek {
+		report.Quality.PreviousCoveredDays, _ = estateWeekCoverage(history, previousWindow)
+	}
 	warnings := []string{"Inventory and policy values are the latest retained observations in each week, not exact midnight totals. Health counts are distinct observed workloads, not sums of daily peaks or rolling 24-hour counts."}
-	if report.Quality.CoveredDays < 7 {
+	if partialWeek {
+		warnings = append(warnings, "This is an on-demand, partial-week report using already collected observations; running it does not query the PCE. Week-over-week comparisons are omitted because an elapsed portion of a week is not comparable with a complete week.")
+	}
+	if report.Quality.CoveredDays < report.Quality.ExpectedDays {
 		warnings = append(warnings, "This week has missing observation days; unknown periods are not zero activity.")
 	}
-	if report.Quality.PreviousCoveredDays < 7 {
+	if !partialWeek && report.Quality.PreviousCoveredDays < 7 {
 		warnings = append(warnings, "The comparison week has incomplete observation coverage; week-over-week changes may not be comparable.")
 	}
 	for _, snapshot := range history.Days {
@@ -328,7 +355,10 @@ func buildEstateWeeklyReport(history EstateHistory, opts EstateOptions, window e
 	}
 	if selected["estate"] {
 		latest := estateLatestInventory(history, window)
-		previous := estateLatestInventory(history, previousWindow)
+		var previous *EstateSnapshot
+		if !partialWeek {
+			previous = estateLatestInventory(history, previousWindow)
+		}
 		if latest == nil {
 			warnings = append(warnings, "No complete inventory observation exists in this week. Estate totals and VEN versions are unavailable, not zero.")
 		} else {
@@ -362,12 +392,15 @@ func buildEstateWeeklyReport(history EstateHistory, opts EstateOptions, window e
 	}
 	if selected["health"] && report.Quality.CoveredDays > 0 {
 		report.Health = &estateReportHealth{UniqueAffected: estateWeeklyHealth(history, window), Description: "Distinct workload identities observed in each status during the calendar week. One workload may appear in multiple statuses. Tampering uses event timestamps, not rolling scan timestamps."}
-		if report.Quality.PreviousCoveredDays > 0 {
+		if !partialWeek && report.Quality.PreviousCoveredDays > 0 {
 			report.Health.PreviousUniqueAffected = estateWeeklyHealth(history, previousWindow)
 		}
 	}
 	if selected["policy"] {
-		report.Policy, report.PreviousPolicy = estateLatestPolicy(history, window), estateLatestPolicy(history, previousWindow)
+		report.Policy = estateLatestPolicy(history, window)
+		if !partialWeek {
+			report.PreviousPolicy = estateLatestPolicy(history, previousWindow)
+		}
 		if !opts.PolicyEnabled {
 			warnings = append(warnings, "Active/draft policy insights collection is currently disabled; only any retained policy observations can be shown.")
 		}
@@ -378,13 +411,20 @@ func buildEstateWeeklyReport(history EstateHistory, opts EstateOptions, window e
 		}
 	}
 	if selected["traffic"] {
-		report.Traffic = traffic
+		report.Traffic = append([]estateReportTraffic(nil), traffic...)
+		if partialWeek {
+			for i := range report.Traffic {
+				report.Traffic[i].Previous, report.Traffic[i].Change = nil, nil
+				report.Traffic[i].PreviousCoveredDays = 0
+			}
+			warnings = append(warnings, "Today's traffic is unavailable until its complete-day query is verified. The current partial day is not reported as zero traffic.")
+		}
 		warnings = append(warnings, "Traffic is reported per configured monitoring target with its exclusions. Targets may overlap and must not be added into an estate-wide unique total. Changing target scope can affect comparisons.")
 		warnings = append(warnings, "Weekly traffic includes only verified complete-day queries retained while Weekly Estate Reports were enabled for this PCE, organization, timezone and exclusion settings. Legacy traffic history has no estate provenance and is excluded; missing days remain unavailable until a successful daily or manual reconciliation verifies them.")
 	}
 	if selected["changes"] {
 		for _, change := range history.Changes {
-			if estateWindowContains(change.At, window) {
+			if estateWindowContains(estateChangeObservedAt(change), window) {
 				report.Changes = append(report.Changes, change)
 			}
 		}
@@ -582,6 +622,29 @@ func renderEstateReportHTML(report estateWeeklyReport, theme string) ([]byte, er
 		theme = "dark"
 	}
 	funcs := template.FuncMap{
+		"changeObservedAt": estateChangeObservedAt,
+		"reportTitle": func() string {
+			if report.Kind == "on_demand" {
+				return "On-demand Estate Report"
+			}
+			return "Weekly Estate Report"
+		},
+		"expectedDays": func() int {
+			if report.Quality.ExpectedDays > 0 {
+				return report.Quality.ExpectedDays
+			}
+			return 7 // Frozen reports saved before elapsed-day coverage was added.
+		},
+		"observationAge": func() string {
+			if report.ObservationAt == nil || report.ObservationAt.IsZero() {
+				return "unavailable"
+			}
+			age := report.GeneratedAt.Sub(*report.ObservationAt)
+			if age < time.Minute {
+				return "less than one minute"
+			}
+			return fmt.Sprintf("%d minutes", int(age/time.Minute))
+		},
 		"selected": func(name string) bool {
 			for _, section := range report.Sections {
 				if section == name {
@@ -636,18 +699,19 @@ func renderEstateReportHTML(report estateWeeklyReport, theme string) ([]byte, er
 }
 
 const estateReportHTML = `<!doctype html>
-<html lang="en" data-theme="{{.Theme}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Weekly Estate Report — {{.Report.Window.FirstDay}}</title>
+<html lang="en" data-theme="{{.Theme}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{reportTitle}} — {{.Report.Window.FirstDay}}</title>
 <style>
 :root{color-scheme:dark;--bg:#171a1b;--surface:#222627;--text:#f5f4f0;--muted:#b3b8b6;--border:#3f4647;--accent:#ff6b2b}
 [data-theme="illumio-light"]{color-scheme:light;--bg:#f5f3ee;--surface:#fff;--text:#272b2d;--muted:#6d706f;--border:#d7d1c5;--accent:#f26322}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 system-ui,-apple-system,sans-serif}main{max-width:1180px;margin:auto;padding:32px}header{border-bottom:3px solid var(--accent);margin-bottom:24px;padding-bottom:20px}h1{font-size:30px;margin:8px 0}h2{font-size:22px;margin:0 0 16px}h3{margin:24px 0 10px}p{margin:8px 0}.eyebrow{text-transform:uppercase;letter-spacing:.16em;font-size:12px;color:var(--accent)}.muted{color:var(--muted)}section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:22px;break-inside:avoid}.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{border:1px solid var(--border);border-radius:8px;padding:16px}.number{font-size:30px;font-weight:700;color:var(--accent)}table{border-collapse:collapse;width:100%;margin:12px 0}th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}th{color:var(--muted);font-weight:600}td{overflow-wrap:anywhere}.notice{border-left:3px solid var(--accent);padding-left:14px}footer{font-size:12px;color:var(--muted);padding-top:12px}ul{padding-left:24px}.scroll{overflow-x:auto}@media(max-width:650px){main{padding:16px}.cards{grid-template-columns:1fr}section{padding:16px}}@media print{body{background:#fff!important;color:#162126!important}main{max-width:none;padding:0}section{background:#fff!important;color:#162126!important;border-color:#ddd;box-shadow:none;break-inside:auto}.muted,th,footer{color:#4b5563!important}.number,.eyebrow{color:#ad4600!important}table{font-size:11px}thead{display:table-header-group}tr{break-inside:avoid}h2,h3{break-after:avoid}header{break-after:avoid}@page{margin:15mm}
-</style></head><body><main><header><div class="eyebrow">Illumio Monitoring Dashboard</div><h1>Weekly Estate Report</h1><p>{{.Report.Window.FirstDay}} through {{.Report.Window.LastDay}} · {{.Report.Timezone}}</p><p class="muted">Compared with {{.Report.PreviousWindow.FirstDay}} through {{.Report.PreviousWindow.LastDay}}. Generated {{date .Report.GeneratedAt}}.</p><p class="notice">{{.Report.Quality.CoveredDays}} of 7 days have retained observations. Counts describe observed data; missing periods are unknown, not zero.</p></header>
-{{if selected "estate"}}<section id="estate"><h2>Estate overview</h2>{{with .Report.Estate}}<p class="muted">Inventory observed {{date .ObservedAt}}{{with .PreviousObservedAt}}; comparison observed {{date .}}{{end}}. Management does not imply enforcement.</p><div class="cards"><div class="card">Total workloads<div class="number">{{.Total.Current}}</div><span class="muted">Week-over-week {{signed .Total.Change}}</span></div><div class="card">Managed<div class="number">{{.Managed.Current}}</div><span class="muted">Week-over-week {{signed .Managed.Change}}</span></div><div class="card">Unmanaged<div class="number">{{.Unmanaged.Current}}</div><span class="muted">Week-over-week {{signed .Unmanaged.Change}}</span></div></div><h3>VEN version distribution</h3>{{if .VersionsAvailable}}<p class="muted">{{.VENCount}} unique deployed VENs, grouped by version. A VEN shared by workload records is counted once. Missing version information is shown as Unknown.</p><table><thead><tr><th>VEN version</th><th>Total deployed VENs</th></tr></thead><tbody>{{range .Versions}}<tr><td>{{.Version}}</td><td>{{.Total}}</td></tr>{{else}}<tr><td colspan="2">No deployed VENs in this inventory snapshot.</td></tr>{{end}}</tbody></table>{{else}}<p>Version distribution was not collected for this observation. It is unavailable, not zero deployed VENs.</p>{{end}}<h3>Managed workload enforcement</h3><table><thead><tr><th>Mode</th><th>Workloads</th></tr></thead><tbody>{{range $mode,$count := .Enforcement}}<tr><td>{{$mode}}</td><td>{{$count}}</td></tr>{{end}}</tbody></table>{{else}}<p>No complete inventory observation is available for this week.</p>{{end}}</section>{{end}}
-{{if selected "health"}}<section id="health"><h2>VEN health</h2>{{with .Report.Health}}<p class="muted">{{.Description}}</p><table><thead><tr><th>Status</th><th>Distinct observed workloads</th><th>Previous week</th></tr></thead><tbody>{{range $kind,$count := .UniqueAffected}}<tr><td>{{$kind}}</td><td>{{$count}}</td><td>{{previousHealth $kind}}</td></tr>{{else}}<tr><td colspan="3">Health history was not collected successfully for this week.</td></tr>{{end}}</tbody></table>{{else}}<p>No health observation is available for this week.</p>{{end}}</section>{{end}}
-{{if selected "policy"}}<section id="policy"><h2>Policy overview</h2><p class="muted">Active and draft represent policy versions. Their counts must not be added into a single unique total.</p>{{with .Report.Policy}}<p>Observed {{date .At}}</p><table><thead><tr><th>Version</th><th>Rulesets</th><th>Rules</th></tr></thead><tbody><tr><td>Active</td>{{if .Active.Complete}}<td>{{.Active.Rulesets}}</td><td>{{.Active.Rules}}</td>{{else}}<td colspan="2">Unavailable / incomplete</td>{{end}}</tr><tr><td>Draft</td>{{if .Draft.Complete}}<td>{{.Draft.Rulesets}}</td><td>{{.Draft.Rules}}</td>{{else}}<td colspan="2">Unavailable / incomplete</td>{{end}}</tr></tbody></table><p>Last observed provisioning time: {{date .LastProvisionedAt}}</p><h3>Pending changes at this observation</h3>{{if .PendingComplete}}<table><thead><tr><th>Object</th><th>Kind</th><th>Change</th></tr></thead><tbody>{{range .Pending}}<tr><td>{{.Name}}</td><td>{{.Kind}}</td><td>{{.Operation}}</td></tr>{{else}}<tr><td colspan="3">No pending changes.</td></tr>{{end}}</tbody></table>{{else}}<p>Pending changes are unavailable or incomplete.</p>{{end}}{{else}}<p>No active/draft policy observation is available for this week. Enable Policy Insights to collect it.</p>{{end}}</section>{{end}}
-{{if selected "traffic"}}<section id="traffic"><h2>Monitored blocked traffic</h2><p class="notice">Targets may overlap. Counts are per target, after configured exclusions, and are not added into an estate-wide total. Partial-week counts must not be compared with complete weeks.</p><p class="muted">Only verified complete-day queries retained for this PCE, organization, timezone and exclusion settings are included. Legacy history without this provenance is excluded; successful daily or manual reconciliation can verify missing days.</p><div class="scroll"><table><thead><tr><th>Target</th><th>Observed total</th><th>Covered days</th><th>Previous complete week</th><th>Change</th></tr></thead><tbody>{{range .Report.Traffic}}<tr><td>{{.Target}}</td><td>{{if .CoveredDays}}{{.Total}}{{else}}Unavailable{{end}}</td><td>{{.CoveredDays}} / 7</td><td>{{previous .Previous}}</td><td>{{signed .Change}}</td></tr>{{else}}<tr><td colspan="5">No monitored target history is available.</td></tr>{{end}}</tbody></table></div></section>{{end}}
-{{if selected "changes"}}<section id="changes"><h2>Estate change log</h2><p class="muted">Observed changes since the retained baseline; first-time inventory is not treated as newly added workloads.</p><table><thead><tr><th>Observed</th><th>Workload / object</th><th>Change</th><th>Before</th><th>After</th></tr></thead><tbody>{{range .Report.Changes}}<tr><td>{{date .At}}</td><td>{{.Name}}</td><td>{{.Kind}}</td><td>{{.Before}}</td><td>{{.After}}</td></tr>{{else}}<tr><td colspan="5">No retained changes in this week. See data quality for collection availability.</td></tr>{{end}}</tbody></table></section>{{end}}
-{{if selected "quality"}}<section id="quality"><h2>Data quality and scope</h2><p>This week: {{.Report.Quality.CoveredDays}} / 7 days with observations. Previous week: {{.Report.Quality.PreviousCoveredDays}} / 7.</p>{{with .Report.Quality.FirstObservation}}<p>First observation: {{date .}}</p>{{end}}{{with .Report.Quality.LastObservation}}<p>Last observation: {{date .}}</p>{{end}}{{with .Report.Quality.MissingDays}}<p>Missing days: {{range $i,$day := .}}{{if $i}}, {{end}}{{$day}}{{end}}</p>{{end}}<ul>{{range .Report.Quality.Warnings}}<li>{{.}}</li>{{end}}</ul></section>{{end}}
+</style></head><body><main><header><div class="eyebrow">Illumio Monitoring Dashboard</div><h1>{{reportTitle}}</h1><p>{{.Report.Window.FirstDay}} through {{.Report.Window.LastDay}} · {{.Report.Timezone}}{{if .Report.PartialWeek}} · Current partial week{{end}}</p><p class="muted">{{if not .Report.PartialWeek}}Compared with {{.Report.PreviousWindow.FirstDay}} through {{.Report.PreviousWindow.LastDay}}. {{end}}Generated {{date .Report.GeneratedAt}}.</p>{{with .Report.ObservationAt}}<p class="notice">Latest estate observation: {{date .}} ({{observationAge}} before report generation). This report uses retained collections, not a fresh PCE query.</p>{{end}}{{if .Report.PartialWeek}}<p class="muted">Week-over-week comparisons are omitted for this partial week. {{if .Report.SetsChangeBaseline}}This saved report can establish the change baseline at its observation timestamp; a newer baseline remains unchanged.{{else}}The estate change baseline is unchanged.{{end}}</p>{{end}}<p class="notice">{{.Report.Quality.CoveredDays}} of {{expectedDays}} {{if .Report.PartialWeek}}elapsed {{end}}days have retained observations. Counts describe observed data; missing periods are unknown, not zero.</p></header>
+{{if selected "estate"}}<section id="estate"><h2>Estate overview</h2>{{with .Report.Estate}}<p class="muted">Inventory observed {{date .ObservedAt}}{{with .PreviousObservedAt}}; comparison observed {{date .}}{{end}}. Management does not imply enforcement.</p><div class="cards"><div class="card">Total workloads<div class="number">{{.Total.Current}}</div>{{if not $.Report.PartialWeek}}<span class="muted">Week-over-week {{signed .Total.Change}}</span>{{end}}</div><div class="card">Managed<div class="number">{{.Managed.Current}}</div>{{if not $.Report.PartialWeek}}<span class="muted">Week-over-week {{signed .Managed.Change}}</span>{{end}}</div><div class="card">Unmanaged<div class="number">{{.Unmanaged.Current}}</div>{{if not $.Report.PartialWeek}}<span class="muted">Week-over-week {{signed .Unmanaged.Change}}</span>{{end}}</div></div><h3>VEN version distribution</h3>{{if .VersionsAvailable}}<p class="muted">{{.VENCount}} unique deployed VENs, grouped by version. A VEN shared by workload records is counted once. Missing version information is shown as Unknown.</p><table><thead><tr><th>VEN version</th><th>Total deployed VENs</th></tr></thead><tbody>{{range .Versions}}<tr><td>{{.Version}}</td><td>{{.Total}}</td></tr>{{else}}<tr><td colspan="2">No deployed VENs in this inventory snapshot.</td></tr>{{end}}</tbody></table>{{else}}<p>Version distribution was not collected for this observation. It is unavailable, not zero deployed VENs.</p>{{end}}<h3>Managed workload enforcement</h3><table><thead><tr><th>Mode</th><th>Workloads</th></tr></thead><tbody>{{range $mode,$count := .Enforcement}}<tr><td>{{$mode}}</td><td>{{$count}}</td></tr>{{end}}</tbody></table>{{else}}<p>No complete inventory observation is available for this week.</p>{{end}}</section>{{end}}
+{{if selected "health"}}<section id="health"><h2>VEN health</h2>{{with .Report.Health}}<p class="muted">{{.Description}}</p><table><thead><tr><th>Status</th><th>Distinct observed workloads</th>{{if not $.Report.PartialWeek}}<th>Previous week</th>{{end}}</tr></thead><tbody>{{range $kind,$count := .UniqueAffected}}<tr><td>{{$kind}}</td><td>{{$count}}</td>{{if not $.Report.PartialWeek}}<td>{{previousHealth $kind}}</td>{{end}}</tr>{{else}}<tr><td colspan="3">Health history was not collected successfully for this week.</td></tr>{{end}}</tbody></table>{{else}}<p>No health observation is available for this week.</p>{{end}}</section>{{end}}
+{{if selected "policy"}}<section id="policy"><h2>Policy overview</h2><p class="muted">Active and draft represent policy versions. Their counts must not be added into a single unique total.</p>{{with .Report.Policy}}<p>Observed {{date .At}}</p><table><thead><tr><th>Version</th><th>Rulesets</th><th>Rules</th></tr></thead><tbody><tr><td>Active</td>{{if .Active.Complete}}<td>{{.Active.Rulesets}}</td><td>{{.Active.Rules}}</td>{{else}}<td colspan="2">Unavailable / incomplete</td>{{end}}</tr><tr><td>Draft</td>{{if .Draft.Complete}}<td>{{.Draft.Rulesets}}</td><td>{{.Draft.Rules}}</td>{{else}}<td colspan="2">Unavailable / incomplete</td>{{end}}</tr></tbody></table><p>Last observed provisioning time: {{date .LastProvisionedAt}}</p><h3>Pending policy changes</h3><p class="muted">Affected rulesets and individual rules awaiting provisioning, not the full draft inventory. Rule counts compare active and draft definitions within pending rulesets; incomplete counts are unavailable, not zero.</p>{{with .PendingCounts}}<table><thead><tr><th>Objects</th><th>Total affected</th><th>Added</th><th>Modified</th><th>Deleted</th></tr></thead><tbody><tr><td>Rulesets</td>{{if .Rulesets.Complete}}<td>{{.Rulesets.Total}}</td><td>{{.Rulesets.Added}}</td><td>{{.Rulesets.Modified}}</td><td>{{.Rulesets.Deleted}}</td>{{else}}<td colspan="4">Unavailable / incomplete</td>{{end}}</tr><tr><td>Rules</td>{{if .Rules.Complete}}<td>{{.Rules.Total}}</td><td>{{.Rules.Added}}</td><td>{{.Rules.Modified}}</td><td>{{.Rules.Deleted}}</td>{{else}}<td colspan="4">Unavailable / incomplete</td>{{end}}</tr></tbody></table>{{range .Warnings}}<p class="notice">{{.}}</p>{{end}}{{else}}<p>Pending change counts were not collected for this observation. They are unavailable, not zero.</p>{{end}}<h3>Pending objects at this observation</h3>{{if .PendingComplete}}<table><thead><tr><th>Object</th><th>Kind</th><th>Change</th></tr></thead><tbody>{{range .Pending}}<tr><td>{{.Name}}</td><td>{{.Kind}}</td><td>{{.Operation}}</td></tr>{{else}}<tr><td colspan="3">No pending changes.</td></tr>{{end}}</tbody></table>{{else}}<p>Pending changes are unavailable or incomplete.</p>{{end}}{{else}}<p>No active/draft policy observation is available for this week. Enable Policy Insights to collect it.</p>{{end}}</section>{{end}}
+{{if selected "traffic"}}<section id="traffic"><h2>Monitored blocked traffic</h2><p class="notice">Targets may overlap. Counts are per target, after configured exclusions, and are not added into an estate-wide total. Partial-week counts must not be compared with complete weeks.</p><p class="muted">Only verified complete-day queries retained for this PCE, organization, timezone and exclusion settings are included. Legacy history without this provenance is excluded; successful daily or manual reconciliation can verify missing days.{{if .Report.PartialWeek}} Today's partial day is unavailable until a complete-day query is verified.{{end}}</p><div class="scroll"><table><thead><tr><th>Target</th><th>Observed total</th><th>Covered days</th>{{if not .Report.PartialWeek}}<th>Previous complete week</th><th>Change</th>{{end}}</tr></thead><tbody>{{range .Report.Traffic}}<tr><td>{{.Target}}</td><td>{{if .CoveredDays}}{{.Total}}{{else}}Unavailable{{end}}</td><td>{{.CoveredDays}} / {{expectedDays}}{{if $.Report.PartialWeek}} elapsed days{{end}}</td>{{if not $.Report.PartialWeek}}<td>{{previous .Previous}}</td><td>{{signed .Change}}</td>{{end}}</tr>{{else}}<tr><td colspan="5">No monitored target history is available.</td></tr>{{end}}</tbody></table></div></section>{{end}}
+{{if selected "changes"}}<section id="changes"><h2>Estate change log</h2><p class="muted">Changes first observed during the reporting period; first-time inventory is not treated as newly added workloads. A provisioning event can be observed later than its PCE event timestamp, retained in the before/after values.</p><table><thead><tr><th>Observed</th><th>Workload / object</th><th>Change</th><th>Before</th><th>After</th></tr></thead><tbody>{{range .Report.Changes}}<tr><td>{{date (changeObservedAt .)}}</td><td>{{.Name}}</td><td>{{.Kind}}</td><td>{{.Before}}</td><td>{{.After}}</td></tr>{{else}}<tr><td colspan="5">No retained changes in this week. See data quality for collection availability.</td></tr>{{end}}</tbody></table></section>{{end}}
+{{if selected "quality"}}<section id="quality"><h2>Data quality and scope</h2><p>This week: {{.Report.Quality.CoveredDays}} / {{expectedDays}} {{if .Report.PartialWeek}}elapsed {{end}}days with observations.{{if not .Report.PartialWeek}} Previous week: {{.Report.Quality.PreviousCoveredDays}} / 7.{{end}}</p>{{with .Report.Quality.FirstObservation}}<p>First observation: {{date .}}</p>{{end}}{{with .Report.Quality.LastObservation}}<p>Last observation: {{date .}}</p>{{end}}{{with .Report.Quality.MissingDays}}<p>Missing days: {{range $i,$day := .}}{{if $i}}, {{end}}{{$day}}{{end}}</p>{{end}}<ul>{{range .Report.Quality.Warnings}}<li>{{.}}</li>{{end}}</ul></section>{{end}}
+{{if not (selected "quality")}}{{with .Report.Quality.Warnings}}<section id="data-notes"><h2>Important data notes</h2><ul>{{range .}}<li>{{.}}</li>{{end}}</ul></section>{{end}}{{end}}
 <footer>Illumio Monitoring Dashboard {{.Report.Version}} · Frozen report generated {{date .Report.GeneratedAt}} · Use your browser’s Print / Save as PDF command to create a PDF.</footer></main></body></html>`
 
 type estateReportRun struct {
@@ -662,11 +726,14 @@ type estateReportRun struct {
 }
 
 type estateReportRunSummary struct {
-	ID        string    `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	State     string    `json:"state"`
-	Week      string    `json:"week"`
-	Message   string    `json:"message,omitempty"`
+	ID                 string     `json:"id"`
+	CreatedAt          time.Time  `json:"created_at"`
+	State              string     `json:"state"`
+	Week               string     `json:"week"`
+	Message            string     `json:"message,omitempty"`
+	Kind               string     `json:"kind,omitempty"`
+	ObservationAt      *time.Time `json:"observation_at,omitempty"`
+	SetsChangeBaseline bool       `json:"sets_change_baseline"`
 }
 
 var estateReportScheduleMu sync.Mutex
@@ -756,6 +823,7 @@ func runEstateReportSchedule(now time.Time, opts EstateOptions, loc *time.Locati
 		return err
 	}
 	report := buildEstateWeeklyReport(history, opts, window, sections, now, traffic)
+	report.ID = id
 	run := estateReportRun{ID: id, Scope: history.Scope, CreatedAt: now.UTC(), State: "generated", Report: report, Message: "Saved locally. Webhook delivery has not been attempted."}
 	if !opts.WeeklyWebhookEnabled {
 		run.Message = "Saved locally. Webhook delivery was not enabled."
@@ -853,7 +921,8 @@ func handleEstateReportRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	scope := estateHistoryCopy().Scope
+	history := estateHistoryCopy()
+	scope, timezone := history.Scope, history.Timezone
 	if id := r.URL.Query().Get("id"); id != "" {
 		path, err := estateReportRunPath(id)
 		if err != nil {
@@ -862,10 +931,11 @@ func handleEstateReportRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		data, err := os.ReadFile(path)
 		var run estateReportRun
-		if err != nil || json.Unmarshal(data, &run) != nil || run.Scope != scope {
+		if err != nil || json.Unmarshal(data, &run) != nil || run.Scope != scope || run.Report.Timezone != timezone {
 			http.Error(w, "report not found", http.StatusNotFound)
 			return
 		}
+		run.Report.ID = run.ID // Legacy frozen reports store identity only in the envelope.
 		writeEstateReport(w, r, run.Report)
 		return
 	}
@@ -885,10 +955,10 @@ func handleEstateReportRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		data, err := os.ReadFile(path)
 		var run estateReportRun
-		if err != nil || json.Unmarshal(data, &run) != nil || run.Scope != scope {
+		if err != nil || json.Unmarshal(data, &run) != nil || run.Scope != scope || run.Report.Timezone != timezone {
 			continue
 		}
-		runs = append(runs, estateReportRunSummary{ID: run.ID, CreatedAt: run.CreatedAt, State: run.State, Week: run.Report.Window.FirstDay, Message: run.Message})
+		runs = append(runs, estateReportRunSummary{ID: run.ID, CreatedAt: run.CreatedAt, State: run.State, Week: run.Report.Window.FirstDay, Message: run.Message, Kind: run.Report.Kind, ObservationAt: run.Report.ObservationAt, SetsChangeBaseline: run.Report.SetsChangeBaseline})
 	}
 	sort.Slice(runs, func(i, j int) bool { return runs[i].CreatedAt.After(runs[j].CreatedAt) })
 	w.Header().Set("Content-Type", "application/json")
@@ -957,7 +1027,11 @@ func writeEstateReport(w http.ResponseWriter, r *http.Request, report estateWeek
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="Illumio_Weekly_Estate_%s.html"`, report.Window.FirstDay))
+		filename := fmt.Sprintf("Illumio_Weekly_Estate_%s.html", report.Window.FirstDay)
+		if report.Kind == "on_demand" {
+			filename = fmt.Sprintf("Illumio_Estate_On_Demand_%s.html", report.GeneratedAt.UTC().Format("20060102_150405"))
+		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 		_, _ = w.Write(body)
 	case "", "json":
 		w.Header().Set("Content-Type", "application/json")

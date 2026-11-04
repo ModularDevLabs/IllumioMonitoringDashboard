@@ -62,13 +62,14 @@ type EstatePolicyChange struct {
 }
 
 type EstatePolicy struct {
-	At                time.Time            `json:"at"`
-	Active            EstatePolicyCount    `json:"active"`
-	Draft             EstatePolicyCount    `json:"draft"`
-	Pending           []EstatePolicyChange `json:"pending"`
-	PendingComplete   bool                 `json:"pending_complete"`
-	LastProvisionedAt time.Time            `json:"last_provisioned_at,omitempty,omitzero"`
-	Warnings          []string             `json:"warnings"`
+	At                time.Time                  `json:"at"`
+	Active            EstatePolicyCount          `json:"active"`
+	Draft             EstatePolicyCount          `json:"draft"`
+	Pending           []EstatePolicyChange       `json:"pending"`
+	PendingComplete   bool                       `json:"pending_complete"`
+	PendingCounts     *EstatePendingPolicyCounts `json:"pending_counts,omitempty"`
+	LastProvisionedAt time.Time                  `json:"last_provisioned_at,omitempty,omitzero"`
+	Warnings          []string                   `json:"warnings"`
 }
 
 type EstateIssue struct {
@@ -85,12 +86,24 @@ type EstateIssue struct {
 }
 
 type EstateChange struct {
-	At         time.Time `json:"at"`
-	WorkloadID string    `json:"workload_id"`
-	Name       string    `json:"name"`
-	Kind       string    `json:"kind"`
-	Before     string    `json:"before,omitempty"`
-	After      string    `json:"after,omitempty"`
+	At         time.Time  `json:"at"`
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
+	WorkloadID string     `json:"workload_id"`
+	Name       string     `json:"name"`
+	Kind       string     `json:"kind"`
+	Before     string     `json:"before,omitempty"`
+	After      string     `json:"after,omitempty"`
+}
+
+// At preserves the source event time when known. Cached policy observations
+// may discover an earlier provisioning event after a report was saved, so
+// report-relative counts and retention use the time it was actually observed.
+// Older history and inventory changes have no separate observation timestamp.
+func estateChangeObservedAt(change EstateChange) time.Time {
+	if change.ObservedAt != nil && !change.ObservedAt.IsZero() {
+		return *change.ObservedAt
+	}
+	return change.At
 }
 
 type EstateSnapshot struct {
@@ -143,12 +156,16 @@ type EstateView struct {
 }
 
 // The dashboard counter is a view of retained events, not a new history store.
-// Since is the exclusive end of the last saved report's reporting period.
+// Since is a completed week's exclusive end, or an explicitly selected
+// on-demand report's observation timestamp (whose events are already included).
 type EstateChangesSinceReport struct {
-	Status     string    `json:"status"`
-	Count      int       `json:"count"`
-	Since      time.Time `json:"since,omitempty,omitzero"`
-	ReportWeek string    `json:"report_week,omitempty"`
-	Partial    bool      `json:"partial"`
-	Warning    string    `json:"warning,omitempty"`
+	Status        string     `json:"status"`
+	Count         int        `json:"count"`
+	Since         time.Time  `json:"since,omitempty,omitzero"`
+	ReportWeek    string     `json:"report_week,omitempty"`
+	Partial       bool       `json:"partial"`
+	Warning       string     `json:"warning,omitempty"`
+	BaselineKind  string     `json:"baseline_kind,omitempty"`
+	ReportID      string     `json:"report_id,omitempty"`
+	ObservationAt *time.Time `json:"observation_at,omitempty"`
 }

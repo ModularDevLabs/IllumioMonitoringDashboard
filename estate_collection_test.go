@@ -270,6 +270,7 @@ func TestEstatePolicyVersionDirectLookupAndFallback(t *testing.T) {
 func TestEstatePolicyCacheRetriesFailuresOnNextSample(t *testing.T) {
 	at := time.Now()
 	policy := &EstatePolicy{Active: EstatePolicyCount{Complete: true}, Draft: EstatePolicyCount{Complete: true}, PendingComplete: true}
+	policy.PendingCounts = &EstatePendingPolicyCounts{Rulesets: EstatePendingPolicyDelta{Complete: true}, Rules: EstatePendingPolicyDelta{Complete: true}}
 	if estatePolicyRefreshDue(policy, at, at.Add(5*time.Minute)) || !estatePolicyRefreshDue(policy, at, at.Add(15*time.Minute)) {
 		t.Fatal("successful policy inventory should be cached for fifteen minutes")
 	}
@@ -285,8 +286,23 @@ func TestEstatePolicyCacheRetriesFailuresOnNextSample(t *testing.T) {
 func TestEstatePolicyLargeAsyncInventoriesRemainSeparate(t *testing.T) {
 	active, draft := estateCollectionFixture(601), estateCollectionFixture(803)
 	pending := estateCollectionFixture(507)
-	for _, row := range pending {
-		row["update_type"] = "update"
+	for state, rows := range map[string][]map[string]interface{}{"active": active, "draft": draft} {
+		for i := range rows {
+			id := fmt.Sprint(i)
+			port := 443
+			if state == "draft" && i < 305 {
+				port = 8443
+			}
+			rows[i] = estatePendingTestRuleset(state, id, estatePendingTestRule(state, id, "1", port), estatePendingTestRule(state, id, "2", 22))
+		}
+	}
+	for i, row := range pending {
+		id, operation := i, "update"
+		if i >= 305 {
+			id, operation = 601+i-305, "create"
+		}
+		row["href"] = fmt.Sprintf("/orgs/1/sec_policy/draft/rule_sets/%d", id)
+		row["update_type"] = operation
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertEstateCollectionRequest(t, r)
@@ -327,6 +343,9 @@ func TestEstatePolicyLargeAsyncInventoriesRemainSeparate(t *testing.T) {
 	}
 	if !policy.PendingComplete || len(policy.Pending) != 507 || policy.LastProvisionedAt.IsZero() || len(policy.Warnings) != 0 {
 		t.Fatalf("pending or provisioning history incomplete: %+v", policy)
+	}
+	if policy.PendingCounts == nil || !policy.PendingCounts.Rules.Complete || policy.PendingCounts.Rules.Modified != 305 || policy.PendingCounts.Rules.Added != 404 || policy.PendingCounts.Rulesets.Total != 507 {
+		t.Fatalf("large pending counts incomplete: %+v", policy.PendingCounts)
 	}
 }
 

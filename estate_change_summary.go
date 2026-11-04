@@ -51,24 +51,51 @@ func estateChangesSinceReport(history EstateHistory, options EstateOptions, now 
 			continue
 		}
 		window := run.Report.Window
-		// Validate a completed calendar week in its reporting timezone. In
-		// particular, a DST week need not be exactly 168 hours long.
-		expected, err := estateRequestedWeek(window.FirstDay, now, loc)
-		if err != nil || window.FirstDay != expected.FirstDay || !window.Start.Equal(expected.Start) || !window.End.Equal(expected.End) || window.LastDay != expected.LastDay {
+		boundary, exclusive := window.End, false
+		kind := "weekly"
+		if run.Report.Kind == "on_demand" {
+			// Only an explicitly opted-in, durable and internally consistent
+			// on-demand report establishes a baseline. Its collection timestamp,
+			// not its request/save time, prevents unobserved changes being skipped.
+			if !run.Report.SetsChangeBaseline || !run.Report.PartialWeek || run.State != "generated" || run.DeliveryAttemptedAt != nil || run.Report.ID != run.ID || run.ID != strings.TrimSuffix(entry.Name(), ".json") || run.Report.ObservationAt == nil || run.Report.ObservationAt.IsZero() || run.Report.GeneratedAt.IsZero() || run.Report.GeneratedAt.After(now) || run.CreatedAt.IsZero() || !run.CreatedAt.Equal(run.Report.GeneratedAt) {
+				continue
+			}
+			expected := estateCurrentWeek(run.Report.GeneratedAt, loc)
+			if !window.Start.Equal(expected.Start) || !window.End.Equal(expected.End) || window.FirstDay != expected.FirstDay || window.LastDay != expected.LastDay || !estateWindowContains(*run.Report.ObservationAt, window) || run.Report.ObservationAt.After(run.Report.GeneratedAt) || run.Report.Quality.LastObservation == nil || !run.Report.Quality.LastObservation.Equal(*run.Report.ObservationAt) {
+				continue
+			}
+			boundary, exclusive, kind = *run.Report.ObservationAt, true, "on_demand"
+		} else if run.Report.Kind == "" || run.Report.Kind == "weekly" {
+			// Validate a completed calendar week in its reporting timezone. In
+			// particular, a DST week need not be exactly 168 hours long.
+			expected, err := estateRequestedWeek(window.FirstDay, now, loc)
+			if err != nil || window.FirstDay != expected.FirstDay || !window.Start.Equal(expected.Start) || !window.End.Equal(expected.End) || window.LastDay != expected.LastDay {
+				continue
+			}
+			if run.Report.GeneratedAt.IsZero() || run.Report.GeneratedAt.Before(window.End) || run.Report.GeneratedAt.After(now) {
+				continue
+			}
+		} else {
 			continue
 		}
-		if run.Report.GeneratedAt.IsZero() || run.Report.GeneratedAt.Before(window.End) || run.Report.GeneratedAt.After(now) {
-			continue
-		}
-		if window.End.After(summary.Since) {
-			summary.Status, summary.Since, summary.ReportWeek = "available", window.End, window.FirstDay
+		// When boundaries tie, an on-demand report includes the instant itself;
+		// prefer its strict-after semantics over the weekly exclusive end.
+		if boundary.After(summary.Since) || (boundary.Equal(summary.Since) && exclusive && summary.BaselineKind != "on_demand") {
+			summary.Status, summary.Since, summary.ReportWeek = "available", boundary, window.FirstDay
+			summary.BaselineKind, summary.ReportID = kind, run.ID
+			summary.ObservationAt = run.Report.ObservationAt
 		}
 	}
 	if summary.Status != "available" {
 		return summary
 	}
 	for _, change := range history.Changes {
-		if !change.At.Before(summary.Since) && !change.At.After(now) {
+		observedAt := estateChangeObservedAt(change)
+		after := !observedAt.Before(summary.Since)
+		if summary.BaselineKind == "on_demand" {
+			after = observedAt.After(summary.Since)
+		}
+		if after && !observedAt.After(now) {
 			summary.Count++
 		}
 	}

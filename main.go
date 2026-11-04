@@ -959,6 +959,7 @@ func main() {
 	http.HandleFunc("/api/estate", withRequestTiming("api.estate", handleEstate))
 	http.HandleFunc("/api/estate/report", withRequestTiming("api.estate.report", handleEstateReport))
 	http.HandleFunc("/api/estate/report/snapshot", withRequestTiming("api.estate.report.snapshot", withTrustedOrigin("api.estate.report.snapshot", handleEstateReportSnapshot)))
+	http.HandleFunc("/api/estate/report/now", withRequestTiming("api.estate.report.now", withTrustedOrigin("api.estate.report.now", handleEstateReportNow)))
 	http.HandleFunc("/api/estate/report/runs", withRequestTiming("api.estate.report.runs", handleEstateReportRuns))
 	http.HandleFunc("/static/product-shell.css", extractor.ServeProductShellCSS)
 	http.HandleFunc("/static/product-shell.js", extractor.ServeProductShellJS)

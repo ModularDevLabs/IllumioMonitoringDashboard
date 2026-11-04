@@ -53,7 +53,14 @@
         const timezone = typeof report.timezone === 'string' && report.timezone.trim() ? report.timezone : 'UTC';
         const firstDay = calendarDay(period.first_day);
         const lastDay = calendarDay(period.last_day);
-        const subject = 'Illumio Weekly Estate Report: ' + firstDay + ' through ' + lastDay;
+        const onDemand = report.kind === 'on_demand';
+        // Legacy frozen weekly reports predate comparison_available; decoding
+        // them on the server can supply false without making them partial.
+        const comparisonAvailable = !onDemand && report.partial_week !== true;
+        const expectedDays = onDemand ? days(quality.expected_days) : 7;
+        const periodCoverage = value => days(value) === null || !expectedDays ? unavailable : String(value) + '/' + expectedDays;
+        const title = onDemand ? 'On-demand Estate Report' : 'Weekly Estate Report';
+        const subject = 'Illumio ' + title + ': ' + firstDay + ' through ' + lastDay;
         const html = [];
         const text = [];
 
@@ -95,11 +102,16 @@
         html.push('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f5f3ee" style="width:100%;border-collapse:collapse;background-color:#f5f3ee;"><tr><td align="center" bgcolor="#f5f3ee" style="padding:16px;background-color:#f5f3ee;">');
         html.push('<table role="presentation" width="720" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:720px;max-width:100%;border-collapse:collapse;background-color:#ffffff;"><tr><td bgcolor="#ffffff" style="padding:24px;border-top:5px solid #f26322;background-color:#ffffff;' + font + '">');
         paragraph('ILLUMIO MONITORING DASHBOARD', 'font-size:11px;font-weight:bold;letter-spacing:1px;color:#b74610;');
-        html.push('<h1 style="' + font + 'font-size:26px;line-height:32px;font-weight:bold;margin:0 0 12px 0;">Weekly Estate Report</h1>');
-        text.push('Weekly Estate Report', '');
+        html.push('<h1 style="' + font + 'font-size:26px;line-height:32px;font-weight:bold;margin:0 0 12px 0;">' + title + '</h1>');
+        text.push(title, '');
         paragraph(firstDay + ' through ' + lastDay + ' | ' + display(report.timezone));
-        paragraph('Compared with ' + calendarDay(comparison.first_day) + ' through ' + calendarDay(comparison.last_day) + '. Generated ' + timestamp(report.generated_at, timezone) + '.', muted);
-        paragraph('Observation coverage: ' + coverage(quality.covered_days) + ' days this week; ' + coverage(quality.previous_covered_days) + ' in the comparison week. Missing periods are unknown, not zero activity. A day with samples does not guarantee continuous coverage.', 'border-left:3px solid #f26322;padding-left:12px;');
+        if (comparisonAvailable) paragraph('Compared with ' + calendarDay(comparison.first_day) + ' through ' + calendarDay(comparison.last_day) + '. Generated ' + timestamp(report.generated_at, timezone) + '.', muted);
+        else paragraph('Partial current week; full-week comparisons are omitted. Generated ' + timestamp(report.generated_at, timezone) + '.', muted);
+        if (onDemand) {
+            paragraph('Data as of ' + timestamp(report.observation_at, timezone) + '. Uses retained observations; generating a report does not collect fresh PCE data.', muted);
+            paragraph(report.sets_change_baseline === true ? 'This saved report is selected to set the estate change baseline at its observation timestamp; an existing newer baseline is kept.' : 'This saved report does not change the estate change baseline.', muted);
+        }
+        paragraph('Observation coverage: ' + periodCoverage(quality.covered_days) + (onDemand ? ' elapsed days this week.' : ' days this week; ' + coverage(quality.previous_covered_days) + ' in the comparison week.') + ' Missing periods are unknown, not zero activity. A day with samples does not guarantee continuous coverage.', 'border-left:3px solid #f26322;padding-left:12px;');
         if (list(quality.missing_days).length) paragraph('Missing observation days: ' + quality.missing_days.map(calendarDay).join(', ') + '.', muted);
 
         if (selected.has('estate')) {
@@ -109,9 +121,10 @@
             } else {
                 const estate = object(report.estate);
                 paragraph('Latest retained inventory observation: ' + timestamp(estate.observed_at, timezone) + '. These are observed snapshot values, not exact week-end totals. Management does not imply enforcement.', muted);
-                if (estate.previous_observed_at) paragraph('Comparison inventory observation: ' + timestamp(estate.previous_observed_at, timezone) + '.', muted);
-                table(['Workloads', 'This week', 'Previous week', 'Change'], [['Total', 'total'], ['Managed', 'managed'], ['Unmanaged', 'unmanaged']].map(([label, key]) => {
+                if (comparisonAvailable && estate.previous_observed_at) paragraph('Comparison inventory observation: ' + timestamp(estate.previous_observed_at, timezone) + '.', muted);
+                table(comparisonAvailable ? ['Workloads', 'This week', 'Previous week', 'Change'] : ['Workloads', 'Latest observation'], [['Total', 'total'], ['Managed', 'managed'], ['Unmanaged', 'unmanaged']].map(([label, key]) => {
                     const metric = object(estate[key]);
+                    if (!comparisonAvailable) return [label, count(metric.current)];
                     const hasBaseline = validCount(metric.previous);
                     return [label, count(metric.current), count(metric.previous), hasBaseline && validCount(metric.current) ? signed(metric.change) : unavailable];
                 }));
@@ -142,7 +155,11 @@
             const current = object(health.unique_affected);
             const previous = object(health.previous_unique_affected);
             const names = { warning: 'Warning', error: 'Error', stopped: 'Stopped', suspended: 'Suspended', tampering: 'Tampering' };
-            if (Object.keys(current).length) table(['Status', 'Distinct observed workloads', 'Previous week'], Object.keys(current).sort().map(kind => [own(names, kind) ? names[kind] : display(kind), count(current[kind]), own(previous, kind) ? count(previous[kind]) : unavailable]));
+            if (Object.keys(current).length) table(comparisonAvailable ? ['Status', 'Distinct observed workloads', 'Previous week'] : ['Status', 'Distinct observed workloads'], Object.keys(current).sort().map(kind => {
+                const row = [own(names, kind) ? names[kind] : display(kind), count(current[kind])];
+                if (comparisonAvailable) row.push(own(previous, kind) ? count(previous[kind]) : unavailable);
+                return row;
+            }));
             else paragraph('No successfully collected health history is available for this week. Missing statuses are unavailable, not zero affected workloads.');
         }
 
@@ -154,12 +171,22 @@
                 const policy = object(report.policy);
                 const previous = object(report.previous_policy);
                 paragraph('Observed ' + timestamp(policy.at, timezone) + '.', muted);
-                table(['Policy version', 'Rulesets', 'Previous rulesets', 'Rules', 'Previous rules'], ['active', 'draft'].map(kind => {
+                paragraph('Draft policy inventory includes unchanged policy; it is not the number of pending changes.', muted);
+                table(comparisonAvailable ? ['Policy version', 'Rulesets', 'Previous rulesets', 'Rules', 'Previous rules'] : ['Policy version', 'Rulesets', 'Rules'], ['active', 'draft'].map(kind => {
                     const currentCount = object(policy[kind]);
                     const previousCount = object(previous[kind]);
+                    if (!comparisonAvailable) return [kind === 'active' ? 'Active' : 'Draft', currentCount.complete === true ? count(currentCount.rulesets) : unavailable, currentCount.complete === true ? count(currentCount.rules) : unavailable];
                     return [kind === 'active' ? 'Active' : 'Draft', currentCount.complete === true ? count(currentCount.rulesets) : unavailable, previousCount.complete === true ? count(previousCount.rulesets) : unavailable, currentCount.complete === true ? count(currentCount.rules) : unavailable, previousCount.complete === true ? count(previousCount.rules) : unavailable];
                 }));
                 paragraph('Last observed provisioning time: ' + timestamp(policy.last_provisioned_at, timezone) + '.');
+                heading('Pending policy counts', 3);
+                const pendingCounts = object(policy.pending_counts);
+                table(['Object type', 'Added', 'Modified', 'Deleted', 'Total affected'], ['rulesets', 'rules'].map(kind => {
+                    const delta = object(pendingCounts[kind]);
+                    return [kind === 'rulesets' ? 'Rulesets' : 'Rules', ...['added', 'modified', 'deleted', 'total'].map(key => delta.complete === true ? count(delta[key]) : unavailable)];
+                }));
+                if (object(pendingCounts.rulesets).complete !== true || object(pendingCounts.rules).complete !== true) paragraph('Pending counts are unavailable or incomplete; missing evidence is not zero changes.', muted);
+                notes(pendingCounts.warnings);
                 heading('Pending changes at this observation', 3);
                 if (policy.pending_complete !== true) paragraph('Pending changes are unavailable or incomplete.');
                 else if (!list(policy.pending).length) paragraph('No pending changes were observed.');
@@ -175,11 +202,12 @@
             const targets = list(report.traffic);
             if (!targets.length) paragraph('No verified monitored target history is available.');
             else {
-                table(['Target', 'Observed total', 'Days', 'Previous complete week', 'Change'], targets.map(raw => {
+                table(comparisonAvailable ? ['Target', 'Observed total', 'Days', 'Previous complete week', 'Change'] : ['Target', 'Observed total', 'Days'], targets.map(raw => {
                     const row = object(raw);
                     const observedDays = days(row.covered_days);
                     const completePrevious = row.previous_covered_days === 7;
                     const total = observedDays !== null && observedDays > 0 ? count(row.total) : unavailable;
+                    if (!comparisonAvailable) return [display(row.target), total + (observedDays > 0 ? ' (partial)' : ''), periodCoverage(row.covered_days)];
                     return [display(row.target), total + (observedDays > 0 && observedDays < 7 ? ' (partial)' : ''), coverage(row.covered_days), completePrevious ? count(row.previous) : unavailable, observedDays === 7 && completePrevious && validCount(row.previous) && validCount(row.total) ? signed(row.change) : unavailable];
                 }));
                 for (const raw of targets) { const row = object(raw); if (list(row.missing_days).length) paragraph('Missing verified days for ' + display(row.target) + ': ' + row.missing_days.map(calendarDay).join(', ') + '.', muted); }
@@ -192,7 +220,7 @@
             if (!list(report.changes).length) paragraph('No retained changes are available for this week. A disabled or incomplete change log does not establish that no changes occurred.');
             else table(['Observed', 'Workload / object', 'Change', 'Before', 'After'], report.changes.map(raw => {
                 const row = object(raw);
-                return [timestamp(row.at, timezone), display(row.name || row.workload_id), display(row.kind), display(row.before), display(row.after)];
+                return [timestamp(row.observed_at || row.at, timezone), display(row.name || row.workload_id), display(row.kind), display(row.before), display(row.after)];
             }));
         }
 

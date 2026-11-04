@@ -22,15 +22,18 @@ func TestEstatePreviewServer(t *testing.T) {
 	t.Chdir(t.TempDir())
 	dataDir = t.TempDir()
 	provisionedAt := time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)
+	rule := func(version, id string, port int) map[string]any {
+		return map[string]any{"href": "/orgs/1/sec_policy/" + version + "/rule_sets/1/sec_rules/" + id, "enabled": true, "providers": []any{}, "consumers": []any{}, "ingress_services": []any{map[string]any{"proto": 6, "port": port}}, "resolve_labels_as": map[string]any{"providers": []any{"workloads"}, "consumers": []any{"workloads"}}}
+	}
 	pce := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v2/orgs/1/sec_policy/active/rule_sets":
-			_ = json.NewEncoder(w).Encode([]any{map[string]any{"href": "/orgs/1/sec_policy/active/rule_sets/1", "name": "Payments", "rules": []any{map[string]any{"href": "/rules/1"}}}})
+			_ = json.NewEncoder(w).Encode([]any{map[string]any{"href": "/orgs/1/sec_policy/active/rule_sets/1", "name": "Payments", "rules": []any{rule("active", "1", 443)}}})
 		case "/api/v2/orgs/1/sec_policy/draft/rule_sets":
-			_ = json.NewEncoder(w).Encode([]any{map[string]any{"href": "/orgs/1/sec_policy/draft/rule_sets/1", "name": "Payments", "rules": []any{map[string]any{"href": "/rules/1"}, map[string]any{"href": "/rules/2"}}}})
+			_ = json.NewEncoder(w).Encode([]any{map[string]any{"href": "/orgs/1/sec_policy/draft/rule_sets/1", "name": "Payments", "rules": []any{rule("draft", "1", 8443), rule("draft", "2", 5432)}}})
 		case "/api/v2/orgs/1/sec_policy/pending":
-			_ = json.NewEncoder(w).Encode(map[string]any{"rule_sets": []any{map[string]any{"href": "/rule_sets/1", "name": "Payments", "update_type": "update", "updated_at": time.Now().UTC().Format(time.RFC3339)}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"rule_sets": []any{map[string]any{"href": "/orgs/1/sec_policy/draft/rule_sets/1", "name": "Payments", "update_type": "update", "updated_at": time.Now().UTC().Format(time.RFC3339)}}})
 		case "/api/v2/orgs/1/sec_policy/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{"href": "/orgs/1/sec_policy/12", "version": 12, "created_at": provisionedAt})
 		case "/api/v2/orgs/1/sec_policy":
@@ -97,6 +100,7 @@ func TestEstatePreviewServer(t *testing.T) {
 	mux.HandleFunc("/api/estate", handleEstate)
 	mux.HandleFunc("/api/estate/report", handleEstateReport)
 	mux.HandleFunc("/api/estate/report/snapshot", withTrustedOrigin("api.estate.report.snapshot", handleEstateReportSnapshot))
+	mux.HandleFunc("/api/estate/report/now", withTrustedOrigin("api.estate.report.now", handleEstateReportNow))
 	mux.HandleFunc("/api/estate/report/runs", handleEstateReportRuns)
 	mux.HandleFunc("/api/refresh", func(w http.ResponseWriter, r *http.Request) {
 		refresh()

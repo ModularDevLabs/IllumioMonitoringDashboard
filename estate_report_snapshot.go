@@ -56,6 +56,7 @@ func saveEstateReportSnapshot(now time.Time, opts EstateOptions, history EstateH
 		}
 		// Idempotency also preserves the original section selection and source
 		// observations if the collector has advanced since the first save.
+		run.Report.ID = run.ID
 		return run.Report, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return estateWeeklyReport{}, err
@@ -65,6 +66,7 @@ func saveEstateReportSnapshot(now time.Time, opts EstateOptions, history EstateH
 		return estateWeeklyReport{}, errEstateSnapshotUnobserved
 	}
 	report := buildEstateWeeklyReport(history, opts, window, sections, now, traffic)
+	report.ID = id
 	run := estateReportRun{
 		ID: id, Scope: history.Scope, CreatedAt: now.UTC(), State: "generated", Report: report,
 		Message: "Manual weekly snapshot saved locally. No webhook delivery was requested; scheduled delivery is unchanged.",

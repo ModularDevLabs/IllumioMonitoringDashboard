@@ -38,6 +38,56 @@ function deepFreeze(value) {
     return value;
 }
 
+test('on-demand email preserves capture context without full-week comparisons or future missing days', () => {
+    const report = fixture();
+    Object.assign(report, { kind: 'on_demand', partial_week: true, observation_at: '2026-11-04T15:00:00Z', generated_at: '2026-11-04T16:00:00Z', sets_change_baseline: false });
+    report.window = { first_day: '2026-11-02', last_day: '2026-11-04' };
+    Object.assign(report.quality, { covered_days: 2, expected_days: 3, comparison_available: false, missing_days: ['2026-11-03'], warnings: ['The latest observation is stale.'] });
+    const render = renderer();
+    const result = render(report);
+    assert.equal(result.subject, 'Illumio On-demand Estate Report: 2026-11-02 through 2026-11-04');
+    assert.match(result.text, /2\/3 elapsed days this week/);
+    assert.match(result.text, /Data as of Nov 4, 2026, 09:00 AM CST/);
+    assert.match(result.text, /does not collect fresh PCE data/);
+    assert.match(result.text, /does not change the estate change baseline/);
+    assert.match(result.text, /full-week comparisons are omitted/);
+    assert.doesNotMatch(result.text, /Compared with|Previous week|Previous rules|\+45|\+23,456/);
+    assert.match(result.text, /latest observation is stale/);
+    report.sets_change_baseline = true;
+    assert.match(render(report).text, /selected to set the estate change baseline at its observation timestamp; an existing newer baseline is kept/);
+});
+
+test('email separates full draft inventory from pending rules and affected rulesets', () => {
+    const report = fixture(); report.sections = ['policy'];
+    report.policy.pending_counts = {
+        rulesets: { added: 1, modified: 2, deleted: 1, total: 4, complete: true },
+        rules: { added: 3, modified: 4, deleted: 3, total: 10, complete: true }, warnings: []
+    };
+    const render = renderer();
+    const result = render(report);
+    assert.match(result.text, /Draft policy inventory includes unchanged policy/);
+    assert.match(result.text, /Rulesets \| 1 \| 2 \| 1 \| 4/);
+    assert.match(result.text, /Rules \| 3 \| 4 \| 3 \| 10/);
+    report.policy.pending_counts.rules.complete = false;
+    report.policy.pending_counts.warnings = ['Rule evidence incomplete.'];
+    const incomplete = render(report);
+    assert.match(incomplete.text, /Rules \| Unavailable \| Unavailable \| Unavailable \| Unavailable/);
+    assert.match(incomplete.text, /missing evidence is not zero changes/);
+    assert.match(incomplete.text, /Rule evidence incomplete/);
+    delete report.policy.pending_counts;
+    assert.match(render(report).text, /Rulesets \| Unavailable/);
+});
+
+test('delayed policy changes use their discovery time and legacy weekly comparisons remain available', () => {
+    const report = fixture(); report.sections = ['estate', 'changes'];
+    report.quality.comparison_available = false; // Legacy report decoded through a new Go struct.
+    report.changes = [{ at: '2026-10-29T12:05:00Z', observed_at: '2026-10-29T12:15:00Z', name: 'Policy provisioning', kind: 'policy_provisioned', before: 'old', after: 'new' }];
+    const result = renderer()(report);
+    assert.match(result.text, /Total \| 12,345 \| 12,300 \| \+45/);
+    assert.match(result.text, /Oct 29, 2026, 07:15 AM CDT \| Policy provisioning/);
+    assert.doesNotMatch(result.text, /07:05 AM CDT/);
+});
+
 test('email renderer is a pure function with the agreed fragment and alternative contract', () => {
     const render = renderer();
     const report = deepFreeze(fixture());

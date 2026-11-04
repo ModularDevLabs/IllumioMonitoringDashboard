@@ -4,9 +4,15 @@
     const byID = id => document.getElementById(id);
     let lastView = null;
     let loading = false;
+    let loadGeneration = 0;
+    let reportRunsGeneration = 0;
     let reportGeneration = 0;
     let reportHTML = '';
     let reportWeek = '';
+    let reportRunID = '';
+    let reportKind = '';
+    let reportObservation = '';
+    let savingReport = false;
     let reportLoaded = false;
     let reportEmail = null;
     let reportSelectionsInitialized = false;
@@ -126,6 +132,18 @@
         const coverage = snapshot.total > 0 ? (100 * snapshot.managed / snapshot.total).toFixed(1) + '% management coverage' : 'No workloads observed';
         return 'Managed: ' + count(snapshot.managed) + ' · Unmanaged: ' + count(snapshot.unmanaged) + ' · ' + coverage;
     }
+    function pendingPolicySummary(policy, kind) {
+        const summary = policy?.pending_counts?.[kind];
+        const valid = summary && ['added', 'modified', 'deleted', 'total'].every(key => Number.isInteger(summary[key]) && summary[key] >= 0);
+        if (!valid || summary.complete !== true) return { value: 'Unavailable / incomplete', detail: 'Awaiting a complete pending-change assessment; draft inventory is not the pending total.' };
+        return { value: count(summary.total), detail: 'Added: ' + count(summary.added) + ' · Modified: ' + count(summary.modified) + ' · Deleted: ' + count(summary.deleted) };
+    }
+    function pendingPolicyCards(parent, policy) {
+        for (const [kind, label] of [['rules', 'Pending rules'], ['rulesets', 'Pending rulesets']]) {
+            const summary = pendingPolicySummary(policy, kind);
+            kpi(parent, label, summary.value, summary.detail);
+        }
+    }
     function renderDashboard(view) {
         const inventory = byID('estate-inventory-breakdown');
         const row = byID('estate-dashboard-row');
@@ -150,7 +168,8 @@
         if (options.policy_enabled) {
             const policy = snapshot.policy;
             kpi(content, 'Active policy', policy?.active?.complete ? count(policy.active.rules) + ' rules' : 'Unavailable', policy?.active?.complete ? count(policy.active.rulesets) + ' rulesets' : 'Awaiting a complete policy collection');
-            kpi(content, 'Draft policy', policy?.draft?.complete ? count(policy.draft.rules) + ' rules' : 'Unavailable', 'Separate policy version; not added to active totals');
+            kpi(content, 'Draft policy inventory', policy?.draft?.complete ? count(policy.draft.rules) + ' rules' : 'Unavailable', (policy?.draft?.complete ? count(policy.draft.rulesets) + ' rulesets · ' : '') + 'Full draft inventory, not pending changes; not added to active totals');
+            pendingPolicyCards(content, policy);
         }
         if (options.ven_versions_enabled) {
             const available = snapshot.inventory_complete && snapshot.versions_collected === true;
@@ -166,17 +185,20 @@
         }
         if (options.change_log_enabled) {
             const changes = view.changes_since_report;
+            const onDemand = changes?.baseline_kind === 'on_demand';
+            const baselineName = onDemand ? 'on-demand report baseline' : 'last weekly report';
             let value = 'Awaiting report';
-            let description = options.weekly_report_enabled ? 'The first saved weekly report will establish the baseline.' : 'No saved weekly report baseline. Enable Weekly Estate Report in Settings to establish one.';
+            let description = options.weekly_report_enabled ? 'Save a completed-week snapshot, or choose Run report now with the change-baseline checkbox selected, to establish a baseline.' : 'No saved report baseline. Enable Weekly Estate Report in Settings, then save a weekly snapshot or explicitly select an on-demand change baseline.';
             if (changes?.status === 'available' && Number.isFinite(changes.count) && changes.count >= 0) {
                 value = count(changes.count) + (changes.partial ? ' observed (incomplete)' : '');
-                description = changes.since ? 'Since ' + timestamp(changes.since) : 'Changes observed after the last saved weekly report';
-                if (changes.report_week) description += ' · Report week: ' + changes.report_week;
+                description = changes.since ? 'Since ' + timestamp(changes.since) : 'Changes observed after the ' + (onDemand ? 'on-demand report baseline' : 'last saved weekly report');
+                if (onDemand) description += ' · Explicitly selected on-demand baseline' + (changes.observation_at ? ' · Observation: ' + timestamp(changes.observation_at) : '');
+                else if (changes.report_week) description += ' · Report week: ' + changes.report_week;
             } else if (changes && changes.status !== 'awaiting_report') {
                 value = 'Unavailable';
-                description = 'Unable to determine changes since the last saved weekly report.';
+                description = 'Unable to determine changes since the ' + baselineName + '.';
             }
-            const card = kpi(content, 'Changes since last weekly report', value, description);
+            const card = kpi(content, 'Changes since ' + baselineName, value, description);
             if (changes?.warning) note(card, changes.warning, true);
         }
         if (options.weekly_report_enabled) kpi(content, 'Weekly Estate Report', 'Enabled', 'Includes deployed VEN version totals');
@@ -225,14 +247,17 @@
         const section = panel(parent, 'Active & Draft Policy');
         const policy = snapshot?.policy;
         if (!policy) { note(section, 'Policy data is not yet available.'); return; }
-        note(section, 'Active and draft are separate versions of policy objects. They are not added together as a unique policy total.');
+        note(section, 'Active and draft are separate versions of policy objects. They are not added together as a unique policy total. Draft inventory includes unchanged objects and is not the pending-change count.');
         table(section, ['Policy version', 'Rulesets', 'Rules', 'Collection'], ['active', 'draft'].map(key => {
             const value = policy[key] || {};
             return [key === 'active' ? 'Active' : 'Draft', value.complete ? count(value.rulesets) : '—', value.complete ? count(value.rules) : '—', value.complete ? 'Complete' : 'Unavailable / incomplete'];
         }));
         note(section, 'Last observed provisioning: ' + timestamp(policy.last_provisioned_at) + ' · Policy observation: ' + timestamp(policy.at));
-        (policy.warnings || []).forEach(warning => note(section, warning, true));
+        new Set([...(policy.warnings || []), ...(policy.pending_counts?.warnings || [])]).forEach(warning => note(section, warning, true));
         section.appendChild(node('h3', 'Pending changes'));
+        const pendingGrid = node('div', undefined, 'estate-grid');
+        section.appendChild(pendingGrid);
+        pendingPolicyCards(pendingGrid, policy);
         if (!policy.pending_complete) note(section, 'Pending changes are unavailable or incomplete. The list below is not a confirmed total.', true);
         table(section, ['Object', 'Kind', 'Change', 'Updated'], (policy.pending || []).map(change => [change.name || change.id, change.kind, change.operation, timestamp(change.updated_at)]), policy.pending_complete ? 'No pending changes observed.' : 'Pending changes unavailable.');
     }
@@ -287,80 +312,126 @@
         if (options.change_log_enabled) {
             const section = panel(parent, 'Estate Change Log');
             note(section, 'Observed differences between successful collections. The initial inventory establishes a baseline; it is not treated as a wave of new workloads.');
-            table(section, ['Observed', 'Workload / object', 'Change', 'Before', 'After'], (view.changes || []).map(change => [timestamp(change.at), change.name || change.workload_id, change.kind, change.before || '—', change.after || '—']), snapshot ? 'No estate changes observed yet.' : 'Waiting for the initial baseline.');
+            table(section, ['Observed', 'Workload / object', 'Change', 'Before', 'After'], (view.changes || []).map(change => [timestamp(change.observed_at || change.at), change.name || change.workload_id, change.kind, change.before || '—', change.after || '—']), snapshot ? 'No estate changes observed yet.' : 'Waiting for the initial baseline.');
         }
     }
     async function checked(response) {
         if (!response.ok) throw new Error((await response.text()).trim() || 'Request failed (' + response.status + ').');
         return response;
     }
-    async function load() {
-        if (loading) return;
+    async function load(force = false) {
+        if (loading && force !== true) return;
+        const generation = ++loadGeneration;
+        // A saved report may have advanced the change baseline. Its refresh
+        // must not wait for, or be overwritten by, a pre-save response.
+        if (force === true) ++reportRunsGeneration;
         loading = true;
         try {
-            lastView = await (await checked(await fetch('/api/estate', { cache: 'no-store' }))).json();
+            const view = await (await checked(await fetch('/api/estate', { cache: 'no-store' }))).json();
+            if (generation !== loadGeneration) return;
+            lastView = view;
             renderDashboard(lastView); renderPage(lastView);
             if (byID('estate-page') && lastView.options?.weekly_report_enabled) loadReportRuns();
         } catch (error) {
+            if (generation !== loadGeneration) return;
             const status = byID('estate-status');
             if (status) status.textContent = 'Unable to refresh estate insights: ' + error.message + (lastView ? ' Previous observations remain displayed.' : '');
             const inventory = byID('estate-inventory-breakdown');
             if (inventory && lastView?.options?.inventory_enabled) inventory.textContent = 'Estate refresh unavailable; open Estate for details.';
-        } finally { loading = false; }
+        } finally { if (generation === loadGeneration) loading = false; }
     }
     function selectedSections() { return [...document.querySelectorAll('#estate-report-sections input:checked')].map(input => input.value); }
     function theme() { return document.documentElement.dataset.unifiedTheme === 'dark' ? 'dark' : 'light'; }
     async function loadReportRuns() {
         const target = byID('estate-report-runs');
         if (!target) return;
+        const generation = ++reportRunsGeneration;
         try {
             const result = await (await checked(await fetch('/api/estate/report/runs', { cache: 'no-store' }))).json();
+            if (generation !== reportRunsGeneration) return;
             target.replaceChildren();
-            if (!(result.runs || []).length) { note(target, 'No weekly snapshots have been saved. Use Save weekly snapshot or enable scheduled reports in Settings.'); return; }
+            if (!(result.runs || []).length) { note(target, 'No estate reports have been saved. Use Run report now, Save weekly snapshot, or enable scheduled reports in Settings.'); return; }
             (result.runs || []).forEach(run => {
                 const row = node('div', undefined, 'estate-kpi');
-                const link = node('a', 'Download week of ' + run.week);
+                const onDemand = run.kind === 'on_demand';
+                const link = node('a', onDemand ? 'Download on-demand report · ' + timestamp(run.observation_at || run.created_at) : 'Download week of ' + run.week);
                 link.href = '/api/estate/report/runs?' + new URLSearchParams({ id: run.id, format: 'html', theme: theme() }).toString();
-                link.download = 'Illumio_Weekly_Estate_' + run.week + '.html';
+                link.download = reportFilename(run.kind, run.observation_at || run.created_at, run.week, run.id);
                 row.appendChild(link);
                 note(row, timestamp(run.created_at) + ' · ' + run.state);
+                if (onDemand) note(row, run.sets_change_baseline ? 'Explicitly selected as a change baseline.' : 'Change baseline unchanged.');
                 note(row, run.message || '');
                 target.appendChild(row);
             });
-        } catch (error) { target.replaceChildren(); note(target, 'Report history unavailable: ' + error.message, true); }
+        } catch (error) {
+            if (generation !== reportRunsGeneration) return;
+            target.replaceChildren(); note(target, 'Report history unavailable: ' + error.message, true);
+        }
     }
-    function reportQuery(format) {
+    function reportQuery(format, onDemand = false) {
         const sections = selectedSections();
         if (!sections.length) throw new Error('Choose at least one report section.');
         const query = new URLSearchParams({ sections: sections.join(','), theme: theme() });
         const week = byID('estate-week-start').value;
-        if (week) query.set('week', week);
+        if (!onDemand && week) query.set('week', week);
         if (format) query.set('format', format);
-        return '/api/estate/report?' + query.toString();
+        if (onDemand) query.set('set_baseline', byID('estate-set-baseline').checked === true ? 'true' : 'false');
+        return (onDemand ? '/api/estate/report/now?' : '/api/estate/report?') + query.toString();
     }
-    async function previewReport(saveSnapshot = false) {
-        // A click event or theme refresh is never permission to save a report.
-        saveSnapshot = saveSnapshot === true;
+    function reportFilename(kind, observation, week, id) {
+        if (kind !== 'on_demand') return 'Illumio_Weekly_Estate_' + (week || 'report') + '.html';
+        const safe = value => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+        return 'Illumio_Estate_On_Demand_' + safe(observation || 'report') + (id ? '_' + safe(id) : '') + '.html';
+    }
+    function previewReport(saveSnapshot = false) {
+        // Click events and theme changes are never permission to save a report.
+        return requestReport(saveSnapshot === true ? 'save' : 'weekly');
+    }
+    function runReportNow() { return requestReport('now'); }
+    function refreshReportTheme() {
+        if (!reportLoaded) return;
+        // A theme change must reopen this frozen run, not create another run or
+        // silently substitute the historical report for the same calendar week.
+        return requestReport(reportRunID ? 'frozen' : 'weekly', reportRunID);
+    }
+    async function requestReport(mode, frozenID = '') {
+        const saveSnapshot = mode === 'save';
+        const onDemand = mode === 'now';
+        const mutating = saveSnapshot || onDemand;
+        if (mutating && savingReport) return;
+        if (mutating) savingReport = true;
         const generation = ++reportGeneration;
-        reportHTML = '';
+        const requestedTheme = theme();
+        reportHTML = ''; reportLoaded = false;
         resetEmail();
         byID('estate-download').disabled = true;
         byID('estate-print').disabled = true;
-        byID('estate-save-snapshot').disabled = true;
-        byID('estate-report-status').textContent = saveSnapshot ? 'Saving weekly snapshot…' : 'Preparing weekly report…';
+        byID('estate-save-snapshot').disabled = savingReport;
+        byID('estate-run-now').disabled = savingReport;
+        byID('estate-report-preview').hidden = true;
+        byID('estate-report-status').textContent = onDemand ? 'Saving on-demand report from the latest retained observation…' : saveSnapshot ? 'Saving weekly snapshot…' : mode === 'frozen' ? 'Updating the saved report theme…' : 'Preparing weekly report…';
         try {
-            const url = reportQuery('preview');
-            const preview = await (await checked(await fetch(saveSnapshot ? url.replace('/api/estate/report?', '/api/estate/report/snapshot?') : url, { cache: 'no-store', method: saveSnapshot ? 'POST' : 'GET' }))).json();
-            if (generation !== reportGeneration) return;
+            const url = mode === 'frozen' ? '/api/estate/report/runs?' + new URLSearchParams({ id: frozenID, format: 'preview', theme: requestedTheme }).toString() : reportQuery('preview', onDemand);
+            // Consume this explicit choice for this request, even if its UI is
+            // later invalidated or the response fails. A later run opts in anew.
+            if (onDemand) byID('estate-set-baseline').checked = false;
+            const preview = await (await checked(await fetch(saveSnapshot ? url.replace('/api/estate/report?', '/api/estate/report/snapshot?') : url, { cache: 'no-store', method: mutating ? 'POST' : 'GET' }))).json();
+            if (generation !== reportGeneration) { if (mutating) await load(true); return; }
             if (!preview || !preview.report || typeof preview.report !== 'object' || typeof preview.html !== 'string' || !preview.html) throw new Error('The report preview response is incomplete. Refresh and try again.');
             // One frozen response backs the displayed HTML and email payload,
             // even if collection or settings change while the preview loads.
             const metadata = preview.report;
+            if ((mutating || metadata.kind === 'on_demand') && (typeof metadata.id !== 'string' || !metadata.id)) throw new Error('The saved report response is incomplete. Check saved report history before trying again.');
+            if (onDemand && metadata.kind !== 'on_demand') throw new Error('The on-demand report response is incomplete. Check saved report history before trying again.');
+            if (mode === 'frozen' && metadata.id !== frozenID) throw new Error('The saved report response did not match the selected report.');
             const html = preview.html;
             const week = metadata.window?.first_day || byID('estate-week-start').value;
-            if (week) byID('estate-week-start').value = week;
+            if (week && metadata.kind !== 'on_demand') byID('estate-week-start').value = week;
             reportHTML = html; reportWeek = week; reportLoaded = true;
-            if (saveSnapshot && Array.isArray(metadata.sections)) {
+            reportRunID = typeof metadata.id === 'string' ? metadata.id : frozenID;
+            reportKind = metadata.kind || '';
+            reportObservation = metadata.observation_at || metadata.generated_at || '';
+            if ((mutating || mode === 'frozen') && Array.isArray(metadata.sections)) {
                 // Reopening a frozen week may return its original selection.
                 // Keep the checkboxes aligned with the report being exported.
                 document.querySelectorAll('#estate-report-sections input').forEach(input => { input.checked = metadata.sections.includes(input.value); });
@@ -382,22 +453,32 @@
             byID('estate-print').disabled = false;
             const warnings = metadata.quality?.warnings || [];
             byID('estate-report-status').textContent = 'Report timezone: ' + (metadata.timezone || 'dashboard timezone') + '. ' + (warnings.length ? warnings.join(' ') : 'Report ready. Coverage details are included in the report.');
+            if (reportKind === 'on_demand') {
+                const expected = metadata.quality?.expected_days;
+                byID('estate-report-status').textContent += ' Saved on-demand report · As of ' + timestamp(reportObservation) + '. Uses the latest retained observation, not a fresh PCE query.';
+                if (metadata.partial_week) byID('estate-report-status').textContent += ' Current partial week' + (Number.isInteger(expected) ? ' · ' + count(expected) + ' elapsed reporting days' : '') + '; future days are not missing data.';
+                if (metadata.quality?.comparison_available === false) byID('estate-report-status').textContent += ' Previous-period comparison is unavailable.';
+                byID('estate-report-status').textContent += metadata.sets_change_baseline ? ' Explicitly selected as a change baseline for this run; an existing newer baseline is kept.' : ' Change baseline unchanged.';
+            }
             if (saveSnapshot) {
                 byID('estate-report-status').textContent += ' Saved weekly snapshot ready. The dashboard counts changes after the newest saved reporting period.';
-                await load();
             }
+            if (mutating) await load(true);
+            if (generation === reportGeneration && requestedTheme !== theme()) await refreshReportTheme();
         } catch (error) {
             if (generation !== reportGeneration) return;
             byID('estate-report-preview').hidden = true;
-            byID('estate-report-status').textContent = (saveSnapshot ? 'Unable to save weekly snapshot: ' : 'Unable to prepare report: ') + error.message;
+            byID('estate-report-status').textContent = (onDemand ? 'Unable to run report now: ' : saveSnapshot ? 'Unable to save weekly snapshot: ' : 'Unable to prepare report: ') + error.message;
         } finally {
-            if (generation === reportGeneration) byID('estate-save-snapshot').disabled = false;
+            if (mutating) savingReport = false;
+            byID('estate-save-snapshot').disabled = savingReport;
+            byID('estate-run-now').disabled = savingReport;
         }
     }
     function downloadReport() {
         if (!reportHTML) return;
         const url = URL.createObjectURL(new Blob([reportHTML], { type: 'text/html;charset=utf-8' }));
-        const link = node('a'); link.href = url; link.download = 'Illumio_Weekly_Estate_' + (reportWeek || 'report') + '.html';
+        const link = node('a'); link.href = url; link.download = reportFilename(reportKind, reportObservation, reportWeek, reportRunID);
         document.body.appendChild(link); link.click(); link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
@@ -463,20 +544,22 @@
     }
     function invalidateReport() {
         ++reportGeneration;
-        reportHTML = ''; reportLoaded = false;
+        reportHTML = ''; reportLoaded = false; reportRunID = ''; reportKind = ''; reportObservation = '';
         resetEmail();
         byID('estate-download').disabled = true; byID('estate-print').disabled = true;
-        byID('estate-save-snapshot').disabled = false;
+        byID('estate-save-snapshot').disabled = savingReport;
+        byID('estate-run-now').disabled = savingReport;
         byID('estate-report-preview').hidden = true;
         byID('estate-report-status').textContent = 'Selection changed. Preview the report again before exporting.';
     }
-    window.EstateUI = { count, timestamp, observedDuration, inventorySummary, renderDashboard, renderPage, selectedSections, reportQuery, load, previewReport, invalidateReport, loadReportRuns, previewEmail, selectEmail, copyEmail };
+    window.EstateUI = { count, timestamp, observedDuration, inventorySummary, renderDashboard, renderPage, selectedSections, reportQuery, reportFilename, load, previewReport, runReportNow, refreshReportTheme, invalidateReport, loadReportRuns, previewEmail, selectEmail, copyEmail };
     function init() {
         if (!byID('estate-page') && !byID('estate-dashboard-row')) return;
         if (byID('estate-page')) {
             byID('estate-refresh').addEventListener('click', load);
             byID('estate-preview').addEventListener('click', () => previewReport());
             byID('estate-save-snapshot').addEventListener('click', () => previewReport(true));
+            byID('estate-run-now').addEventListener('click', () => runReportNow());
             byID('estate-download').addEventListener('click', downloadReport);
             byID('estate-email-preview').addEventListener('click', previewEmail);
             byID('estate-email-copy').addEventListener('click', () => copyEmail());
@@ -488,7 +571,7 @@
             byID('estate-week-start').addEventListener('change', invalidateReport);
             document.querySelectorAll('#estate-report-sections input').forEach(input => input.addEventListener('change', invalidateReport));
             let previousTheme = theme();
-            new MutationObserver(() => { const current = theme(); if (current !== previousTheme) { previousTheme = current; if (reportLoaded) previewReport(); if (lastView?.options?.weekly_report_enabled) loadReportRuns(); } }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-unified-theme'] });
+            new MutationObserver(() => { const current = theme(); if (current !== previousTheme) { previousTheme = current; refreshReportTheme(); if (lastView?.options?.weekly_report_enabled) loadReportRuns(); } }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-unified-theme'] });
         }
         load();
         setInterval(() => { if (document.visibilityState !== 'hidden') load(); }, 300000);
