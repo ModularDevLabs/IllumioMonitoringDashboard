@@ -96,6 +96,7 @@ func TestEstatePreviewServer(t *testing.T) {
 	mux.HandleFunc("/api/config/credentials", handleConfigCredentials)
 	mux.HandleFunc("/api/estate", handleEstate)
 	mux.HandleFunc("/api/estate/report", handleEstateReport)
+	mux.HandleFunc("/api/estate/report/snapshot", withTrustedOrigin("api.estate.report.snapshot", handleEstateReportSnapshot))
 	mux.HandleFunc("/api/estate/report/runs", handleEstateReportRuns)
 	mux.HandleFunc("/api/refresh", func(w http.ResponseWriter, r *http.Request) {
 		refresh()

@@ -24,11 +24,13 @@
             <div class="estate-report-controls">
                 <label>Week starting (Monday)<input id="estate-week-start" type="date"></label>
                 <button id="estate-preview" type="button">Preview report</button>
+                <button id="estate-save-snapshot" type="button">Save weekly snapshot</button>
                 <button id="estate-download" type="button" disabled>Download HTML</button>
                 <button id="estate-print" type="button" disabled>Print / PDF</button>
                 <button id="estate-email-preview" type="button" disabled>Email Preview</button>
                 <button id="estate-email-copy" type="button" disabled>Copy for Email</button>
             </div>
+            <p class="estate-muted">Saving a snapshot establishes the dashboard change-count baseline at the end of that reporting week. Previews and downloads do not change it. Each week's manual snapshot is frozen when first saved; saving that week again reopens the same snapshot. Scheduled reports remain separate.</p>
             <fieldset class="estate-section-picker"><legend>Include sections</legend><div id="estate-report-sections" class="estate-checks"><label><input type="checkbox" value="estate" checked> Estate &amp; VEN versions</label><label><input type="checkbox" value="health" checked> VEN health</label><label><input type="checkbox" value="policy" checked> Policy</label><label><input type="checkbox" value="traffic" checked> Traffic</label><label><input type="checkbox" value="changes" checked> Changes</label><label><input type="checkbox" value="quality" checked> Data quality</label></div></fieldset>
             <p id="estate-report-status" class="estate-muted" role="status" aria-live="polite">Select Preview report to load the last completed week.</p>
             <p id="estate-email-status" class="estate-muted" role="status" aria-live="polite"></p>
@@ -44,7 +46,7 @@
                 <div id="estate-email-content" class="estate-email-content" tabindex="0" role="region" aria-label="Email-ready report"></div>
             </details>
             <iframe id="estate-report-preview" title="Weekly estate report preview" sandbox="allow-same-origin allow-modals" hidden></iframe>
-            <details class="estate-section" open><summary>Scheduled Report History</summary><p class="estate-muted">Frozen scheduled reports stay available locally. Slack and Teams receive a summary and dashboard link; generic webhooks receive the structured report.</p><div id="estate-report-runs"></div></details>
+            <details class="estate-section" open><summary>Saved Weekly Reports</summary><p class="estate-muted">Frozen manual and scheduled reports stay available locally. Saving a manual snapshot does not send it anywhere. Scheduled delivery is separately enabled in Settings.</p><div id="estate-report-runs"></div></details>
         </details>
     </main>
 </body>

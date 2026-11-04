@@ -127,6 +127,8 @@ func estateView() EstateView {
 	}
 	if options.ChangeLogEnabled {
 		view.Changes = history.Changes
+		summary := estateChangesSinceReport(history, options, time.Now())
+		view.ChangesSinceReport = &summary
 	}
 	estateMonitor.RLock()
 	view.Warnings = append(view.Warnings, estateMonitor.warnings...)

@@ -65,6 +65,72 @@ test('inventory breakdown is opt-in, clickable, and does not treat an incomplete
     assert.match(t.get('estate-inventory-breakdown').textContent, /incomplete/);
     assert.doesNotMatch(t.get('estate-inventory-breakdown').textContent, /Managed: 0/);
 });
+test('dashboard estate changes use the saved weekly report baseline, not retained history totals', () => {
+    const t = app();
+    const since = '2026-11-02T15:00:00Z';
+    const view = {
+        options: { change_log_enabled: true, weekly_report_enabled: true, history_days: 365 },
+        snapshot: { at: '2026-11-04T15:00:00Z' },
+        changes: Array.from({ length: 160 }, (_, index) => ({ name: 'Retained change ' + index, kind: 'labels', at: since })),
+        changes_since_report: { status: 'available', count: 7, since, report_week: '2026-10-26', partial: false }
+    };
+    t.api.renderDashboard(view);
+    const root = t.get('estate-dashboard-content');
+    const card = root.children.find(node => node.children[0].textContent === 'Changes since last weekly report');
+    assert.equal(card.children[1].textContent, '7');
+    assert.match(card.textContent, /Since /);
+    assert.ok(card.textContent.includes(t.api.timestamp(since)));
+    assert.match(card.textContent, /Report week: 2026-10-26/);
+    assert.doesNotMatch(root.textContent, /160|Retained estate changes/);
+    t.api.renderPage(view);
+    const changeLog = t.get('estate-live-sections').children.find(node => node.children[0].textContent === 'Estate Change Log');
+    assert.match(changeLog.textContent, /Showing 1–100 of 160/);
+    assert.match(changeLog.textContent, /Retained change 0/);
+    view.changes_since_report.count = 0;
+    t.api.renderDashboard(view);
+    assert.equal(root.children[0].children[1].textContent, '0');
+});
+test('dashboard awaits a report baseline instead of substituting the lifetime change count', () => {
+    const t = app();
+    const view = { options: { change_log_enabled: true, weekly_report_enabled: true }, snapshot: {}, changes: Array(160).fill({}), changes_since_report: { status: 'awaiting_report', count: 0 } };
+    t.api.renderDashboard(view);
+    let text = t.get('estate-dashboard-content').textContent;
+    assert.match(text, /Changes since last weekly reportAwaiting report/);
+    assert.match(text, /first saved weekly report will establish the baseline/);
+    assert.doesNotMatch(text, /160/);
+    delete view.changes_since_report;
+    t.api.renderDashboard(view);
+    text = t.get('estate-dashboard-content').textContent;
+    assert.match(text, /Awaiting report/);
+    assert.doesNotMatch(text, /160/);
+    view.options.weekly_report_enabled = false;
+    t.api.renderDashboard(view);
+    text = t.get('estate-dashboard-content').textContent;
+    assert.match(text, /No saved weekly report baseline/);
+    assert.match(text, /Enable Weekly Estate Report in Settings/);
+    assert.doesNotMatch(text, /160/);
+    view.options.change_log_enabled = false;
+    t.api.renderDashboard(view);
+    assert.equal(t.get('estate-dashboard-row').hidden, true);
+});
+test('dashboard report-relative changes disclose partial or unavailable observations without inventing totals', () => {
+    const t = app();
+    const warning = '<script>untrusted warning</script> History does not cover the entire interval.';
+    const view = { options: { change_log_enabled: true }, snapshot: {}, changes: Array(160).fill({}), changes_since_report: { status: 'available', count: 3, partial: true, warning } };
+    t.api.renderDashboard(view);
+    const root = t.get('estate-dashboard-content');
+    assert.equal(root.children[0].children[1].textContent, '3 observed (incomplete)');
+    assert.equal(find(root, node => node.className === 'estate-warning').textContent, warning);
+    assert.match(root.textContent, /after the last saved weekly report/);
+    view.changes_since_report = { status: 'unavailable', count: 0, warning: 'Saved report metadata could not be read.' };
+    t.api.renderDashboard(view);
+    assert.equal(root.children[0].children[1].textContent, 'Unavailable');
+    assert.match(root.textContent, /Saved report metadata could not be read/);
+    assert.doesNotMatch(root.textContent, /160/);
+    view.changes_since_report = { status: 'available' };
+    t.api.renderDashboard(view);
+    assert.equal(root.children[0].children[1].textContent, 'Unavailable');
+});
 test('inventory and its lazy workload list start collapsed, ignoring the former automatic open state', () => {
     const storage = new Map([['illumio_estate_section_Workload Inventory', 'open']]);
     const t = app('estate.js', storage);
@@ -284,6 +350,49 @@ test('report error text is visible and no stale export is enabled', async () => 
     await t.api.previewReport();
     assert.equal(t.get('estate-download').disabled, true);
     assert.match(t.get('estate-report-status').textContent, /Select a completed Monday/);
+});
+test('manual weekly snapshot is an explicit POST and refreshes the baseline and saved history', async () => {
+    const t = app();
+    t.get('estate-week-start').value = '2026-10-19';
+    const calls = [];
+    t.context.fetch = async (url, options) => {
+        calls.push({ url, options });
+        let data;
+        if (url === '/api/estate') data = { options: { weekly_report_enabled: true, change_log_enabled: true }, snapshot: {}, changes: Array(160).fill({}), changes_since_report: { status: 'available', count: 3, since: '2026-10-26T00:00:00Z', report_week: '2026-10-19' } };
+        else if (url === '/api/estate/report/runs') data = { runs: [] };
+        else data = { report: { timezone: 'UTC', sections: ['estate', 'changes'], window: { first_day: '2026-10-19' }, quality: { warnings: [] } }, html: '<p>Frozen manual report</p>' };
+        return { ok: true, json: async () => data };
+    };
+    await t.api.previewReport(true);
+    assert.equal(calls[0].options.method, 'POST');
+    assert.match(calls[0].url, /^\/api\/estate\/report\/snapshot\?/);
+    assert.match(calls[0].url, /week=2026-10-19/);
+    assert.equal(calls.some(call => call.url === '/api/estate'), true);
+    assert.equal(calls.some(call => call.url === '/api/estate/report/runs'), true);
+    assert.match(t.get('estate-dashboard-content').textContent, /Changes since last weekly report3/);
+    assert.doesNotMatch(t.get('estate-dashboard-content').textContent, /160/);
+    assert.match(t.get('estate-report-status').textContent, /Saved weekly snapshot ready/);
+    assert.equal(t.get('estate-report-preview').srcdoc, '<p>Frozen manual report</p>');
+    assert.deepEqual(t.sections.filter(input => input.checked).map(input => input.value), ['estate', 'changes']);
+    assert.equal(t.get('estate-save-snapshot').disabled, false);
+});
+test('preview events never save snapshots, and failed saves cannot claim success', async () => {
+    const t = app();
+    const calls = [];
+    t.context.fetch = async (url, options) => {
+        calls.push({ url, options });
+        return { ok: false, status: 500, text: async () => 'Snapshot could not be saved.' };
+    };
+    await t.api.previewReport({ type: 'click' });
+    assert.equal(calls[0].options.method, 'GET');
+    assert.doesNotMatch(calls[0].url, /snapshot/);
+    await t.api.previewReport(true);
+    assert.equal(calls[1].options.method, 'POST');
+    assert.equal(calls.length, 2);
+    assert.match(t.get('estate-report-status').textContent, /Unable to save weekly snapshot/);
+    assert.doesNotMatch(t.get('estate-report-status').textContent, /snapshot ready/);
+    assert.equal(t.get('estate-download').disabled, true);
+    assert.equal(t.get('estate-save-snapshot').disabled, false);
 });
 test('incomplete preview bundles never enable stale HTML or email exports', async () => {
     const t = app();

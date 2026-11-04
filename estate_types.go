@@ -133,10 +133,22 @@ type EstateHistory struct {
 }
 
 type EstateView struct {
-	Options   EstateOptions   `json:"options"`
-	Snapshot  *EstateSnapshot `json:"snapshot,omitempty"`
-	Issues    []EstateIssue   `json:"issues"`
-	Changes   []EstateChange  `json:"changes"`
-	StartedAt time.Time       `json:"started_at,omitempty,omitzero"`
-	Warnings  []string        `json:"warnings"`
+	Options            EstateOptions             `json:"options"`
+	Snapshot           *EstateSnapshot           `json:"snapshot,omitempty"`
+	Issues             []EstateIssue             `json:"issues"`
+	Changes            []EstateChange            `json:"changes"`
+	ChangesSinceReport *EstateChangesSinceReport `json:"changes_since_report,omitempty"`
+	StartedAt          time.Time                 `json:"started_at,omitempty,omitzero"`
+	Warnings           []string                  `json:"warnings"`
+}
+
+// The dashboard counter is a view of retained events, not a new history store.
+// Since is the exclusive end of the last saved report's reporting period.
+type EstateChangesSinceReport struct {
+	Status     string    `json:"status"`
+	Count      int       `json:"count"`
+	Since      time.Time `json:"since,omitempty,omitzero"`
+	ReportWeek string    `json:"report_week,omitempty"`
+	Partial    bool      `json:"partial"`
+	Warning    string    `json:"warning,omitempty"`
 }

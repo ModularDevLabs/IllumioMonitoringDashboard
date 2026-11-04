@@ -164,7 +164,21 @@
             const value = !requirements.length ? 'Not configured' : complete ? count((snapshot.label_gaps || []).length) : observed ? count((snapshot.label_gaps || []).length) + ' observed (incomplete)' : 'Unavailable';
             kpi(content, 'Missing required labels', value, !requirements.length ? 'Select required label types in Settings' : complete ? requirements.join(', ') : 'Incomplete assessment; ' + count(snapshot.labels_assessed) + ' workloads assessed');
         }
-        if (options.change_log_enabled) kpi(content, 'Retained estate changes', count((view.changes || []).length), 'Changes observed since tracking was enabled');
+        if (options.change_log_enabled) {
+            const changes = view.changes_since_report;
+            let value = 'Awaiting report';
+            let description = options.weekly_report_enabled ? 'The first saved weekly report will establish the baseline.' : 'No saved weekly report baseline. Enable Weekly Estate Report in Settings to establish one.';
+            if (changes?.status === 'available' && Number.isFinite(changes.count) && changes.count >= 0) {
+                value = count(changes.count) + (changes.partial ? ' observed (incomplete)' : '');
+                description = changes.since ? 'Since ' + timestamp(changes.since) : 'Changes observed after the last saved weekly report';
+                if (changes.report_week) description += ' · Report week: ' + changes.report_week;
+            } else if (changes && changes.status !== 'awaiting_report') {
+                value = 'Unavailable';
+                description = 'Unable to determine changes since the last saved weekly report.';
+            }
+            const card = kpi(content, 'Changes since last weekly report', value, description);
+            if (changes?.warning) note(card, changes.warning, true);
+        }
         if (options.weekly_report_enabled) kpi(content, 'Weekly Estate Report', 'Enabled', 'Includes deployed VEN version totals');
         if (options.inventory_enabled && content.children.length === 0) note(content, inventorySummary(snapshot));
     }
@@ -302,7 +316,7 @@
         try {
             const result = await (await checked(await fetch('/api/estate/report/runs', { cache: 'no-store' }))).json();
             target.replaceChildren();
-            if (!(result.runs || []).length) { note(target, 'No scheduled reports have been generated. Scheduling is separately enabled in Settings.'); return; }
+            if (!(result.runs || []).length) { note(target, 'No weekly snapshots have been saved. Use Save weekly snapshot or enable scheduled reports in Settings.'); return; }
             (result.runs || []).forEach(run => {
                 const row = node('div', undefined, 'estate-kpi');
                 const link = node('a', 'Download week of ' + run.week);
@@ -324,15 +338,19 @@
         if (format) query.set('format', format);
         return '/api/estate/report?' + query.toString();
     }
-    async function previewReport() {
+    async function previewReport(saveSnapshot = false) {
+        // A click event or theme refresh is never permission to save a report.
+        saveSnapshot = saveSnapshot === true;
         const generation = ++reportGeneration;
         reportHTML = '';
         resetEmail();
         byID('estate-download').disabled = true;
         byID('estate-print').disabled = true;
-        byID('estate-report-status').textContent = 'Preparing weekly report…';
+        byID('estate-save-snapshot').disabled = true;
+        byID('estate-report-status').textContent = saveSnapshot ? 'Saving weekly snapshot…' : 'Preparing weekly report…';
         try {
-            const preview = await (await checked(await fetch(reportQuery('preview'), { cache: 'no-store' }))).json();
+            const url = reportQuery('preview');
+            const preview = await (await checked(await fetch(saveSnapshot ? url.replace('/api/estate/report?', '/api/estate/report/snapshot?') : url, { cache: 'no-store', method: saveSnapshot ? 'POST' : 'GET' }))).json();
             if (generation !== reportGeneration) return;
             if (!preview || !preview.report || typeof preview.report !== 'object' || typeof preview.html !== 'string' || !preview.html) throw new Error('The report preview response is incomplete. Refresh and try again.');
             // One frozen response backs the displayed HTML and email payload,
@@ -342,6 +360,12 @@
             const week = metadata.window?.first_day || byID('estate-week-start').value;
             if (week) byID('estate-week-start').value = week;
             reportHTML = html; reportWeek = week; reportLoaded = true;
+            if (saveSnapshot && Array.isArray(metadata.sections)) {
+                // Reopening a frozen week may return its original selection.
+                // Keep the checkboxes aligned with the report being exported.
+                document.querySelectorAll('#estate-report-sections input').forEach(input => { input.checked = metadata.sections.includes(input.value); });
+                reportSelectionsInitialized = true;
+            }
             if (window.EstateEmail) {
                 try {
                     reportEmail = window.EstateEmail.render(metadata);
@@ -358,10 +382,16 @@
             byID('estate-print').disabled = false;
             const warnings = metadata.quality?.warnings || [];
             byID('estate-report-status').textContent = 'Report timezone: ' + (metadata.timezone || 'dashboard timezone') + '. ' + (warnings.length ? warnings.join(' ') : 'Report ready. Coverage details are included in the report.');
+            if (saveSnapshot) {
+                byID('estate-report-status').textContent += ' Saved weekly snapshot ready. The dashboard counts changes after the newest saved reporting period.';
+                await load();
+            }
         } catch (error) {
             if (generation !== reportGeneration) return;
             byID('estate-report-preview').hidden = true;
-            byID('estate-report-status').textContent = 'Unable to prepare report: ' + error.message;
+            byID('estate-report-status').textContent = (saveSnapshot ? 'Unable to save weekly snapshot: ' : 'Unable to prepare report: ') + error.message;
+        } finally {
+            if (generation === reportGeneration) byID('estate-save-snapshot').disabled = false;
         }
     }
     function downloadReport() {
@@ -436,6 +466,7 @@
         reportHTML = ''; reportLoaded = false;
         resetEmail();
         byID('estate-download').disabled = true; byID('estate-print').disabled = true;
+        byID('estate-save-snapshot').disabled = false;
         byID('estate-report-preview').hidden = true;
         byID('estate-report-status').textContent = 'Selection changed. Preview the report again before exporting.';
     }
@@ -444,7 +475,8 @@
         if (!byID('estate-page') && !byID('estate-dashboard-row')) return;
         if (byID('estate-page')) {
             byID('estate-refresh').addEventListener('click', load);
-            byID('estate-preview').addEventListener('click', previewReport);
+            byID('estate-preview').addEventListener('click', () => previewReport());
+            byID('estate-save-snapshot').addEventListener('click', () => previewReport(true));
             byID('estate-download').addEventListener('click', downloadReport);
             byID('estate-email-preview').addEventListener('click', previewEmail);
             byID('estate-email-copy').addEventListener('click', () => copyEmail());
